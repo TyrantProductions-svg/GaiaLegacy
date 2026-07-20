@@ -8,7 +8,8 @@ public class Renderer {
     
     private Shader shader;
     private Mesh mesh;
-    private Mesh testMesh;
+    // Fallback mesh rendered when block textures are missing
+    private Mesh fallbackMesh;
     private Camera camera;
     
     private Matrix4f projectionMatrix;
@@ -94,11 +95,11 @@ public class Renderer {
         };
         
         mesh = new Mesh(vertices);
-        testMesh = mesh;
+        fallbackMesh = mesh;
     }
     
-    public Mesh getTestMesh() {
-        return testMesh;
+    public Mesh getFallbackMesh() {
+        return fallbackMesh;
     }
     
     public void setMesh(Mesh mesh) {

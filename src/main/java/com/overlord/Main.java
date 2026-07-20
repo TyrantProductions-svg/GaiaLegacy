@@ -2,7 +2,6 @@ package com.overlord;
 
 import com.overlord.core.Engine;
 import com.overlord.core.PlayerManager;
-import com.overlord.renderer.Mesh;
 
 import static org.lwjgl.glfw.GLFW.*;
 
@@ -39,8 +38,6 @@ public class Main {
         
         engine.getCamera().setPosition(new org.joml.Vector3f(0, 0, 5));
         
-        Mesh testMesh = engine.getRenderer().getTestMesh();
-        
         while (engine.isRunning()) {
             engine.submitToCore(Engine.CORE_PLAYER, playerManager::update);
             
@@ -48,7 +45,6 @@ public class Main {
                 break;
             }
             
-            engine.getRenderer().setMesh(testMesh);
             engine.getRenderer().render();
             glfwSwapBuffers(engine.getWindow().getWindow());
             glfwPollEvents();
