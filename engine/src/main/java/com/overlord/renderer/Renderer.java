@@ -8,9 +8,9 @@ public class Renderer {
     
     private Shader shader;
     private Mesh mesh;
-    // Fallback mesh rendered when block textures are missing
     private Mesh fallbackMesh;
     private Camera camera;
+    private Texture textureAtlas;
     
     private Matrix4f projectionMatrix;
     
@@ -30,68 +30,71 @@ public class Renderer {
         String vertexSource = 
             "#version 410 core\n" +
             "layout (location = 0) in vec3 aPos;\n" +
-            "layout (location = 1) in vec3 aColor;\n" +
+            "layout (location = 1) in vec2 aTexCoord;\n" +
             "uniform mat4 projection;\n" +
             "uniform mat4 view;\n" +
             "uniform mat4 model;\n" +
-            "out vec3 ourColor;\n" +
+            "out vec2 TexCoord;\n" +
             "void main() {\n" +
             "    gl_Position = projection * view * model * vec4(aPos, 1.0);\n" +
-            "    ourColor = aColor;\n" +
+            "    TexCoord = aTexCoord;\n" +
             "}\n";
         
         String fragmentSource = 
             "#version 410 core\n" +
-            "in vec3 ourColor;\n" +
+            "in vec2 TexCoord;\n" +
             "out vec4 FragColor;\n" +
+            "uniform sampler2D textureAtlas;\n" +
             "void main() {\n" +
-            "    FragColor = vec4(ourColor, 1.0);\n" +
+            "    FragColor = texture(textureAtlas, TexCoord);\n" +
             "}\n";
         
         shader = new Shader(vertexSource, fragmentSource);
         
+        textureAtlas = new Texture("textures/atlas.png");
+        
         float[] vertices = {
-            -0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f,
-             0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f,
-             0.5f,  0.5f, -0.5f,  1.0f, 0.0f, 0.0f,
-             0.5f,  0.5f, -0.5f,  1.0f, 0.0f, 0.0f,
-            -0.5f,  0.5f, -0.5f,  1.0f, 0.0f, 0.0f,
-            -0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f,
+            -0.5f, -0.5f, -0.5f,  0.0f, 0.0f,
+             0.5f, -0.5f, -0.5f,  1.0f, 0.0f,
+             0.5f,  0.5f, -0.5f,  1.0f, 1.0f,
+             0.5f,  0.5f, -0.5f,  1.0f, 1.0f,
+            -0.5f,  0.5f, -0.5f,  0.0f, 1.0f,
+            -0.5f, -0.5f, -0.5f,  0.0f, 0.0f,
 
-            -0.5f, -0.5f,  0.5f,  0.0f, 1.0f, 0.0f,
-             0.5f, -0.5f,  0.5f,  0.0f, 1.0f, 0.0f,
-             0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 0.0f,
-             0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 0.0f,
-            -0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 0.0f,
-            -0.5f, -0.5f,  0.5f,  0.0f, 1.0f, 0.0f,
+            -0.5f, -0.5f,  0.5f,  0.0f, 0.0f,
+             0.5f, -0.5f,  0.5f,  1.0f, 0.0f,
+             0.5f,  0.5f,  0.5f,  1.0f, 1.0f,
+             0.5f,  0.5f,  0.5f,  1.0f, 1.0f,
+            -0.5f,  0.5f,  0.5f,  0.0f, 1.0f,
+            -0.5f, -0.5f,  0.5f,  0.0f, 0.0f,
 
-            -0.5f,  0.5f,  0.5f,  0.0f, 0.0f, 1.0f,
-            -0.5f,  0.5f, -0.5f,  0.0f, 0.0f, 1.0f,
-            -0.5f, -0.5f, -0.5f,  0.0f, 0.0f, 1.0f,
-            -0.5f, -0.5f, -0.5f,  0.0f, 0.0f, 1.0f,
-            -0.5f, -0.5f,  0.5f,  0.0f, 0.0f, 1.0f,
-            -0.5f,  0.5f,  0.5f,  0.0f, 0.0f, 1.0f,
+            -0.5f,  0.5f,  0.5f,  0.0f, 0.0f,
+            -0.5f,  0.5f, -0.5f,  1.0f, 0.0f,
+            -0.5f, -0.5f, -0.5f,  1.0f, 1.0f,
+            -0.5f, -0.5f, -0.5f,  1.0f, 1.0f,
+            -0.5f, -0.5f,  0.5f,  0.0f, 1.0f,
+            -0.5f,  0.5f,  0.5f,  0.0f, 0.0f,
 
-             0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 0.0f,
-             0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 0.0f,
-             0.5f, -0.5f, -0.5f,  1.0f, 1.0f, 0.0f,
-             0.5f, -0.5f, -0.5f,  1.0f, 1.0f, 0.0f,
-             0.5f, -0.5f,  0.5f,  1.0f, 1.0f, 0.0f,
-             0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 0.0f,
+             0.5f,  0.5f,  0.5f,  0.0f, 0.0f,
+             0.5f,  0.5f, -0.5f,  1.0f, 0.0f,
+             0.5f, -0.5f, -0.5f,  1.0f, 1.0f,
+             0.5f, -0.5f, -0.5f,  1.0f, 1.0f,
+             0.5f, -0.5f,  0.5f,  0.0f, 1.0f,
+             0.5f,  0.5f,  0.5f,  0.0f, 0.0f,
 
-            -0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 1.0f,
-             0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 1.0f,
-             0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 1.0f,
-             0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 1.0f,
-            -0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 1.0f,
-            -0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 1.0f,
+            -0.5f, -0.5f, -0.5f,  0.0f, 0.0f,
+             0.5f, -0.5f, -0.5f,  1.0f, 0.0f,
+             0.5f, -0.5f,  0.5f,  1.0f, 1.0f,
+             0.5f, -0.5f,  0.5f,  1.0f, 1.0f,
+            -0.5f, -0.5f,  0.5f,  0.0f, 1.0f,
+            -0.5f, -0.5f, -0.5f,  0.0f, 0.0f,
 
-            -0.5f,  0.5f, -0.5f,  0.0f, 1.0f, 1.0f,
-             0.5f,  0.5f, -0.5f,  0.0f, 1.0f, 1.0f,
-             0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 1.0f,
-             0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 1.0f,
-            -0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 1.0f,
-            -0.5f,  0.5f, -0.5f,  0.0f, 1.0f, 1.0f
+            -0.5f,  0.5f, -0.5f,  0.0f, 0.0f,
+             0.5f,  0.5f, -0.5f,  1.0f, 0.0f,
+             0.5f,  0.5f,  0.5f,  1.0f, 1.0f,
+             0.5f,  0.5f,  0.5f,  1.0f, 1.0f,
+            -0.5f,  0.5f,  0.5f,  0.0f, 1.0f,
+            -0.5f,  0.5f, -0.5f,  0.0f, 0.0f
         };
         
         mesh = new Mesh(vertices);
@@ -113,6 +116,7 @@ public class Renderer {
         
         shader.use();
         
+        textureAtlas.bind(0);
         shader.setUniformMat4f("projection", projectionMatrix);
         shader.setUniformMat4f("view", camera.getViewMatrix());
         shader.setUniformMat4f("model", new Matrix4f());
@@ -126,6 +130,9 @@ public class Renderer {
         }
         if (shader != null) {
             shader.cleanup();
+        }
+        if (textureAtlas != null) {
+            textureAtlas.cleanup();
         }
     }
 }

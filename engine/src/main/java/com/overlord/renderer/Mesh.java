@@ -12,7 +12,7 @@ public class Mesh {
     private int vertexCount;
     
     public Mesh(float[] vertices) {
-        this.vertexCount = vertices.length / 6;
+        this.vertexCount = vertices.length / 5;
         
         vaoId = glGenVertexArrays();
         glBindVertexArray(vaoId);
@@ -24,10 +24,10 @@ public class Mesh {
         vertexBuffer.put(vertices).flip();
         glBufferData(GL_ARRAY_BUFFER, vertexBuffer, GL_STATIC_DRAW);
         
-        glVertexAttribPointer(0, 3, GL_FLOAT, false, 6 * Float.BYTES, 0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, false, 5 * Float.BYTES, 0);
         glEnableVertexAttribArray(0);
         
-        glVertexAttribPointer(1, 3, GL_FLOAT, false, 6 * Float.BYTES, 3 * Float.BYTES);
+        glVertexAttribPointer(1, 2, GL_FLOAT, false, 5 * Float.BYTES, 3 * Float.BYTES);
         glEnableVertexAttribArray(1);
         
         glBindBuffer(GL_ARRAY_BUFFER, 0);

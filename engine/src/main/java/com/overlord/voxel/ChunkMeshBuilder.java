@@ -6,14 +6,9 @@ import java.util.Map;
 
 public class ChunkMeshBuilder {
     
-    private static final float[] FACE_COLORS = {
-        1.0f, 0.95f, 0.8f,
-        0.8f, 0.9f, 1.0f,
-        0.9f, 1.0f, 0.85f,
-        0.7f, 0.7f, 0.7f,
-        0.85f, 0.85f, 0.9f,
-        0.95f, 0.85f, 0.85f
-    };
+    private static final int TEXTURE_SIZE = 16;
+    private static final int ATLAS_WIDTH = 128;
+    private static final int ATLAS_HEIGHT = 64;
     
     public static float[] buildChunkMeshData(Chunk chunk, int chunkX, int chunkZ, World world) {
         List<Float> vertices = new ArrayList<>();
@@ -43,23 +38,27 @@ public class ChunkMeshBuilder {
                         float py = worldY;
                         float pz = worldZ;
                         
+                        int topTexture = getTopTexture(block);
+                        int sideTexture = getSideTexture(block);
+                        int bottomTexture = getBottomTexture(block);
+                        
                         if (!isBlockSolid(world, worldX, worldY, worldZ - 1)) {
-                            addFace(vertices, px, py, pz, 0);
+                            addFace(vertices, px, py, pz, 0, sideTexture);
                         }
                         if (!isBlockSolid(world, worldX, worldY, worldZ + 1)) {
-                            addFace(vertices, px, py, pz, 1);
+                            addFace(vertices, px, py, pz, 1, sideTexture);
                         }
                         if (!isBlockSolid(world, worldX, worldY + 1, worldZ)) {
-                            addFace(vertices, px, py, pz, 2);
+                            addFace(vertices, px, py, pz, 2, topTexture);
                         }
                         if (!isBlockSolid(world, worldX, worldY - 1, worldZ)) {
-                            addFace(vertices, px, py, pz, 3);
+                            addFace(vertices, px, py, pz, 3, bottomTexture);
                         }
                         if (!isBlockSolid(world, worldX - 1, worldY, worldZ)) {
-                            addFace(vertices, px, py, pz, 4);
+                            addFace(vertices, px, py, pz, 4, sideTexture);
                         }
                         if (!isBlockSolid(world, worldX + 1, worldY, worldZ)) {
-                            addFace(vertices, px, py, pz, 5);
+                            addFace(vertices, px, py, pz, 5, sideTexture);
                         }
                     }
                 }
@@ -78,70 +77,103 @@ public class ChunkMeshBuilder {
         return vertexArray;
     }
     
+    private static int getTopTexture(byte blockType) {
+        switch (blockType) {
+            case 1: return 0;
+            case 2: return 2;
+            case 3: return 3;
+            default: return 0;
+        }
+    }
+    
+    private static int getSideTexture(byte blockType) {
+        switch (blockType) {
+            case 1: return 1;
+            case 2: return 2;
+            case 3: return 3;
+            default: return 0;
+        }
+    }
+    
+    private static int getBottomTexture(byte blockType) {
+        switch (blockType) {
+            case 1: return 2;
+            case 2: return 2;
+            case 3: return 3;
+            default: return 0;
+        }
+    }
+    
     private static boolean isBlockSolid(World world, int x, int y, int z) {
         if (y < 0) return false;
         return world.getBlock(x, y, z) != 0;
     }
     
-    private static void addFace(List<Float> vertices, float x, float y, float z, int face) {
-        float[] faceVerts = getFaceVertices(x, y, z, face);
+    private static void addFace(List<Float> vertices, float x, float y, float z, int face, int textureIndex) {
+        float[] faceVerts = getFaceVertices(x, y, z, face, textureIndex);
         for (float v : faceVerts) {
             vertices.add(v);
         }
     }
     
-    private static float[] getFaceVertices(float x, float y, float z, int face) {
-        float[] color = new float[3];
-        System.arraycopy(FACE_COLORS, face * 3, color, 0, 3);
+    private static float[] getFaceVertices(float x, float y, float z, int face, int textureIndex) {
+        float u = (textureIndex * TEXTURE_SIZE) / (float) ATLAS_WIDTH;
+        float uEnd = ((textureIndex + 1) * TEXTURE_SIZE) / (float) ATLAS_WIDTH;
+        float v = 0.0f;
+        float vEnd = TEXTURE_SIZE / (float) ATLAS_HEIGHT;
+        
+        boolean flipV = (face != 2);
+        float v0 = flipV ? vEnd : v;
+        float v1 = flipV ? v : vEnd;
         
         switch (face) {
             case 0: return new float[] {
-                x, y, z, color[0], color[1], color[2],
-                x + 1, y, z, color[0], color[1], color[2],
-                x + 1, y + 1, z, color[0], color[1], color[2],
-                x + 1, y + 1, z, color[0], color[1], color[2],
-                x, y + 1, z, color[0], color[1], color[2],
-                x, y, z, color[0], color[1], color[2]
+                x, y, z, u, v0,
+                x + 1, y, z, uEnd, v0,
+                x + 1, y + 1, z, uEnd, v1,
+                x + 1, y + 1, z, uEnd, v1,
+                x, y + 1, z, u, v1,
+                x, y, z, u, v0
             };
             case 1: return new float[] {
-                x, y, z + 1, color[0], color[1], color[2],
-                x + 1, y, z + 1, color[0], color[1], color[2],
-                x + 1, y + 1, z + 1, color[0], color[1], color[2],
-                x + 1, y + 1, z + 1, color[0], color[1], color[2],
-                x, y + 1, z + 1, color[0], color[1], color[2],
-                x, y, z + 1, color[0], color[1], color[2]
+                x, y, z + 1, u, v0,
+                x + 1, y, z + 1, uEnd, v0,
+                x + 1, y + 1, z + 1, uEnd, v1,
+                x + 1, y + 1, z + 1, uEnd, v1,
+                x, y + 1, z + 1, u, v1,
+                x, y, z + 1, u, v0
             };
             case 2: return new float[] {
-                x, y + 1, z + 1, color[0], color[1], color[2],
-                x + 1, y + 1, z + 1, color[0], color[1], color[2],
-                x + 1, y + 1, z, color[0], color[1], color[2],
-                x + 1, y + 1, z, color[0], color[1], color[2],
-                x, y + 1, z, color[0], color[1], color[2],
-                x, y + 1, z + 1, color[0], color[1], color[2]
+                x, y + 1, z + 1, u, v0,
+                x + 1, y + 1, z + 1, uEnd, v0,
+                x + 1, y + 1, z, uEnd, v1,
+                x + 1, y + 1, z, uEnd, v1,
+                x, y + 1, z, u, v1,
+                x, y + 1, z + 1, u, v0
             };
             case 3: return new float[] {
-                x, y, z, color[0], color[1], color[2],
-                x + 1, y, z, color[0], color[1], color[2],
-                x + 1, y, z + 1, color[0], color[1], color[2],
-                x + 1, y, z + 1, color[0], color[1], color[2],
-                x, y, z + 1, color[0], color[1], color[2],
-                x, y, z, color[0], color[1], color[2]
+                x, y, z, u, v0,
+                x + 1, y, z, uEnd, v0,
+                x + 1, y, z + 1, uEnd, v1,
+                x + 1, y, z + 1, uEnd, v1,
+                x, y, z + 1, u, v1,
+                x, y, z, u, v0
             };
             case 4: return new float[] {
-                x, y, z, color[0], color[1], color[2],
-                x, y, z + 1, color[0], color[1], color[2],
-                x, y + 1, z + 1, color[0], color[1], color[2],
-                x, y + 1, z + 1, color[0], color[1], color[2],
-                x, y + 1, z, color[0], color[1], color[2],
-                x, y, z, color[0], color[1], color[2]
+                x, y, z, u, v0,
+                x, y, z + 1, uEnd, v0,
+                x, y + 1, z + 1, uEnd, v1,
+                x, y + 1, z + 1, uEnd, v1,
+                x, y + 1, z, u, v1,
+                x, y, z, u, v0
             };
             case 5: return new float[] {
-                x + 1, y, z + 1, color[0], color[1], color[2],
-                x + 1, y, z, color[0], color[1], color[2],
-                x + 1, y + 1, z, color[0], color[1], color[2],
-                x + 1, y + 1, z, color[0], color[1], color[2],
-                x + 1, y + 1, z + 1, color[0], color[1], color[2],
-                x + 1, y, z + 1, color[0], color[1], color[2]
+                x + 1, y, z + 1, u, v0,
+                x + 1, y, z, uEnd, v0,
+                x + 1, y + 1, z, uEnd, v1,
+                x + 1, y + 1, z, uEnd, v1,
+                x + 1, y + 1, z + 1, u, v1,
+                x + 1, y, z + 1, u, v0
             };
             default: return new float[0];
         }
