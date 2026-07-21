@@ -2,6 +2,7 @@ package com.overlord;
 
 import com.overlord.core.Engine;
 import com.overlord.core.PlayerManager;
+import com.overlord.physics.PhysicsManager;
 
 import static org.lwjgl.glfw.GLFW.*;
 
@@ -15,8 +16,14 @@ public class Main {
         Engine engine = new Engine();
         engine.init();
         
+        PhysicsManager physicsManager = new PhysicsManager(
+            engine.getCamera(),
+            engine.getWorld()
+        );
+        
         PlayerManager playerManager = new PlayerManager(
             engine.getCamera(), 
+            physicsManager,
             engine.getWindow().getWindow()
         );
         
@@ -40,6 +47,7 @@ public class Main {
         
         while (engine.isRunning()) {
             engine.submitToCore(Engine.CORE_PLAYER, playerManager::update);
+            engine.submitToCore(Engine.CORE_PHYSICS, () -> physicsManager.update(0.016f));
             
             if (playerManager.shouldClose()) {
                 break;

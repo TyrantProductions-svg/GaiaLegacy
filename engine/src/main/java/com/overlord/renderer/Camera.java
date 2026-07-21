@@ -124,4 +124,12 @@ public class Camera {
         this.yaw = yaw;
         updateVectors();
     }
+    
+    public Vector3f getForward() {
+        return front;
+    }
+    
+    public Vector3f getRight() {
+        return right;
+    }
 }
