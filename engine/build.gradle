@@ -1,0 +1,35 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'com.overlord'
+version = '0.1.0'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+    withSourcesJar()
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    def lwjglVersion = '3.3.3'
+    def jomlVersion = '1.10.5'
+    def lwjglNatives = 'natives-macos-arm64'
+
+    api platform("org.lwjgl:lwjgl-bom:$lwjglVersion")
+
+    api "org.lwjgl:lwjgl"
+    api "org.lwjgl:lwjgl-glfw"
+    api "org.lwjgl:lwjgl-opengl"
+    api "org.lwjgl:lwjgl-stb"
+    runtimeOnly "org.lwjgl:lwjgl::$lwjglNatives"
+    runtimeOnly "org.lwjgl:lwjgl-glfw::$lwjglNatives"
+    runtimeOnly "org.lwjgl:lwjgl-opengl::$lwjglNatives"
+    runtimeOnly "org.lwjgl:lwjgl-stb::$lwjglNatives"
+
+    api "org.joml:joml:$jomlVersion"
+}

@@ -1,1 +1,2 @@
-rootProject.name = 'OverlordEngine'
+rootProject.name = 'GaiaLegacy'
+include 'engine', 'game'

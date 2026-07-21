@@ -39,9 +39,9 @@ public class ChunkMeshBuilder {
                         int worldX = chunkX * Chunk.SIZE + x;
                         int worldZ = chunkZ * Chunk.SIZE + z;
                         
-                        float px = x;
+                        float px = worldX;
                         float py = worldY;
-                        float pz = z;
+                        float pz = worldZ;
                         
                         if (!isBlockSolid(world, worldX, worldY, worldZ - 1)) {
                             addFace(vertices, px, py, pz, 0);

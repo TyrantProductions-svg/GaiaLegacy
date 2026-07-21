@@ -1,0 +1,12 @@
+{
+  "id": 0,
+  "name": "grass",
+  "tolerance": 3.0,
+  "structuralIntegrity": 50.0,
+  "hardness": 0.6,
+  "transparent": false,
+  "lightLevel": 0,
+  "flammable": false,
+  "gravity": false,
+  "blastResistance": 1.0
+}
