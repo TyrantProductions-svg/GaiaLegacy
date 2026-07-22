@@ -66,15 +66,14 @@ public class PhysicsManager {
         onGround = false;
     }
     
-    public void update(float deltaTime) {
+    public void update(float deltaTime, float moveX, float moveZ) {
         if (deltaTime <= 0) return;
         
         if (noclipMode) {
             return;
         }
         
-        applyGravity(deltaTime);
-        resolveCollisions(deltaTime);
+        resolveCollisions(deltaTime, moveX, moveZ);
     }
     
     public void applyNoclipMovement(float deltaTime, float upDownInput) {
@@ -91,110 +90,148 @@ public class PhysicsManager {
         }
     }
     
-    private void resolveCollisions(float deltaTime) {
+    private void resolveCollisions(float deltaTime, float moveX, float moveZ) {
         org.joml.Vector3f pos = camera.getPosition();
         
-        float playerMinX = pos.x - PLAYER_WIDTH / 2;
-        float playerMaxX = pos.x + PLAYER_WIDTH / 2;
-        float playerMinY = pos.y - PLAYER_HEIGHT;
-        float playerMaxY = pos.y;
-        float playerMinZ = pos.z - PLAYER_WIDTH / 2;
-        float playerMaxZ = pos.z + PLAYER_WIDTH / 2;
+        // Apply gravity
+        velocityY += GRAVITY * deltaTime;
+        velocityY = Math.max(velocityY, TERMINAL_VELOCITY);
         
-        int minX = (int) Math.floor(playerMinX);
-        int maxX = (int) Math.floor(playerMaxX);
-        int minY = (int) Math.floor(playerMinY);
-        int maxY = (int) Math.floor(playerMaxY);
-        int minZ = (int) Math.floor(playerMinZ);
-        int maxZ = (int) Math.floor(playerMaxZ);
+        // Try new vertical position
+        float newY = pos.y + velocityY * deltaTime;
         
-        boolean collidedX = false;
-        boolean collidedY = false;
-        boolean collidedZ = false;
-        boolean onGroundBlock = false;
+        // Check vertical collision - check ALL blocks under player's feet area
+        boolean verticalCollision = false;
+        float feetY = newY - PLAYER_HEIGHT;
+        int feetBlockY = (int) Math.floor(feetY);
+        
+        // Check all blocks that player's feet overlap with (wider area)
+        int minX = (int) Math.floor(pos.x - PLAYER_WIDTH / 2);
+        int maxX = (int) Math.floor(pos.x + PLAYER_WIDTH / 2);
+        int minZ = (int) Math.floor(pos.z - PLAYER_WIDTH / 2);
+        int maxZ = (int) Math.floor(pos.z + PLAYER_WIDTH / 2);
         
         for (int x = minX; x <= maxX; x++) {
-            for (int y = minY; y <= maxY; y++) {
-                for (int z = minZ; z <= maxZ; z++) {
-                    byte block = world.getBlock(x, y, z);
-                    if (block == 0) continue;
+            for (int z = minZ; z <= maxZ; z++) {
+                byte blockBelow = world.getBlock(x, feetBlockY, z);
+                if (blockBelow != 0) {
+                    float blockTop = feetBlockY + 1.0f;
                     
+                    // If feet would be inside or below the block, snap to top with tolerance
+                    if (feetY < blockTop) {
+                        pos.y = blockTop + PLAYER_HEIGHT + 0.001f;  // Small tolerance to stay ON TOP
+                        velocityY = 0.0f;
+                        onGround = true;
+                        verticalCollision = true;
+                        break;
+                    }
+                }
+            }
+            if (verticalCollision) break;
+        }
+        
+        // If no vertical collision, apply the movement
+        if (!verticalCollision) {
+            pos.y = newY;
+            onGround = false;
+        }
+        
+        // Predict new horizontal position
+        float newX = pos.x + moveX;
+        float newZ = pos.z + moveZ;
+        
+        // Check horizontal collisions - check feet level and one block above
+        float playerMinX = newX - PLAYER_WIDTH / 2;
+        float playerMaxX = newX + PLAYER_WIDTH / 2;
+        float playerMinZ = newZ - PLAYER_WIDTH / 2;
+        float playerMaxZ = newZ + PLAYER_WIDTH / 2;
+        
+        int hMinX = (int) Math.floor(playerMinX);
+        int hMaxX = (int) Math.floor(playerMaxX);
+        int hMinZ = (int) Math.floor(playerMinZ);
+        int hMaxZ = (int) Math.floor(playerMaxZ);
+        
+        // Use UPDATED position after vertical resolution
+        int hFeetBlockY = (int) Math.floor(pos.y - PLAYER_HEIGHT);
+        
+        boolean blockedX = false;
+        boolean blockedZ = false;
+        boolean steppedUp = false;
+        
+        for (int x = hMinX; x <= hMaxX; x++) {
+            for (int z = hMinZ; z <= hMaxZ; z++) {
+                // Check feet level
+                byte block = world.getBlock(x, hFeetBlockY, z);
+                if (block != 0) {
                     float blockMinX = x;
                     float blockMaxX = x + 1;
-                    float blockMinY = y;
-                    float blockMaxY = y + 1;
                     float blockMinZ = z;
                     float blockMaxZ = z + 1;
                     
                     if (playerMinX < blockMaxX && playerMaxX > blockMinX &&
-                        playerMinY < blockMaxY && playerMaxY > blockMinY &&
                         playerMinZ < blockMaxZ && playerMaxZ > blockMinZ) {
                         
-                        float overlapX = Math.min(playerMaxX - blockMinX, blockMaxX - playerMinX);
-                        float overlapY = Math.min(playerMaxY - blockMinY, blockMaxY - playerMinY);
-                        float overlapZ = Math.min(playerMaxZ - blockMinZ, blockMaxZ - playerMinZ);
+                        // Try auto step-up: check if space above is clear
+                        byte blockAbove = world.getBlock(x, hFeetBlockY + 1, z);
+                        byte blockAbove2 = world.getBlock(x, hFeetBlockY + 2, z);
                         
-                        if (overlapY < overlapX && overlapY < overlapZ) {
-                            if (!collidedY) {
-                                if (velocityY < 0) {
-                                    pos.y = blockMaxY;
-                                    onGround = true;
-                                } else {
-                                    pos.y = blockMinY - PLAYER_HEIGHT;
-                                }
-                                velocityY = 0;
-                                collidedY = true;
-                            }
-                        } else if (overlapX < overlapZ) {
-                            if (!collidedX) {
-                                if (playerMaxX - blockMinX < blockMaxX - playerMinX) {
-                                    pos.x = blockMinX - PLAYER_WIDTH / 2;
-                                } else {
-                                    pos.x = blockMaxX + PLAYER_WIDTH / 2;
-                                }
-                                collidedX = true;
-                            }
+                        if (blockAbove == 0 && blockAbove2 == 0) {
+                            // Space is clear, step up!
+                            pos.y = (hFeetBlockY + 1) + PLAYER_HEIGHT + 0.001f;
+                            onGround = true;
+                            steppedUp = true;
+                            break;
                         } else {
-                            if (!collidedZ) {
-                                if (playerMaxZ - blockMinZ < blockMaxZ - playerMinZ) {
-                                    pos.z = blockMinZ - PLAYER_WIDTH / 2;
-                                } else {
-                                    pos.z = blockMaxZ + PLAYER_WIDTH / 2;
-                                }
-                                collidedZ = true;
+                            // Can't step up, block movement
+                            float overlapX = Math.min(playerMaxX - blockMinX, blockMaxX - playerMinX);
+                            float overlapZ = Math.min(playerMaxZ - blockMinZ, blockMaxZ - playerMinZ);
+                            
+                            if (overlapX < overlapZ) {
+                                blockedX = true;
+                            } else {
+                                blockedZ = true;
                             }
                         }
                     }
                 }
+                
+                // Also check one block above (for body collision when jumping)
+                byte blockAbove = world.getBlock(x, hFeetBlockY + 1, z);
+                if (blockAbove != 0) {
+                    float blockMinX = x;
+                    float blockMaxX = x + 1;
+                    float blockMinZ = z;
+                    float blockMaxZ = z + 1;
+                    
+                    if (playerMinX < blockMaxX && playerMaxX > blockMinX &&
+                        playerMinZ < blockMaxZ && playerMaxZ > blockMinZ) {
+                        
+                        float overlapX = Math.min(playerMaxX - blockMinX, blockMaxX - playerMinX);
+                        float overlapZ = Math.min(playerMaxZ - blockMinZ, blockMaxZ - playerMinZ);
+                        
+                        if (overlapX < overlapZ) {
+                            blockedX = true;
+                        } else {
+                            blockedZ = true;
+                        }
+                    }
+                }
             }
+            if (steppedUp) break;
         }
         
-        int feetBlockX = (int) Math.floor(pos.x);
-        int feetBlockY = (int) Math.floor(pos.y - PLAYER_HEIGHT - 0.01f);
-        int feetBlockZ = (int) Math.floor(pos.z);
-        
-        byte blockBelow = world.getBlock(feetBlockX, feetBlockY, feetBlockZ);
-        if (blockBelow != 0) {
-            float blockTop = feetBlockY + 1;
-            float feetY = pos.y - PLAYER_HEIGHT;
-            
-            if (feetY >= blockTop - 0.1f && feetY <= blockTop + 0.1f && velocityY <= 0) {
-                pos.y = blockTop + PLAYER_HEIGHT;
-                velocityY = 0;
-                onGround = true;
-                onGroundBlock = true;
-            }
+        // Apply movement only on non-blocked axes
+        if (!blockedX) {
+            pos.x = newX;
         }
-        
-        if (!collidedY && !onGroundBlock) {
-            pos.y += velocityY * deltaTime;
-            onGround = false;
+        if (!blockedZ) {
+            pos.z = newZ;
         }
     }
     
-    public void jump() {
+    public void jump(float jumpVelocity) {
         if (onGround) {
-            velocityY = JUMP_VELOCITY;
+            velocityY = jumpVelocity;
             onGround = false;
         }
     }
