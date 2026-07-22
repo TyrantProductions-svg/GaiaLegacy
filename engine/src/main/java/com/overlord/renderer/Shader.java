@@ -48,6 +48,11 @@ public class Shader {
         glUniformMatrix4fv(location, false, matrix.get(new float[16]));
     }
     
+    public void setUniform(String name, int value) {
+        int location = glGetUniformLocation(programId, name);
+        glUniform1i(location, value);
+    }
+    
     public int getProgramId() {
         return programId;
     }
