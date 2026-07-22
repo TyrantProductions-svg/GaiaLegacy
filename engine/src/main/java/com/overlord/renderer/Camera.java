@@ -132,4 +132,12 @@ public class Camera {
     public Vector3f getRight() {
         return right;
     }
+    
+    public float getPitch() {
+        return pitch;
+    }
+    
+    public float getYaw() {
+        return yaw;
+    }
 }
