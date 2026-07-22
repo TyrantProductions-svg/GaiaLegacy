@@ -10,9 +10,19 @@ java {
     targetCompatibility = JavaVersion.VERSION_17
 }
 
+def osName = System.getProperty('os.name').toLowerCase()
+
+def defaultJvmArgs = [
+    '--enable-native-access=ALL-UNNAMED'
+]
+
+if (osName.contains('mac')) {
+    defaultJvmArgs.add('-XstartOnFirstThread')
+}
+
 application {
     mainClass = 'com.gaia.GaiaMain'
-    applicationDefaultJvmArgs = ['-XstartOnFirstThread', '--enable-native-access=ALL-UNNAMED']
+    applicationDefaultJvmArgs = defaultJvmArgs
 }
 
 dependencies {
