@@ -1,8 +1,10 @@
 package com.overlord.voxel;
 
+import com.overlord.config.GameConfig;
+
 public class SubChunk {
     
-    public static final int SIZE = 16;
+    public static final int SIZE = GameConfig.Chunk.SIZE;
     
     private byte[] blocks;
     private boolean dirty;

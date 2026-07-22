@@ -1,5 +1,6 @@
 package com.overlord.renderer;
 
+import com.overlord.config.GameConfig;
 import org.joml.Matrix4f;
 
 import static org.lwjgl.opengl.GL30C.*;
@@ -21,10 +22,10 @@ public class Renderer {
         glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
         
         projectionMatrix = new Matrix4f().perspective(
-            (float) Math.toRadians(60.0f),
+            (float) Math.toRadians(GameConfig.Rendering.FOV),
             (float) width / height,
-            0.1f,
-            1000.0f
+            GameConfig.Rendering.NEAR_PLANE,
+            GameConfig.Rendering.FAR_PLANE
         );
         
         String vertexSource = 

@@ -1,5 +1,6 @@
 package com.overlord.core;
 
+import com.overlord.config.GameConfig;
 import com.overlord.renderer.Camera;
 import com.overlord.renderer.Renderer;
 import com.overlord.voxel.World;
@@ -17,10 +18,10 @@ public class Engine {
      * Core 2 (CORE_WORLD):   World generation + Block updates (place/break)
      * Core 3 (CORE_PHYSICS): Physics + Entity AI (collision, mob behavior)
      */
-    public static final int CORE_RENDER = 0;
-    public static final int CORE_PLAYER = 1;
-    public static final int CORE_WORLD = 2;
-    public static final int CORE_PHYSICS = 3;
+    public static final int CORE_RENDER = GameConfig.Core.RENDER;
+    public static final int CORE_PLAYER = GameConfig.Core.PLAYER;
+    public static final int CORE_WORLD = GameConfig.Core.WORLD;
+    public static final int CORE_PHYSICS = GameConfig.Core.PHYSICS;
     
     private final int availableCores;
     private final ExecutorService[] coreThreads;
@@ -49,7 +50,7 @@ public class Engine {
     }
     
     public void init() {
-        window = new Window("Overlord Engine - Gaia Legacy", 1280, 720);
+        window = new Window();
         camera = new Camera();
         renderer = new Renderer();
         world = new World();

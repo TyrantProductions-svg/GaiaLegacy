@@ -1,19 +1,21 @@
 package com.overlord.voxel;
 
+import com.overlord.config.GameConfig;
+
 import java.util.HashMap;
 import java.util.Map;
 
 public class Chunk {
     
-    public static final int SIZE = 16;
-    public static final int SUBCHUNK_HEIGHT = 16;
+    public static final int SIZE = GameConfig.Chunk.SIZE;
+    public static final int SUBCHUNK_HEIGHT = GameConfig.Chunk.SUBCHUNK_HEIGHT;
     
     private final int worldHeight;
     private final int numSubChunks;
     private Map<Integer, SubChunk> subChunks;
     
     public Chunk() {
-        this(256);
+        this(GameConfig.Chunk.MAX_HEIGHT);
     }
     
     public Chunk(int worldHeight) {

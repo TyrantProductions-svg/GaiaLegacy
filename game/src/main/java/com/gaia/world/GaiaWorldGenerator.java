@@ -1,20 +1,14 @@
 package com.gaia.world;
 
 import com.gaia.blocks.BlockRegistry;
+import com.overlord.config.GameConfig;
 import com.overlord.voxel.Chunk;
 import com.overlord.voxel.PerlinNoise;
 import com.overlord.voxel.World;
 
 public class GaiaWorldGenerator {
     
-    private static final int SEED = 12345;
-    private static final int OCTAVES = 4;
-    private static final double PERSISTENCE = 0.5;
-    private static final double SCALE = 0.02;
-    private static final int BASE_HEIGHT = 20;
-    private static final int HEIGHT_VARIATION = 30;
-    
-    private static final PerlinNoise perlinNoise = new PerlinNoise(SEED);
+    private static final PerlinNoise perlinNoise = new PerlinNoise(GameConfig.WorldGeneration.SEED);
     
     public static void generateChunk(World world, int chunkX, int chunkZ) {
         Chunk chunk = world.getChunk(chunkX, chunkZ);
@@ -24,8 +18,14 @@ public class GaiaWorldGenerator {
                 int worldX = chunkX * Chunk.SIZE + x;
                 int worldZ = chunkZ * Chunk.SIZE + z;
                 
-                double noiseValue = perlinNoise.octaveNoise2D(worldX * SCALE, worldZ * SCALE, OCTAVES, PERSISTENCE);
-                int height = BASE_HEIGHT + (int) (noiseValue * HEIGHT_VARIATION);
+                double noiseValue = perlinNoise.octaveNoise2D(
+                    worldX * GameConfig.WorldGeneration.SCALE, 
+                    worldZ * GameConfig.WorldGeneration.SCALE, 
+                    GameConfig.WorldGeneration.OCTAVES, 
+                    GameConfig.WorldGeneration.PERSISTENCE
+                );
+                int height = GameConfig.WorldGeneration.BASE_HEIGHT + 
+                    (int) (noiseValue * GameConfig.WorldGeneration.HEIGHT_VARIATION);
                 
                 height = Math.max(1, height);
                 

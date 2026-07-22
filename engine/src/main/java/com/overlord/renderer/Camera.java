@@ -1,5 +1,6 @@
 package com.overlord.renderer;
 
+import com.overlord.config.GameConfig;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
@@ -27,7 +28,7 @@ public class Camera {
         yaw = -90.0f;
         pitch = 0.0f;
         
-        movementSpeed = 5.0f;
+        movementSpeed = GameConfig.Player.MOVEMENT_SPEED;
         mouseSensitivity = 0.1f;
         
         updateVectors();
@@ -129,8 +130,16 @@ public class Camera {
         return front;
     }
     
+    public Vector3f getForward(Vector3f dest) {
+        return dest.set(front);
+    }
+    
     public Vector3f getRight() {
         return right;
+    }
+    
+    public Vector3f getRight(Vector3f dest) {
+        return dest.set(right);
     }
     
     public float getPitch() {
