@@ -131,7 +131,13 @@ class GaiaResourceLoaderTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"comment", "single-quote", "unquoted-name"})
+    @ValueSource(
+            strings = {
+                "comment",
+                "single-quote",
+                "unquoted-name",
+                "trailing-value"
+            })
     void rejectsLenientJsonExtensions(String extension) throws Exception {
         Map<String, byte[]> entries = validEntries();
         String json =
@@ -154,6 +160,8 @@ class GaiaResourceLoaderTest {
                             json.replace(
                                     "\"id\":1",
                                     "id:1");
+                    case "trailing-value" ->
+                            json + "{}";
                     default -> throw new AssertionError(extension);
                 };
         putJson(entries, SOLID, malformed);
