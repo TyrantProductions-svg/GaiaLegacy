@@ -65,12 +65,13 @@ public static void main(String[] args) {
 4. constructs and initializes `Engine`;
 5. creates `InputManager` and installs the sole input callbacks;
 6. creates `PhysicsManager` and `PlayerManager` with explicit dependencies;
-7. creates `FrameClock` and `FixedStepClock`;
-8. creates a named, lifecycle-owned world worker executor;
-9. submits `WorldLoader.load(World)` as a `CompletableFuture<WorldLoadResult>`;
-10. builds an immutable `GameContext`;
-11. runs `GameLoop`;
-12. closes all registered resources in `finally`.
+7. initializes registered modules with `ModuleManager.initAll()`;
+8. creates `FrameClock` and `FixedStepClock`;
+9. creates a named, lifecycle-owned world worker executor;
+10. submits `WorldLoader.load(World)` as a `CompletableFuture<WorldLoadResult>`;
+11. builds an immutable `GameContext`;
+12. runs `GameLoop`;
+13. closes all registered resources in `finally`.
 
 No new object is registered in `ServiceLocator`.
 
@@ -259,6 +260,8 @@ com.gaia
 - find the same spawn column;
 - apply the same fallback spawn column when required;
 - return the same spawn offset.
+
+The loader checks `Thread.currentThread().isInterrupted()` before each chunk generation and mesh-build iteration and throws `CancellationException` when interrupted. This makes loading cancellation bounded by one chunk operation without adding polling sleeps.
 
 It returns:
 
