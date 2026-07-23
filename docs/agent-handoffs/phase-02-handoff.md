@@ -2,9 +2,9 @@
 
 Phase 2 started from
 `bb5368bdcb4e55d0939f4600aad6afef0c0f5f14`
-(`Refactor/engine lifecycle (#6)`) and is recorded here at
-`91f70c218f34789165ad0b45328535286695e645`
-(`test(assets): reject trailing JSON values`) on
+(`Refactor/engine lifecycle (#6)`) and is recorded here through
+`51391b12c04436ea8822e206b786dd34b2de472b`
+(`fix(assets): report semantic JSON fields precisely`) on
 `feat/resource-material-system`.
 
 ## Completed work
@@ -24,15 +24,19 @@ Phase 2 started from
   The final parser consumes Gson `JsonReader` tokens in strict mode, rejects
   comments, single-quoted or unquoted names, trailing values, and duplicate
   keys before building a JSON tree, and preserves exact fields for unknown,
-  missing, wrong-type, and duplicate-field diagnostics.
+  missing, wrong-type, duplicate-field, and semantic value diagnostics.
+  Resource identifiers, render types, numeric constructor constraints, nested
+  item values, atlas dimensions, and region bounds are validated at their JSON
+  field boundaries instead of falling back to the root `$` field.
 - Preserved fixed unsigned block IDs `0..255`, including `air=0`, `grass=1`,
   `dirt=2`, and `stone=3`; removed the legacy static registry bridge and the
   obsolete `Block`/`BlockProperties` definition path.
 - Added indexed production block, material, atlas, and texture resources.
   Existing grass, dirt, and stone atlas tiles were preserved. The new
   purple-and-black missing tile is original GaiaLegacy project work.
-- Made block item forms optional for every block definition, while preserving
-  air ID zero as the non-renderable empty-world invariant.
+- Made block item forms optional for non-air block definitions. Air ID zero
+  remains the non-renderable empty-world invariant and is rejected if it
+  declares an item form.
 - Aligned missing material and region resolution with the actually selected
   atlas. A missing `material.missingRegion` now warns and resolves to the
   selected atlas checker tile. Missing/undecodable/I/O-failed complete atlas
@@ -251,15 +255,15 @@ contain 22 suites and 111 tests with 0 failures, 0 errors, and 0 skipped tests.
 The final-review fixes used focused RED/GREEN cycles for namespace traversal,
 strict/malformed/duplicate JSON, structured diagnostic fields, optional item
 forms, atlas/material/region fallback consistency, recoverable texture I/O,
-and resolver-based neighbor occlusion. The focused suites passed before the
-final clean run.
+resolver-based neighbor occlusion, exact semantic field attribution, and the
+air-with-item rejection. The focused suites passed before the final clean run.
 
 ```powershell
 .\gradlew.bat clean test build --console=plain --no-daemon
 ```
 
-Result on Windows 2026-07-24: `BUILD SUCCESSFUL in 13s`; all 16 actionable
-tasks executed. JUnit XML reports contain 22 suites and 128 tests with
+Latest result on Windows 2026-07-24: `BUILD SUCCESSFUL in 14s`; all 16
+actionable tasks executed. JUnit XML reports contain 22 suites and 154 tests with
 0 failures, 0 errors, and 0 skipped tests. This includes
 `:game:verifyPackagedResources`.
 
@@ -273,6 +277,13 @@ packaged game JAR contained every required indexed resource.
 The trailing-value JSON regression was mutation-verified: removing the
 `END_DOCUMENT` guard produced one expected RED failure among the four strict
 syntax cases, and restoring it returned all four to GREEN.
+
+The semantic-field follow-up first ran 61 focused loader invocations against
+unchanged production code: 24 semantic cases failed because diagnostics used
+`$` or an aggregate region path, and the air-with-item case failed because no
+exception was thrown. After field-boundary validation, the focused loader suite
+passed 62 invocations, including a separately RED/GREEN verified non-object
+atlas-region case. The complete game suite then passed 81 tests in eight suites.
 
 ### Packaged resource inspection
 
@@ -335,7 +346,8 @@ face vertex layouts and do not encode grass, dirt, stone, or atlas data.
 - `GaiaResourceLoader` is intentionally cohesive but large. Future refactoring
   must preserve its deterministic pass boundaries, strict token parsing before
   tree construction, duplicate-key detection, diagnostic field provenance and
-  ordering, effective atlas/image alignment, and aggregation behavior.
+  ordering, semantic field-boundary validation, effective atlas/image
+  alignment, and aggregation behavior.
 - `RenderType.CUTOUT` and `RenderType.TRANSPARENT` are validated data values
   only; Phase 2 does not implement matching draw queues, shader branches,
   blending, or sorting.
@@ -360,7 +372,7 @@ face vertex layouts and do not encode grass, dirt, stone, or atlas data.
   `BlockRenderResolver` remains the narrow engine/game rendering boundary.
 - Renderable block lookup remains six-face `TextureRegion` atlas lookup with
   the existing face order and UV/image-origin convention. Air remains
-  non-renderable.
+  non-renderable and cannot declare an item form.
 - Missing material, region, and image paths remain visible and produce
   structured diagnostics without masking fatal schema, duplicate, bounds, or
   ambiguity errors.
@@ -391,21 +403,21 @@ face vertex layouts and do not encode grass, dirt, stone, or atlas data.
 
 ## Final phase report
 
-Committed diff from the Phase 2 base through the final reviewed implementation
-head `91f70c2`:
+Committed diff from the Phase 2 base through the latest reviewed implementation
+head `51391b1`:
 
 ```text
-70 files changed, 10424 insertions(+), 485 deletions(-)
+70 files changed, 10887 insertions(+), 485 deletions(-)
 ```
 
 Local `.superpowers/sdd` briefs, reports, review packages, and progress records
 remain intentionally ignored. The tracked handoff update follows
-`91f70c2` as the documentation-only closeout commit.
+`51391b1` as the documentation-only closeout commit.
 
 Including this tracked handoff closeout, the prepared final branch diff is:
 
 ```text
-70 files changed, 10493 insertions(+), 485 deletions(-)
+70 files changed, 10901 insertions(+), 485 deletions(-)
 ```
 
 Final review-fix commits:
@@ -414,6 +426,8 @@ Final review-fix commits:
 d15c531 fix(assets): harden resource parsing and fallbacks
 e25303f fix(rendering): treat non-renderable neighbors as empty
 91f70c2 test(assets): reject trailing JSON values
+eccbaa1 docs: update Phase 2 review-fix handoff
+51391b1 fix(assets): report semantic JSON fields precisely
 ```
 
 Suggested documentation closeout commit:
@@ -451,7 +465,7 @@ Suggested pull request description:
 
 - `.\gradlew.bat clean test build --console=plain --no-daemon`
   - BUILD SUCCESSFUL; 16/16 tasks executed
-  - 128 tests in 22 suites; 0 failures/errors/skips
+  - 154 tests in 22 suites; 0 failures/errors/skips
   - packaged-resource verification passed
 - `.\gradlew.bat :game:verifyPackagedResources --rerun-tasks --console=plain --no-daemon`
   - BUILD SUCCESSFUL; 5/5 tasks executed
