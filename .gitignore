@@ -1,6 +1,11 @@
 .gradle/
 build/
 !gradle/wrapper/gradle-wrapper.jar
+bin/
+**/bin/*
+*.class*
+*hs_err_pid*
+*replay_pid*
 .idea/
 *.iml
 .vscode/
