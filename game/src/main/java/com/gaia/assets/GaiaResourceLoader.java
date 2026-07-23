@@ -842,12 +842,54 @@ public final class GaiaResourceLoader {
         BlockRegistry registry =
                 BlockRegistry.create(
                         sortedBlocks, renderInfoById);
+        List<AssetDiagnostic> textureDiagnostics =
+                new ArrayList<>();
         TextureImage image =
                 new TextureImageLoader()
                         .load(
                                 assetManager,
                                 selectedAtlas.texture(),
-                                diagnostics::add);
+                                textureDiagnostics::add);
+        for (AssetDiagnostic diagnostic :
+                textureDiagnostics) {
+            diagnostics.add(diagnostic);
+        }
+        boolean usedTextureFallback =
+                textureDiagnostics.stream()
+                        .anyMatch(
+                                diagnostic ->
+                                        diagnostic.code()
+                                                        .equals(
+                                                                "ASSET_TEXTURE_FALLBACK")
+                                                && selectedAtlas
+                                                        .texture()
+                                                        .equals(
+                                                                diagnostic
+                                                                        .resource()));
+        if (!usedTextureFallback
+                && (image.width() != selectedAtlas.width()
+                        || image.height()
+                                != selectedAtlas.height())) {
+            DefinitionSource atlasSource =
+                    context.atlasSources.get(
+                            selectedAtlas.id());
+            diagnostics.add(
+                    new AssetDiagnostic(
+                            AssetSeverity.ERROR,
+                            "ASSET_ATLAS_IMAGE_SIZE_MISMATCH",
+                            atlasSource.source(),
+                            selectedAtlas.texture(),
+                            "texture",
+                            "Atlas metadata declares "
+                                    + selectedAtlas.width()
+                                    + "x"
+                                    + selectedAtlas.height()
+                                    + " but decoded image is "
+                                    + image.width()
+                                    + "x"
+                                    + image.height(),
+                            null));
+        }
         RenderAssets renderAssets = new RenderAssets(image);
 
         return new GaiaAssetCatalog(

@@ -797,6 +797,43 @@ class GaiaResourceLoaderTest {
     }
 
     @Test
+    void decodedAtlasImageMustMatchDeclaredDimensions()
+            throws Exception {
+        Map<String, byte[]> entries = validEntries();
+        String atlas =
+                new String(
+                        entries.get(BLOCK_ATLAS),
+                        StandardCharsets.UTF_8);
+        putJson(
+                entries,
+                BLOCK_ATLAS,
+                atlas.replace(
+                        "\"width\":1,\"height\":1,\"regions\":",
+                        "\"width\":2,\"height\":1,\"regions\":"));
+
+        AssetLoadException failure = failure(entries);
+        AssetDiagnostic diagnostic =
+                failure.report().errors().get(0);
+
+        assertAll(
+                () -> assertEquals(1, failure.report().errors().size()),
+                () ->
+                        assertEquals(
+                                "ASSET_ATLAS_IMAGE_SIZE_MISMATCH",
+                                diagnostic.code()),
+                () -> assertEquals(BLOCK_ATLAS, diagnostic.source()),
+                () ->
+                        assertEquals(
+                                ResourceLocation.parse(
+                                        "test:textures/atlas.png"),
+                                diagnostic.resource()),
+                () -> assertEquals("texture", diagnostic.field()),
+                () -> assertTrue(diagnostic.message().contains("2x1")),
+                () -> assertTrue(diagnostic.message().contains("1x1")),
+                () -> assertEquals(null, diagnostic.fallback()));
+    }
+
+    @Test
     void ambiguousAtlasImageOwnershipRemainsFatal()
             throws Exception {
         Path basePath = temp.resolve("ambiguous-base.jar");
@@ -916,6 +953,10 @@ class GaiaResourceLoaderTest {
             String field)
             throws Exception {
         AssetLoadException failure = failure(entries);
+        assertEquals(
+                1,
+                failure.report().errors().size(),
+                "single-fault fixture emitted unexpected errors");
         AssetDiagnostic diagnostic =
                 failure.report().errors().stream()
                         .filter(candidate -> candidate.code().equals(code))
