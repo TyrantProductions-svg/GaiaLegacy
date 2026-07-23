@@ -3,8 +3,8 @@
 Phase 2 started from
 `bb5368bdcb4e55d0939f4600aad6afef0c0f5f14`
 (`Refactor/engine lifecycle (#6)`) and is recorded here at
-`a00fcbf9159ee26a48edc90e71d72148df5a8388`
-(`refactor(core): compose indexed assets at bootstrap`) on
+`91f70c218f34789165ad0b45328535286695e645`
+(`test(assets): reject trailing JSON values`) on
 `feat/resource-material-system`.
 
 ## Completed work
@@ -12,22 +12,37 @@ Phase 2 started from
 - Added validated, comparable `ResourceLocation` values and deterministic,
   stream-based classpath discovery through
   `META-INF/gaialegacy/resource-indexes.list`. Directory and JAR resources use
-  the same `ClassLoader`/stream path.
+  the same `ClassLoader`/stream path. Final review also hardened the namespace
+  boundary by rejecting the complete `.` and `..` namespace segments before
+  classpath mapping.
 - Added immutable asset diagnostics, reports, index/source values, render
   material values, atlas metadata, texture regions, CPU texture images, block
   render values, and the `BlockRenderResolver` engine boundary.
 - Added strict Gaia JSON parsing, deterministic multi-pass validation,
   source/field-aware diagnostics, cross-namespace references, guarded missing
   assets, an immutable `BlockRegistry`, and an immutable `GaiaAssetCatalog`.
+  The final parser consumes Gson `JsonReader` tokens in strict mode, rejects
+  comments, single-quoted or unquoted names, trailing values, and duplicate
+  keys before building a JSON tree, and preserves exact fields for unknown,
+  missing, wrong-type, and duplicate-field diagnostics.
 - Preserved fixed unsigned block IDs `0..255`, including `air=0`, `grass=1`,
   `dirt=2`, and `stone=3`; removed the legacy static registry bridge and the
   obsolete `Block`/`BlockProperties` definition path.
 - Added indexed production block, material, atlas, and texture resources.
   Existing grass, dirt, and stone atlas tiles were preserved. The new
   purple-and-black missing tile is original GaiaLegacy project work.
+- Made block item forms optional for every block definition, while preserving
+  air ID zero as the non-renderable empty-world invariant.
+- Aligned missing material and region resolution with the actually selected
+  atlas. A missing `material.missingRegion` now warns and resolves to the
+  selected atlas checker tile. Missing/undecodable/I/O-failed complete atlas
+  images publish matching procedural 2x2 metadata and UVs; ambiguous classpath
+  ownership remains fatal.
 - Replaced engine block-specific UV selection with constructor-injected,
   six-face `TextureRegion` lookup. World generation resolves Gaia block IDs
-  once from the registry.
+  once from the registry. Neighbor occlusion now also uses resolved
+  `renderable()` state, so unknown or non-renderable nonzero IDs cannot leave
+  holes in adjacent geometry.
 - Loads and validates assets before world work, injects CPU-side
   `RenderAssets` into `Engine`/`Renderer`, and uploads the selected texture only
   after the existing main-thread guard succeeds.
@@ -70,6 +85,11 @@ Phase 2 started from
 - Namespace/resource duplicates and ambiguous classpath ownership are errors,
   not precedence. Resource pack priority and same-namespace aggregation are
   intentionally undefined.
+- `ResourceLocation` rejects complete namespace segments `.` and `..`; other
+  valid dot-containing namespaces remain stable identifiers.
+- Gaia JSON is parsed from strict tokens into a tree only after per-object
+  duplicate-key checks. Structured field paths are retained as diagnostics
+  cross schema and parser boundaries.
 - Validated catalogs, registries, diagnostics, atlas metadata, texture images,
   and block render data are published as immutable or copy-owned values.
 - World/save storage remains byte-based. Registry boundaries convert stored
@@ -77,7 +97,10 @@ Phase 2 started from
   than dynamically assigned values.
 - Renderable blocks resolve one material and exactly six face regions. Air ID
   zero is non-renderable. Missing material/region/image behavior stays visible
-  and produces structured diagnostics.
+  and produces structured diagnostics. Fallback render metadata always matches
+  the selected CPU image: real atlas metadata is retained when its canonical
+  missing tile exists, otherwise the bound image and metadata both become the
+  same procedural 2x2 checker.
 - Asset discovery, JSON parsing, validation, world generation, and mesh data
   creation are CPU-only. All GLFW calls, OpenGL calls, and GPU
   create/upload/use/destroy operations remain on the main/context-owning thread.
@@ -87,8 +110,8 @@ Phase 2 started from
 
 ## Modified files
 
-The tracked paths below differ from the Phase 2 base. Task 11 documentation is
-included even though it is untracked at the handoff snapshot. Local ignored
+The tracked paths below differ from the Phase 2 base, including this Task 11
+handoff finalized by the documentation-only closeout commit. Local ignored
 execution records are listed separately and are not part of the Git diff.
 
 ### Root and documentation
@@ -223,6 +246,34 @@ executed, including engine/game compilation and tests,
 `:game:verifyPackagedResources`, and both module builds. JUnit XML reports
 contain 22 suites and 111 tests with 0 failures, 0 errors, and 0 skipped tests.
 
+### Final review-fix verification
+
+The final-review fixes used focused RED/GREEN cycles for namespace traversal,
+strict/malformed/duplicate JSON, structured diagnostic fields, optional item
+forms, atlas/material/region fallback consistency, recoverable texture I/O,
+and resolver-based neighbor occlusion. The focused suites passed before the
+final clean run.
+
+```powershell
+.\gradlew.bat clean test build --console=plain --no-daemon
+```
+
+Result on Windows 2026-07-24: `BUILD SUCCESSFUL in 13s`; all 16 actionable
+tasks executed. JUnit XML reports contain 22 suites and 128 tests with
+0 failures, 0 errors, and 0 skipped tests. This includes
+`:game:verifyPackagedResources`.
+
+```powershell
+.\gradlew.bat :game:verifyPackagedResources --rerun-tasks --console=plain --no-daemon
+```
+
+Result: `BUILD SUCCESSFUL in 7s`; all five actionable tasks executed and the
+packaged game JAR contained every required indexed resource.
+
+The trailing-value JSON regression was mutation-verified: removing the
+`END_DOCUMENT` guard produced one expected RED failure among the four strict
+syntax cases, and restoring it returned all four to GREEN.
+
 ### Packaged resource inspection
 
 ```powershell
@@ -282,8 +333,9 @@ face vertex layouts and do not encode grass, dirt, stone, or atlas data.
 - Native macOS execution, Retina framebuffer behavior, and macOS native
   selection remain unverified in this Windows-only Task 11 run.
 - `GaiaResourceLoader` is intentionally cohesive but large. Future refactoring
-  must preserve its deterministic pass boundaries, diagnostic provenance and
-  ordering, aggregation behavior, and strict schema semantics.
+  must preserve its deterministic pass boundaries, strict token parsing before
+  tree construction, duplicate-key detection, diagnostic field provenance and
+  ordering, effective atlas/image alignment, and aggregation behavior.
 - `RenderType.CUTOUT` and `RenderType.TRANSPARENT` are validated data values
   only; Phase 2 does not implement matching draw queues, shader branches,
   blending, or sorting.
@@ -339,20 +391,35 @@ face vertex layouts and do not encode grass, dirt, stone, or atlas data.
 
 ## Final phase report
 
-Committed implementation diff from the Phase 2 base through `a00fcbf`:
+Committed diff from the Phase 2 base through the final reviewed implementation
+head `91f70c2`:
 
 ```text
-67 files changed, 9081 insertions(+), 483 deletions(-)
+70 files changed, 10424 insertions(+), 485 deletions(-)
 ```
 
-Task 11 additionally adds the three untracked documents intended for commit:
-`THIRD_PARTY_NOTICES.md`, `docs/references.md`, and this handoff. Local
-`.superpowers/sdd` progress/report files are intentionally ignored.
+Local `.superpowers/sdd` briefs, reports, review packages, and progress records
+remain intentionally ignored. The tracked handoff update follows
+`91f70c2` as the documentation-only closeout commit.
 
-Suggested Task 11 documentation commit:
+Including this tracked handoff closeout, the prepared final branch diff is:
 
 ```text
-docs: document Phase 2 assets and handoff
+70 files changed, 10493 insertions(+), 485 deletions(-)
+```
+
+Final review-fix commits:
+
+```text
+d15c531 fix(assets): harden resource parsing and fallbacks
+e25303f fix(rendering): treat non-renderable neighbors as empty
+91f70c2 test(assets): reject trailing JSON values
+```
+
+Suggested documentation closeout commit:
+
+```text
+docs: update Phase 2 review-fix handoff
 ```
 
 Suggested squashed Phase 2 commit:
@@ -384,8 +451,10 @@ Suggested pull request description:
 
 - `.\gradlew.bat clean test build --console=plain --no-daemon`
   - BUILD SUCCESSFUL; 16/16 tasks executed
-  - 111 tests in 22 suites; 0 failures/errors/skips
+  - 128 tests in 22 suites; 0 failures/errors/skips
   - packaged-resource verification passed
+- `.\gradlew.bat :game:verifyPackagedResources --rerun-tasks --console=plain --no-daemon`
+  - BUILD SUCCESSFUL; 5/5 tasks executed
 - repository hygiene and architecture searches passed
 - Windows interactive `.\gradlew.bat :game` remains a developer smoke test
 - macOS automated and interactive commands require developer/CI verification
