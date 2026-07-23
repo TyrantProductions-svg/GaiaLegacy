@@ -1,8 +1,15 @@
 package com.gaia;
 
+import com.gaia.assets.GaiaAssetCatalog;
+import com.gaia.assets.GaiaResourceLoader;
 import com.gaia.blocks.BlockRegistry;
+import com.gaia.world.GaiaWorldGenerator;
 import com.gaia.world.WorldLoadResult;
 import com.gaia.world.WorldLoader;
+import com.overlord.assets.AssetDiagnostic;
+import com.overlord.assets.AssetLoadReport;
+import com.overlord.assets.AssetManager;
+import com.overlord.assets.ResourceLocation;
 import com.overlord.core.Engine;
 import com.overlord.core.ModuleManager;
 import com.overlord.core.PlayerManager;
@@ -12,6 +19,7 @@ import com.overlord.core.thread.MainThreadGuard;
 import com.overlord.core.time.FixedStepClock;
 import com.overlord.core.time.FrameClock;
 import com.overlord.physics.PhysicsManager;
+import com.overlord.voxel.ChunkMeshBuilder;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -27,10 +35,18 @@ public final class GameBootstrap {
         ShutdownCoordinator shutdownCoordinator = new ShutdownCoordinator();
         Throwable primaryFailure = null;
         try {
-            BlockRegistry.init();
-            BlockRegistry.loadAllFromResources();
+            ClassLoader classLoader =
+                    GameBootstrap.class.getClassLoader();
+            GaiaAssetCatalog catalog =
+                    new GaiaResourceLoader(
+                                    new AssetManager(classLoader))
+                            .load();
+            logAssetReport(catalog.report());
 
-            Engine engine = new Engine(mainThreadGuard);
+            Engine engine =
+                    new Engine(
+                            mainThreadGuard,
+                            catalog.renderAssets());
             engine.init();
             shutdownCoordinator.register("engine", engine::shutdown);
 
@@ -49,6 +65,20 @@ public final class GameBootstrap {
                     new FixedStepClock(
                             FIXED_STEP_SECONDS, MAX_FIXED_STEPS_PER_FRAME);
 
+            BlockRegistry blocks = catalog.blockRegistry();
+            GaiaWorldGenerator generator =
+                    new GaiaWorldGenerator(blocks);
+            ChunkMeshBuilder meshBuilder =
+                    new ChunkMeshBuilder(blocks);
+            byte fallbackGroundId =
+                    blocks.requireStoredId(
+                            ResourceLocation.parse("gaia:grass"));
+            WorldLoader worldLoader =
+                    new WorldLoader(
+                            generator,
+                            meshBuilder,
+                            fallbackGroundId);
+
             ExecutorService worldExecutor =
                     Executors.newSingleThreadExecutor(
                             runnable -> {
@@ -62,7 +92,7 @@ public final class GameBootstrap {
 
             CompletableFuture<WorldLoadResult> worldLoad =
                     CompletableFuture.supplyAsync(
-                            () -> new WorldLoader().load(engine.getWorld()),
+                            () -> worldLoader.load(engine.getWorld()),
                             worldExecutor);
             shutdownCoordinator.register(
                     "world-load", () -> worldLoad.cancel(true));
@@ -83,6 +113,33 @@ public final class GameBootstrap {
             throw failure;
         } finally {
             closeAfterRun(shutdownCoordinator, primaryFailure);
+        }
+    }
+
+    static void logAssetReport(AssetLoadReport report) {
+        for (AssetDiagnostic diagnostic : report.diagnostics()) {
+            StringBuilder line =
+                    new StringBuilder()
+                            .append(diagnostic.severity())
+                            .append(' ')
+                            .append(diagnostic.code())
+                            .append(" source=")
+                            .append(diagnostic.source());
+            if (diagnostic.resource() != null) {
+                line.append(" resource=")
+                        .append(diagnostic.resource());
+            }
+            if (diagnostic.field() != null) {
+                line.append(" field=")
+                        .append(diagnostic.field());
+            }
+            line.append(" message=")
+                    .append(diagnostic.message());
+            if (diagnostic.fallback() != null) {
+                line.append(" fallback=")
+                        .append(diagnostic.fallback());
+            }
+            System.out.println(line);
         }
     }
 
