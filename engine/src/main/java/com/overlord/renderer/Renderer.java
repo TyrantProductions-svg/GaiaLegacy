@@ -1,12 +1,14 @@
 package com.overlord.renderer;
 
 import com.overlord.config.GameConfig;
+import com.overlord.core.thread.MainThreadGuard;
+import java.util.Objects;
 import org.joml.Matrix4f;
 
 import static org.lwjgl.opengl.GL30C.*;
 
 public class Renderer {
-    
+    private final MainThreadGuard mainThreadGuard;
     private Shader shader;
     private Mesh mesh;
     private Mesh fallbackMesh;
@@ -14,19 +16,20 @@ public class Renderer {
     private Texture textureAtlas;
     
     private Matrix4f projectionMatrix;
-    
+
+    public Renderer(MainThreadGuard mainThreadGuard) {
+        this.mainThreadGuard = Objects.requireNonNull(mainThreadGuard, "mainThreadGuard");
+    }
+
     public void init(Camera camera, int width, int height) {
+        mainThreadGuard.assertMainThread("renderer initialization");
         this.camera = camera;
-        
+
         glEnable(GL_DEPTH_TEST);
         glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
-        
-        projectionMatrix = new Matrix4f().perspective(
-            (float) Math.toRadians(GameConfig.Rendering.FOV),
-            (float) width / height,
-            GameConfig.Rendering.NEAR_PLANE,
-            GameConfig.Rendering.FAR_PLANE
-        );
+
+        rebuildProjection(width, height);
+        glViewport(0, 0, width, height);
         
         String vertexSource = 
             "#version 410 core\n" +
@@ -50,9 +53,9 @@ public class Renderer {
             "    FragColor = texture(textureAtlas, TexCoord);\n" +
             "}\n";
         
-        shader = new Shader(vertexSource, fragmentSource);
-        
-        textureAtlas = new Texture("textures/atlas.png");
+        shader = new Shader(mainThreadGuard, vertexSource, fragmentSource);
+
+        textureAtlas = new Texture(mainThreadGuard, "textures/atlas.png");
         
         float[] vertices = {
             -0.5f, -0.5f, -0.5f,  0.0f, 0.0f,
@@ -98,25 +101,39 @@ public class Renderer {
             -0.5f,  0.5f, -0.5f,  0.0f, 0.0f
         };
         
-        mesh = new Mesh(vertices);
+        mesh = new Mesh(mainThreadGuard, vertices);
         fallbackMesh = mesh;
     }
     
-    public Mesh getFallbackMesh() {
-        return fallbackMesh;
+    public void replaceMesh(float[] vertices) {
+        mainThreadGuard.assertMainThread("terrain mesh GPU upload");
+        Mesh replacement = new Mesh(mainThreadGuard, vertices);
+        if (mesh != null && mesh != fallbackMesh) {
+            mesh.cleanup();
+        }
+        mesh = replacement;
     }
-    
-    public void setMesh(Mesh mesh) {
-        this.mesh = mesh;
-    }
-    
-    public void render() {
+
+    public void clear() {
+        mainThreadGuard.assertMainThread("framebuffer clear");
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        
+    }
+
+    public void resizeFramebuffer(int width, int height) {
+        mainThreadGuard.assertMainThread("framebuffer resize");
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+        glViewport(0, 0, width, height);
+        rebuildProjection(width, height);
+    }
+
+    public void render() {
+        mainThreadGuard.assertMainThread("scene rendering");
         if (mesh == null) return;
-        
+
         shader.use();
-        
+
         textureAtlas.bind(0);
         shader.setUniformMat4f("projection", projectionMatrix);
         shader.setUniformMat4f("view", camera.getViewMatrix());
@@ -124,16 +141,39 @@ public class Renderer {
         
         mesh.draw();
     }
-    
+
     public void cleanup() {
-        if (mesh != null) {
+        mainThreadGuard.assertMainThread("renderer cleanup");
+        if (mesh != null && mesh != fallbackMesh) {
             mesh.cleanup();
+        }
+        mesh = null;
+        if (fallbackMesh != null) {
+            fallbackMesh.cleanup();
+            fallbackMesh = null;
         }
         if (shader != null) {
             shader.cleanup();
+            shader = null;
         }
         if (textureAtlas != null) {
             textureAtlas.cleanup();
+            textureAtlas = null;
         }
+        camera = null;
+        projectionMatrix = null;
+    }
+
+    private void rebuildProjection(int width, int height) {
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+        projectionMatrix =
+                new Matrix4f()
+                        .perspective(
+                                (float) Math.toRadians(GameConfig.Rendering.FOV),
+                                (float) width / height,
+                                GameConfig.Rendering.NEAR_PLANE,
+                                GameConfig.Rendering.FAR_PLANE);
     }
 }

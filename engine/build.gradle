@@ -58,4 +58,11 @@ dependencies {
     runtimeOnly "org.lwjgl:lwjgl-stb::$lwjglNatives"
 
     api "org.joml:joml:$jomlVersion"
+
+    testImplementation "org.junit.jupiter:junit-jupiter:6.1.1"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+test {
+    useJUnitPlatform()
 }

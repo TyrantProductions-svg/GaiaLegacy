@@ -66,5 +66,6 @@ public class GameConfig {
         public static final int KEY_JUMP = org.lwjgl.glfw.GLFW.GLFW_KEY_SPACE;
         public static final int KEY_DESCEND = org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT;
         public static final int KEY_CLOSE = org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE;
+        public static final int KEY_CURSOR_CAPTURE = org.lwjgl.glfw.GLFW.GLFW_KEY_F1;
     }
 }
