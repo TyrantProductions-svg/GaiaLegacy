@@ -13,13 +13,29 @@ import org.joml.Vector3f;
 public final class WorldLoader {
     private static final int CHUNK_RADIUS = 2;
 
+    private final GaiaWorldGenerator worldGenerator;
+    private final ChunkMeshBuilder meshBuilder;
+    private final byte fallbackGroundId;
+
+    public WorldLoader(
+            GaiaWorldGenerator worldGenerator,
+            ChunkMeshBuilder meshBuilder,
+            byte fallbackGroundId) {
+        this.worldGenerator =
+                Objects.requireNonNull(
+                        worldGenerator, "worldGenerator");
+        this.meshBuilder =
+                Objects.requireNonNull(meshBuilder, "meshBuilder");
+        this.fallbackGroundId = fallbackGroundId;
+    }
+
     public WorldLoadResult load(World world) {
         Objects.requireNonNull(world, "world");
 
         for (int chunkX = -CHUNK_RADIUS; chunkX < CHUNK_RADIUS; chunkX++) {
             for (int chunkZ = -CHUNK_RADIUS; chunkZ < CHUNK_RADIUS; chunkZ++) {
                 checkCancelled();
-                GaiaWorldGenerator.generateChunk(world, chunkX, chunkZ);
+                worldGenerator.generateChunk(world, chunkX, chunkZ);
             }
         }
 
@@ -29,7 +45,8 @@ public final class WorldLoader {
                 checkCancelled();
                 Chunk chunk = world.getChunk(chunkX, chunkZ);
                 float[] meshData =
-                        ChunkMeshBuilder.buildChunkMeshData(chunk, chunkX, chunkZ, world);
+                        meshBuilder.buildChunkMeshData(
+                                chunk, chunkX, chunkZ, world);
                 if (meshData.length > 0) {
                     allMeshData.add(meshData);
                 }
@@ -41,7 +58,8 @@ public final class WorldLoader {
         int highestBlockY = findHighestBlock(world, spawnX, spawnZ);
         if (highestBlockY <= 0) {
             for (int y = 0; y < 30; y++) {
-                world.setBlock(spawnX, y, spawnZ, (byte) 1);
+                world.setBlock(
+                        spawnX, y, spawnZ, fallbackGroundId);
             }
             highestBlockY = 29;
         }

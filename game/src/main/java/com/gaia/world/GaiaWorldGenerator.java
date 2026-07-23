@@ -1,10 +1,12 @@
 package com.gaia.world;
 
 import com.gaia.blocks.BlockRegistry;
+import com.overlord.assets.ResourceLocation;
 import com.overlord.config.GameConfig;
 import com.overlord.voxel.Chunk;
 import com.overlord.voxel.PerlinNoise;
 import com.overlord.voxel.World;
+import java.util.Objects;
 
 public class GaiaWorldGenerator {
     
@@ -14,8 +16,25 @@ public class GaiaWorldGenerator {
     private static final double SCALE = 0.02;
     
     private static final PerlinNoise perlinNoise = new PerlinNoise(SEED);
-    
-    public static void generateChunk(World world, int chunkX, int chunkZ) {
+
+    private final byte grassId;
+    private final byte dirtId;
+    private final byte stoneId;
+
+    public GaiaWorldGenerator(BlockRegistry blocks) {
+        Objects.requireNonNull(blocks, "blocks");
+        grassId =
+                blocks.requireStoredId(
+                        ResourceLocation.parse("gaia:grass"));
+        dirtId =
+                blocks.requireStoredId(
+                        ResourceLocation.parse("gaia:dirt"));
+        stoneId =
+                blocks.requireStoredId(
+                        ResourceLocation.parse("gaia:stone"));
+    }
+
+    public void generateChunk(World world, int chunkX, int chunkZ) {
         Chunk chunk = world.getChunk(chunkX, chunkZ);
         
         for (int x = 0; x < GameConfig.Chunk.SIZE; x++) {
@@ -31,11 +50,11 @@ public class GaiaWorldGenerator {
                 for (int y = 0; y < height; y++) {
                     byte blockType;
                     if (y == height - 1) {
-                        blockType = BlockRegistry.GRASS.getId();
+                        blockType = grassId;
                     } else if (y > height - 4) {
-                        blockType = BlockRegistry.DIRT.getId();
+                        blockType = dirtId;
                     } else {
-                        blockType = BlockRegistry.STONE.getId();
+                        blockType = stoneId;
                     }
                     
                     chunk.setBlock(x, y, z, blockType);
