@@ -3,12 +3,9 @@ package com.gaia.assets;
 import com.gaia.blocks.BlockDefinition;
 import com.gaia.blocks.BlockRegistry;
 import com.gaia.blocks.ItemFormDefinition;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
-import com.google.gson.JsonParser;
-import com.google.gson.JsonPrimitive;
 import com.overlord.assets.AssetDiagnostic;
 import com.overlord.assets.AssetLoadException;
 import com.overlord.assets.AssetLoadReport;
@@ -117,18 +114,12 @@ public final class GaiaResourceLoader {
                 ResourceIndex index =
                         new ResourceIndex(
                                 namespace,
-                                requireStringList(
-                                        root,
-                                        "blocks",
-                                        source),
-                                requireStringList(
-                                        root,
-                                        "materials",
-                                        source),
-                                requireStringList(
-                                        root,
-                                        "atlases",
-                                        source));
+                                strict.requireStringList(
+                                        "blocks"),
+                                strict.requireStringList(
+                                        "materials"),
+                                strict.requireStringList(
+                                        "atlases"));
                 DefinitionSource current =
                         new DefinitionSource(
                                 source, resource, namespace);
@@ -201,6 +192,7 @@ public final class GaiaResourceLoader {
                     readDefinition(
                             request,
                             diagnostics,
+                            true,
                             root ->
                                     parseAtlas(
                                             root,
@@ -316,10 +308,8 @@ public final class GaiaResourceLoader {
             StrictJson regionJson =
                     new StrictJson(
                             regionElement.getAsJsonObject(),
-                            source
-                                    + " field 'regions."
-                                    + regionId
-                                    + "'");
+                            source,
+                            "regions." + regionId);
             regionJson.requireOnly(
                     "x", "y", "width", "height");
             try {
@@ -368,6 +358,7 @@ public final class GaiaResourceLoader {
                     readDefinition(
                             request,
                             diagnostics,
+                            false,
                             root ->
                                     parseMaterial(
                                             root,
@@ -452,6 +443,7 @@ public final class GaiaResourceLoader {
                     readDefinition(
                             request,
                             diagnostics,
+                            false,
                             root ->
                                     parseBlock(
                                             root,
@@ -534,11 +526,6 @@ public final class GaiaResourceLoader {
                         strict.requireObject("textures"),
                         source);
         JsonObject itemObject = strict.optionalObject("item");
-        if (id != 0 && itemObject == null) {
-            throw new JsonParseException(
-                    source
-                            + " field 'item' is required for non-air blocks");
-        }
         ItemFormDefinition item =
                 itemObject == null
                         ? null
@@ -567,7 +554,8 @@ public final class GaiaResourceLoader {
         StrictJson item =
                 new StrictJson(
                         itemObject,
-                        source + " field 'item'");
+                        source,
+                        "item");
         item.requireOnly(
                 "id",
                 "maxStackSize",
@@ -590,7 +578,8 @@ public final class GaiaResourceLoader {
         StrictJson textures =
                 new StrictJson(
                         texturesObject,
-                        source + " field 'textures'");
+                        source,
+                        "textures");
         textures.requireOnly(
                 "all",
                 "sides",
@@ -744,18 +733,32 @@ public final class GaiaResourceLoader {
                     "Block definitions must include id 0 air");
         }
         diagnostics.throwIfErrors();
-        TextureAtlasMetadata selectedAtlas =
-                atlasById.get(selectedAtlasId);
-
         String fallbackNamespace =
                 context.atlasSources
                         .get(selectedAtlasId)
                         .namespace();
-        FallbackValues fallback =
-                fallbackValues(
+        ResourceLocation missingId =
+                ResourceLocation.of(
+                        fallbackNamespace, "missing");
+        LoadedAtlas loadedAtlas =
+                loadSelectedAtlas(
+                        atlasById.get(selectedAtlasId),
+                        missingId,
+                        diagnostics,
+                        context);
+        TextureAtlasMetadata selectedAtlas =
+                loadedAtlas.metadata();
+        atlasById.put(selectedAtlas.id(), selectedAtlas);
+        ResolvedMaterials resolvedMaterials =
+                resolveMaterialFallbacks(
                         fallbackNamespace,
                         materialById,
-                        selectedAtlas);
+                        selectedAtlas,
+                        diagnostics,
+                        context);
+        materialById = resolvedMaterials.materials();
+        MaterialDefinition fallbackMaterial =
+                resolvedMaterials.fallbackMaterial();
 
         Map<Integer, BlockRenderInfo> renderInfoById =
                 new TreeMap<>();
@@ -781,20 +784,16 @@ public final class GaiaResourceLoader {
                         "material",
                         "Block references missing material "
                                 + block.material(),
-                        fallback.material().id());
-                material = fallback.material();
-                materialAtlas = fallback.atlas();
+                        fallbackMaterial.id());
+                material = fallbackMaterial;
+                materialAtlas = selectedAtlas;
             } else {
-                materialAtlas =
-                        atlasById.get(material.atlas());
+                materialAtlas = selectedAtlas;
             }
 
             TextureRegion missingRegion =
-                    materialAtlas.regions().get(
+                    materialAtlas.requireRegion(
                             material.missingRegion());
-            if (missingRegion == null) {
-                missingRegion = fallback.region();
-            }
 
             BlockRenderInfo renderInfo;
             if (block.id() == 0) {
@@ -842,13 +841,30 @@ public final class GaiaResourceLoader {
         BlockRegistry registry =
                 BlockRegistry.create(
                         sortedBlocks, renderInfoById);
+        RenderAssets renderAssets =
+                new RenderAssets(loadedAtlas.image());
+
+        return new GaiaAssetCatalog(
+                registry,
+                materialById,
+                atlasById,
+                selectedAtlas,
+                renderAssets,
+                diagnostics.build());
+    }
+
+    private LoadedAtlas loadSelectedAtlas(
+            TextureAtlasMetadata declaredAtlas,
+            ResourceLocation missingId,
+            AssetLoadReport.Builder diagnostics,
+            LoadContext context) {
         List<AssetDiagnostic> textureDiagnostics =
                 new ArrayList<>();
         TextureImage image =
                 new TextureImageLoader()
                         .load(
                                 assetManager,
-                                selectedAtlas.texture(),
+                                declaredAtlas.texture(),
                                 textureDiagnostics::add);
         for (AssetDiagnostic diagnostic :
                 textureDiagnostics) {
@@ -861,44 +877,126 @@ public final class GaiaResourceLoader {
                                         diagnostic.code()
                                                         .equals(
                                                                 "ASSET_TEXTURE_FALLBACK")
-                                                && selectedAtlas
+                                                && declaredAtlas
                                                         .texture()
                                                         .equals(
                                                                 diagnostic
                                                                         .resource()));
         if (!usedTextureFallback
-                && (image.width() != selectedAtlas.width()
+                && (image.width() != declaredAtlas.width()
                         || image.height()
-                                != selectedAtlas.height())) {
+                                != declaredAtlas.height())) {
             DefinitionSource atlasSource =
                     context.atlasSources.get(
-                            selectedAtlas.id());
+                            declaredAtlas.id());
             diagnostics.add(
                     new AssetDiagnostic(
                             AssetSeverity.ERROR,
                             "ASSET_ATLAS_IMAGE_SIZE_MISMATCH",
                             atlasSource.source(),
-                            selectedAtlas.texture(),
+                            declaredAtlas.texture(),
                             "texture",
                             "Atlas metadata declares "
-                                    + selectedAtlas.width()
+                                    + declaredAtlas.width()
                                     + "x"
-                                    + selectedAtlas.height()
+                                    + declaredAtlas.height()
                                     + " but decoded image is "
                                     + image.width()
                                     + "x"
                                     + image.height(),
                             null));
         }
-        RenderAssets renderAssets = new RenderAssets(image);
 
-        return new GaiaAssetCatalog(
-                registry,
-                materialById,
-                atlasById,
-                selectedAtlas,
-                renderAssets,
-                diagnostics.build());
+        if (usedTextureFallback) {
+            return proceduralMissingAtlas(
+                    declaredAtlas, missingId, image);
+        }
+        if (!declaredAtlas.regions().containsKey(missingId)) {
+            DefinitionSource atlasSource =
+                    context.atlasSources.get(
+                            declaredAtlas.id());
+            addWarning(
+                    diagnostics,
+                    "ASSET_MISSING_REGION",
+                    atlasSource,
+                    "regions." + missingId,
+                    "Selected atlas does not define required missing region "
+                            + missingId,
+                    missingId);
+            return proceduralMissingAtlas(
+                    declaredAtlas,
+                    missingId,
+                    TextureImage.missing());
+        }
+        return new LoadedAtlas(declaredAtlas, image);
+    }
+
+    private static LoadedAtlas proceduralMissingAtlas(
+            TextureAtlasMetadata declaredAtlas,
+            ResourceLocation missingId,
+            TextureImage image) {
+        TextureRegion missingRegion =
+                new TextureRegion(
+                        missingId, 0, 0, 2, 2, 2, 2);
+        TextureAtlasMetadata effectiveAtlas =
+                new TextureAtlasMetadata(
+                        declaredAtlas.id(),
+                        declaredAtlas.texture(),
+                        2,
+                        2,
+                        Map.of(missingId, missingRegion));
+        return new LoadedAtlas(effectiveAtlas, image);
+    }
+
+    private static ResolvedMaterials resolveMaterialFallbacks(
+            String namespace,
+            Map<ResourceLocation, MaterialDefinition> declaredMaterials,
+            TextureAtlasMetadata selectedAtlas,
+            AssetLoadReport.Builder diagnostics,
+            LoadContext context) {
+        ResourceLocation missingId =
+                ResourceLocation.of(namespace, "missing");
+        Map<ResourceLocation, MaterialDefinition> materials =
+                new TreeMap<>();
+        for (MaterialDefinition declared :
+                declaredMaterials.values()) {
+            MaterialDefinition effective = declared;
+            if (!selectedAtlas.regions()
+                    .containsKey(declared.missingRegion())) {
+                addWarning(
+                        diagnostics,
+                        "ASSET_MISSING_REGION",
+                        context.materialSources.get(
+                                declared.id()),
+                        "missingRegion",
+                        "Material references missing region "
+                                + declared.missingRegion(),
+                        missingId);
+                effective =
+                        new MaterialDefinition(
+                                declared.id(),
+                                selectedAtlas.id(),
+                                declared.renderType(),
+                                declared.alphaCutoff(),
+                                missingId);
+            }
+            materials.put(effective.id(), effective);
+        }
+
+        MaterialDefinition fallbackMaterial =
+                materials.get(missingId);
+        if (fallbackMaterial == null) {
+            fallbackMaterial =
+                    new MaterialDefinition(
+                            missingId,
+                            selectedAtlas.id(),
+                            RenderType.OPAQUE,
+                            0.5f,
+                            missingId);
+        }
+        return new ResolvedMaterials(
+                new TreeMap<>(materials),
+                fallbackMaterial);
     }
 
     private ResourceLocation selectBlockAtlas(
@@ -966,48 +1064,6 @@ public final class GaiaResourceLoader {
         return selected;
     }
 
-    private static FallbackValues fallbackValues(
-            String namespace,
-            Map<ResourceLocation, MaterialDefinition> materials,
-            TextureAtlasMetadata selectedAtlas) {
-        ResourceLocation missingId =
-                ResourceLocation.of(namespace, "missing");
-        MaterialDefinition material =
-                materials.get(missingId);
-        TextureRegion region =
-                selectedAtlas.regions().get(missingId);
-        if (material != null && region != null) {
-            return new FallbackValues(
-                    material, selectedAtlas, region);
-        }
-
-        TextureRegion guardedRegion =
-                new TextureRegion(
-                        missingId, 0, 0, 2, 2, 2, 2);
-        TextureAtlasMetadata guardedAtlas =
-                new TextureAtlasMetadata(
-                        ResourceLocation.of(
-                                namespace,
-                                "guarded_missing"),
-                        ResourceLocation.of(
-                                namespace,
-                                "textures/guarded_missing.png"),
-                        2,
-                        2,
-                        Map.of(missingId, guardedRegion));
-        MaterialDefinition guardedMaterial =
-                new MaterialDefinition(
-                        missingId,
-                        guardedAtlas.id(),
-                        RenderType.OPAQUE,
-                        0.5f,
-                        missingId);
-        return new FallbackValues(
-                guardedMaterial,
-                guardedAtlas,
-                guardedRegion);
-    }
-
     private List<DefinitionRequest> definitionRequests(
             List<ResourceIndex> indexes,
             Function<ResourceIndex, List<String>> selector,
@@ -1057,6 +1113,7 @@ public final class GaiaResourceLoader {
     private <T> T readDefinition(
             DefinitionRequest request,
             AssetLoadReport.Builder diagnostics,
+            boolean atlasDefinition,
             Function<JsonObject, T> parser) {
         try {
             JsonObject root =
@@ -1072,6 +1129,19 @@ public final class GaiaResourceLoader {
             addJsonFailure(
                     diagnostics,
                     "ASSET_JSON_UNKNOWN_FIELD",
+                    request.source(),
+                    request.location(),
+                    failure);
+        } catch (StrictJson.DuplicateFieldException failure) {
+            String code =
+                    atlasDefinition
+                                    && failure.objectField()
+                                            .equals("regions")
+                            ? "ASSET_ATLAS_REGION_ID_DUPLICATE"
+                            : "ASSET_JSON_INVALID";
+            addJsonFailure(
+                    diagnostics,
+                    code,
                     request.source(),
                     request.location(),
                     failure);
@@ -1112,57 +1182,7 @@ public final class GaiaResourceLoader {
 
     private static JsonObject requireRoot(
             String json, String source) {
-        JsonElement root = JsonParser.parseString(json);
-        if (!root.isJsonObject()) {
-            throw new JsonParseException(
-                    source + " root must be an object");
-        }
-        return root.getAsJsonObject();
-    }
-
-    private static List<String> requireStringList(
-            JsonObject object,
-            String field,
-            String source) {
-        JsonElement value = object.get(field);
-        if (value == null
-                || value.isJsonNull()
-                || !value.isJsonArray()) {
-            throw new JsonParseException(
-                    source
-                            + " field '"
-                            + field
-                            + "' must be an array");
-        }
-        JsonArray array = value.getAsJsonArray();
-        List<String> result = new ArrayList<>();
-        for (int index = 0; index < array.size(); index++) {
-            JsonElement element = array.get(index);
-            if (element == null
-                    || element.isJsonNull()
-                    || !element.isJsonPrimitive()) {
-                throw new JsonParseException(
-                        source
-                                + " field '"
-                                + field
-                                + "["
-                                + index
-                                + "]' must be a string");
-            }
-            JsonPrimitive primitive =
-                    element.getAsJsonPrimitive();
-            if (!primitive.isString()) {
-                throw new JsonParseException(
-                        source
-                                + " field '"
-                                + field
-                                + "["
-                                + index
-                                + "]' must be a string");
-            }
-            result.add(primitive.getAsString());
-        }
-        return List.copyOf(result);
+        return StrictJson.parseObject(json, source);
     }
 
     private static boolean ownedByManifest(
@@ -1227,7 +1247,12 @@ public final class GaiaResourceLoader {
                         code,
                         source,
                         resource,
-                        null,
+                        failure
+                                        instanceof StrictJson
+                                                .JsonFieldException
+                                                fieldFailure
+                                ? fieldFailure.field()
+                                : "$",
                         Objects.toString(
                                 failure.getMessage(),
                                 failure.getClass()
@@ -1284,10 +1309,17 @@ public final class GaiaResourceLoader {
         }
     }
 
-    private record FallbackValues(
-            MaterialDefinition material,
-            TextureAtlasMetadata atlas,
-            TextureRegion region) {}
+    private record LoadedAtlas(
+            TextureAtlasMetadata metadata,
+            TextureImage image) {}
+
+    private record ResolvedMaterials(
+            Map<ResourceLocation, MaterialDefinition> materials,
+            MaterialDefinition fallbackMaterial) {
+        private ResolvedMaterials {
+            materials = Map.copyOf(materials);
+        }
+    }
 
     private static final class LoadContext {
         private final Map<String, DefinitionSource> manifests =

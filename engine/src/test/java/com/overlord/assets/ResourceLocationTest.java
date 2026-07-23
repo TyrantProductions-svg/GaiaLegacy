@@ -35,7 +35,9 @@ class ResourceLocationTest {
                 "gaia:blocks/../grass",
                 "gaia:blocks/./grass",
                 "gaia:\\blocks\\grass",
-                "gaia:C:/grass"
+                "gaia:C:/grass",
+                ".:grass",
+                "..:grass"
             })
     void rejectsIncompleteOrUnsafeIdentifiers(String text) {
         assertThrows(

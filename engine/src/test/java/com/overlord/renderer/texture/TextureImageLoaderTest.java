@@ -12,13 +12,17 @@ import com.overlord.assets.AssetSeverity;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.renderer.RenderAssets;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.net.URLConnection;
+import java.net.URLStreamHandler;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -240,7 +244,7 @@ class TextureImageLoaderTest {
     }
 
     @Test
-    void rethrowsAssetIoFailuresWithoutFallback() {
+    void fallsBackWhenAssetLookupHasIoFailure() {
         ClassLoader broken =
                 new ClassLoader(
                         ClassLoader.getPlatformClassLoader()) {
@@ -252,20 +256,73 @@ class TextureImageLoaderTest {
                 };
         List<AssetDiagnostic> diagnostics = new ArrayList<>();
 
-        AssetLoadException exception =
-                assertThrows(
-                        AssetLoadException.class,
-                        () ->
-                                new TextureImageLoader()
-                                        .load(
-                                                new AssetManager(broken),
-                                                LOCATION,
-                                                diagnostics::add));
+        TextureImage image =
+                new TextureImageLoader()
+                        .load(
+                                new AssetManager(broken),
+                                LOCATION,
+                                diagnostics::add);
 
+        assertEquals(TextureImage.missing(), image);
+        assertEquals(1, diagnostics.size());
         assertEquals(
-                "ASSET_IO",
-                exception.report().errors().get(0).code());
-        assertTrue(diagnostics.isEmpty());
+                "ASSET_TEXTURE_FALLBACK",
+                diagnostics.get(0).code());
+    }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    void fallsBackWhenOpenedTextureStreamCannotBeRead()
+            throws Exception {
+        URL brokenUrl =
+                new URL(
+                        null,
+                        "memory:broken-texture",
+                        new URLStreamHandler() {
+                            @Override
+                            protected URLConnection openConnection(
+                                    URL url) {
+                                return new URLConnection(url) {
+                                    @Override
+                                    public void connect() {}
+
+                                    @Override
+                                    public InputStream getInputStream() {
+                                        return new InputStream() {
+                                            @Override
+                                            public int read()
+                                                    throws IOException {
+                                                throw new IOException(
+                                                        "broken stream read");
+                                            }
+                                        };
+                                    }
+                                };
+                            }
+                        });
+        ClassLoader broken =
+                new ClassLoader(
+                        ClassLoader.getPlatformClassLoader()) {
+                    @Override
+                    public Enumeration<URL> getResources(String name) {
+                        return Collections.enumeration(
+                                List.of(brokenUrl));
+                    }
+                };
+        List<AssetDiagnostic> diagnostics = new ArrayList<>();
+
+        TextureImage image =
+                new TextureImageLoader()
+                        .load(
+                                new AssetManager(broken),
+                                LOCATION,
+                                diagnostics::add);
+
+        assertEquals(TextureImage.missing(), image);
+        assertEquals(1, diagnostics.size());
+        assertEquals(
+                "ASSET_TEXTURE_FALLBACK",
+                diagnostics.get(0).code());
     }
 
     @Test

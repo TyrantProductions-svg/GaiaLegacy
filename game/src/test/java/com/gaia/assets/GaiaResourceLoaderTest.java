@@ -3,6 +3,7 @@ package com.gaia.assets;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -13,9 +14,15 @@ import com.overlord.assets.AssetManager;
 import com.overlord.assets.AssetSeverity;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.renderer.material.RenderType;
+import com.overlord.renderer.texture.TextureImage;
+import com.overlord.renderer.texture.TextureRegion;
 import com.overlord.voxel.BlockFace;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -24,8 +31,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import javax.imageio.ImageIO;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class GaiaResourceLoaderTest {
     private static final String INDEX_LIST =
@@ -117,7 +127,91 @@ class GaiaResourceLoaderTest {
                 "ASSET_JSON_INVALID",
                 SOLID,
                 ResourceLocation.parse("test:blocks/solid.json"),
-                null);
+                "id");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"comment", "single-quote", "unquoted-name"})
+    void rejectsLenientJsonExtensions(String extension) throws Exception {
+        Map<String, byte[]> entries = validEntries();
+        String json =
+                solidJson(
+                        "test:solid",
+                        1,
+                        "test:opaque",
+                        texturesAll("test:missing"));
+        String malformed =
+                switch (extension) {
+                    case "comment" ->
+                            json.replace(
+                                    "{\"id\":1",
+                                    "{/* comment */\"id\":1");
+                    case "single-quote" ->
+                            json.replace(
+                                    "\"id\":1",
+                                    "'id':1");
+                    case "unquoted-name" ->
+                            json.replace(
+                                    "\"id\":1",
+                                    "id:1");
+                    default -> throw new AssertionError(extension);
+                };
+        putJson(entries, SOLID, malformed);
+
+        assertFatal(
+                entries,
+                "ASSET_JSON_INVALID",
+                SOLID,
+                ResourceLocation.parse("test:blocks/solid.json"),
+                "$");
+    }
+
+    @Test
+    void reportsDuplicateObjectFieldWithExactField() throws Exception {
+        Map<String, byte[]> entries = validEntries();
+        putJson(
+                entries,
+                SOLID,
+                solidJson(
+                                "test:solid",
+                                1,
+                                "test:opaque",
+                                texturesAll("test:missing"))
+                        .replace(
+                                "{\"id\":1",
+                                "{\"id\":1,\"id\":1"));
+
+        assertFatal(
+                entries,
+                "ASSET_JSON_INVALID",
+                SOLID,
+                ResourceLocation.parse("test:blocks/solid.json"),
+                "id");
+    }
+
+    @Test
+    void reportsDuplicateAtlasRegionKeyWithExactField()
+            throws Exception {
+        Map<String, byte[]> entries = validEntries();
+        putJson(
+                entries,
+                BLOCK_ATLAS,
+                "{\"id\":\"test:blocks\","
+                        + "\"texture\":\"test:textures/atlas.png\","
+                        + "\"width\":1,\"height\":1,"
+                        + "\"regions\":{"
+                        + "\"test:missing\":"
+                        + region()
+                        + ",\"test:missing\":"
+                        + region()
+                        + "}}");
+
+        assertFatal(
+                entries,
+                "ASSET_ATLAS_REGION_ID_DUPLICATE",
+                BLOCK_ATLAS,
+                ResourceLocation.parse("test:atlases/blocks.json"),
+                "regions.test:missing");
     }
 
     @Test
@@ -136,7 +230,53 @@ class GaiaResourceLoaderTest {
                 "ASSET_JSON_UNKNOWN_FIELD",
                 SOLID,
                 ResourceLocation.parse("test:blocks/solid.json"),
-                null);
+                "surprise");
+    }
+
+    @Test
+    void reportsMissingJsonFieldWithExactField() throws Exception {
+        Map<String, byte[]> entries = validEntries();
+        putJson(
+                entries,
+                SOLID,
+                solidJson(
+                                "test:solid",
+                                1,
+                                "test:opaque",
+                                texturesAll("test:missing"))
+                        .replace(
+                                "\"name\":\"test:solid\",",
+                                ""));
+
+        assertFatal(
+                entries,
+                "ASSET_JSON_INVALID",
+                SOLID,
+                ResourceLocation.parse("test:blocks/solid.json"),
+                "name");
+    }
+
+    @Test
+    void reportsWrongJsonTypeWithExactField() throws Exception {
+        Map<String, byte[]> entries = validEntries();
+        putJson(
+                entries,
+                SOLID,
+                solidJson(
+                                "test:solid",
+                                1,
+                                "test:opaque",
+                                texturesAll("test:missing"))
+                        .replace(
+                                "\"id\":1",
+                                "\"id\":\"one\""));
+
+        assertFatal(
+                entries,
+                "ASSET_JSON_INVALID",
+                SOLID,
+                ResourceLocation.parse("test:blocks/solid.json"),
+                "id");
     }
 
     @Test
@@ -592,6 +732,120 @@ class GaiaResourceLoaderTest {
     }
 
     @Test
+    void missingMaterialRegionWarnsAndUsesSelectedAtlasChecker()
+            throws Exception {
+        Map<String, byte[]> entries = validEntries();
+        putJson(
+                entries,
+                OPAQUE_MATERIAL,
+                materialJson(
+                        "test:opaque",
+                        "test:blocks",
+                        "opaque",
+                        "test:not_present"));
+        putJson(
+                entries,
+                BLOCK_ATLAS,
+                atlasJson(
+                        "test:blocks",
+                        "test:textures/atlas.png",
+                        2,
+                        2,
+                        Map.of(
+                                "test:missing",
+                                region(2, 2))));
+        entries.put(ATLAS_IMAGE, checkerPng());
+        putJson(
+                entries,
+                SOLID,
+                solidJson(
+                        "test:solid",
+                        1,
+                        "test:opaque",
+                        texturesAll("test:not_present")));
+
+        GaiaAssetCatalog catalog = load(entries);
+        AssetDiagnostic materialWarning =
+                warning(
+                        catalog,
+                        "ASSET_MISSING_REGION",
+                        "missingRegion");
+        TextureRegion region =
+                catalog.blockRegistry()
+                        .resolve(1)
+                        .region(BlockFace.UP);
+
+        assertAll(
+                () -> assertEquals(OPAQUE_MATERIAL, materialWarning.source()),
+                () -> assertEquals(TEST_MISSING, materialWarning.fallback()),
+                () ->
+                        assertEquals(
+                                TEST_MISSING,
+                                catalog.blockRegistry()
+                                        .resolve(1)
+                                        .material()
+                                        .missingRegion()),
+                () -> assertSame(catalog.blockAtlas().requireRegion(TEST_MISSING), region),
+                () -> assertEquals(catalog.blockAtlas().width(), region.atlasWidth()),
+                () -> assertEquals(catalog.blockAtlas().height(), region.atlasHeight()),
+                () -> assertEquals(0.0f, region.uMin()),
+                () -> assertEquals(1.0f, region.uMax()),
+                () -> assertEquals(0.0f, region.vMin()),
+                () -> assertEquals(1.0f, region.vMax()),
+                () -> assertChecker(catalog.renderAssets().blockAtlas()));
+    }
+
+    @Test
+    void missingMaterialAndFaceUseCheckerUvsWhenImageFallsBack()
+            throws Exception {
+        Map<String, byte[]> entries = validEntries();
+        entries.remove(ATLAS_IMAGE);
+        putJson(
+                entries,
+                SOLID,
+                solidJson(
+                        "test:solid",
+                        1,
+                        "test:not_present",
+                        texturesAll("test:not_present")));
+
+        GaiaAssetCatalog catalog = load(entries);
+        TextureImage image =
+                catalog.renderAssets().blockAtlas();
+        TextureRegion region =
+                catalog.blockRegistry()
+                        .resolve(1)
+                        .region(BlockFace.UP);
+
+        assertAll(
+                () -> assertEquals(2, catalog.blockAtlas().width()),
+                () -> assertEquals(2, catalog.blockAtlas().height()),
+                () -> assertEquals(image.width(), region.atlasWidth()),
+                () -> assertEquals(image.height(), region.atlasHeight()),
+                () -> assertEquals(TEST_MISSING, region.id()),
+                () -> assertEquals(0.0f, region.uMin()),
+                () -> assertEquals(1.0f, region.uMax()),
+                () ->
+                        assertEquals(
+                                catalog.blockAtlas().id(),
+                                catalog.blockRegistry()
+                                        .resolve(1)
+                                        .material()
+                                        .atlas()),
+                () ->
+                        assertTrue(
+                                catalog.report().warnings().stream()
+                                        .map(AssetDiagnostic::code)
+                                        .toList()
+                                        .containsAll(
+                                                List.of(
+                                                        "ASSET_TEXTURE_FALLBACK",
+                                                        "ASSET_MISSING_MATERIAL",
+                                                        "ASSET_MISSING_REGION"))),
+                () -> assertChecker(image));
+    }
+
+    @Test
     void expandsFaceAliasesInDocumentedPrecedence()
             throws Exception {
         Map<String, byte[]> entries = validEntries();
@@ -737,6 +991,29 @@ class GaiaResourceLoaderTest {
                                         .require(1)
                                         .item()
                                         .twoHanded()));
+    }
+
+    @Test
+    void permitsNonAirBlockWithoutOptionalItemForm()
+            throws Exception {
+        Map<String, byte[]> entries = validEntries();
+        putJson(
+                entries,
+                SOLID,
+                solidJson(
+                                "test:solid",
+                                1,
+                                "test:opaque",
+                                texturesAll("test:missing"))
+                        .replace(
+                                ",\"item\":{\"maxStackSize\":64,"
+                                        + "\"mouthHoldable\":true,"
+                                        + "\"twoHanded\":false}",
+                                ""));
+
+        GaiaAssetCatalog catalog = load(entries);
+
+        assertNull(catalog.blockRegistry().require(1).item());
     }
 
     @Test
@@ -907,6 +1184,23 @@ class GaiaResourceLoaderTest {
                 () ->
                         assertEquals(
                                 2,
+                                catalog.blockAtlas().width()),
+                () ->
+                        assertEquals(
+                                2,
+                                catalog.renderAssets()
+                                        .blockAtlas()
+                                        .width()),
+                () ->
+                        assertEquals(
+                                catalog.blockAtlas().id(),
+                                catalog.blockRegistry()
+                                        .resolve(1)
+                                        .material()
+                                        .atlas()),
+                () ->
+                        assertEquals(
+                                2,
                                 catalog.blockRegistry()
                                         .resolve(1)
                                         .region(BlockFace.UP)
@@ -927,7 +1221,24 @@ class GaiaResourceLoaderTest {
                                                 warning ->
                                                         warning.code()
                                                                 .equals(
-                                                                        "ASSET_MISSING_MATERIAL"))));
+                                                                        "ASSET_MISSING_MATERIAL"))),
+                () ->
+                        assertTrue(
+                                catalog.report()
+                                        .warnings()
+                                        .stream()
+                                        .anyMatch(
+                                                warning ->
+                                                        warning.code()
+                                                                        .equals(
+                                                                                "ASSET_MISSING_REGION")
+                                                                && warning.field()
+                                                                        .equals(
+                                                                                "regions.test:missing"))),
+                () ->
+                        assertChecker(
+                                catalog.renderAssets()
+                                        .blockAtlas()));
     }
 
     private GaiaAssetCatalog load(Map<String, byte[]> entries)
@@ -1156,6 +1467,15 @@ class GaiaResourceLoaderTest {
             String id,
             String texture,
             Map<String, String> regions) {
+        return atlasJson(id, texture, 1, 1, regions);
+    }
+
+    private static String atlasJson(
+            String id,
+            String texture,
+            int width,
+            int height,
+            Map<String, String> regions) {
         List<String> ordered = new ArrayList<>(regions.keySet());
         ordered.sort(String::compareTo);
         StringBuilder encodedRegions = new StringBuilder("{");
@@ -1174,13 +1494,25 @@ class GaiaResourceLoaderTest {
                 + id
                 + "\",\"texture\":\""
                 + texture
-                + "\",\"width\":1,\"height\":1,\"regions\":"
+                + "\",\"width\":"
+                + width
+                + ",\"height\":"
+                + height
+                + ",\"regions\":"
                 + encodedRegions
                 + "}";
     }
 
     private static String region() {
         return "{\"x\":0,\"y\":0,\"width\":1,\"height\":1}";
+    }
+
+    private static String region(int width, int height) {
+        return "{\"x\":0,\"y\":0,\"width\":"
+                + width
+                + ",\"height\":"
+                + height
+                + "}";
     }
 
     private static String texturesAll(String region) {
@@ -1205,5 +1537,53 @@ class GaiaResourceLoaderTest {
         entries.put(
                 path,
                 json.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static byte[] checkerPng() {
+        BufferedImage image =
+                new BufferedImage(
+                        2, 2, BufferedImage.TYPE_INT_ARGB);
+        image.setRGB(0, 0, 0xFFB000B0);
+        image.setRGB(1, 0, 0xFF000000);
+        image.setRGB(0, 1, 0xFF000000);
+        image.setRGB(1, 1, 0xFFB000B0);
+        try (ByteArrayOutputStream output =
+                new ByteArrayOutputStream()) {
+            if (!ImageIO.write(image, "png", output)) {
+                throw new AssertionError(
+                        "PNG ImageIO writer is unavailable");
+            }
+            return output.toByteArray();
+        } catch (IOException failure) {
+            throw new AssertionError(
+                    "Failed to encode checker PNG",
+                    failure);
+        }
+    }
+
+    private static void assertChecker(TextureImage image) {
+        assertEquals(2, image.width());
+        assertEquals(2, image.height());
+        ByteBuffer pixels = image.rgbaPixels();
+        boolean purple = false;
+        boolean black = false;
+        while (pixels.hasRemaining()) {
+            int red = Byte.toUnsignedInt(pixels.get());
+            int green = Byte.toUnsignedInt(pixels.get());
+            int blue = Byte.toUnsignedInt(pixels.get());
+            int alpha = Byte.toUnsignedInt(pixels.get());
+            purple |=
+                    red == 0xB0
+                            && green == 0
+                            && blue == 0xB0
+                            && alpha == 0xFF;
+            black |=
+                    red == 0
+                            && green == 0
+                            && blue == 0
+                            && alpha == 0xFF;
+        }
+        assertTrue(purple, "checker must contain opaque purple");
+        assertTrue(black, "checker must contain opaque black");
     }
 }

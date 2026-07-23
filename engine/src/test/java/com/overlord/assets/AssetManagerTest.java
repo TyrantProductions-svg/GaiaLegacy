@@ -170,6 +170,55 @@ class AssetManagerTest {
     }
 
     @Test
+    void rejectsParentNamespaceBeforeDirectoryClasspathAccess()
+            throws Exception {
+        Path root = Files.createDirectories(temp.resolve("escape-directory"));
+        Files.writeString(
+                root.resolve("escaped.txt"),
+                "outside namespace root",
+                StandardCharsets.UTF_8);
+
+        try (URLClassLoader loader =
+                new URLClassLoader(
+                        new URL[] {root.toUri().toURL()},
+                        ClassLoader.getPlatformClassLoader())) {
+            AssetManager manager = new AssetManager(loader);
+
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () ->
+                            manager.readUtf8(
+                                    ResourceLocation.of(
+                                            "..", "escaped.txt")));
+        }
+    }
+
+    @Test
+    void rejectsParentNamespaceBeforeJarClasspathAccess()
+            throws Exception {
+        Path jar =
+                jar(
+                        temp.resolve("escape.jar"),
+                        Map.of(
+                                "assets/../escaped.txt",
+                                "outside namespace root"));
+
+        try (URLClassLoader loader =
+                new URLClassLoader(
+                        new URL[] {jar.toUri().toURL()},
+                        ClassLoader.getPlatformClassLoader())) {
+            AssetManager manager = new AssetManager(loader);
+
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () ->
+                            manager.readUtf8(
+                                    ResourceLocation.of(
+                                            "..", "escaped.txt")));
+        }
+    }
+
+    @Test
     void discoversIndexesInDeterministicOrder() throws Exception {
         Path alpha =
                 jar(

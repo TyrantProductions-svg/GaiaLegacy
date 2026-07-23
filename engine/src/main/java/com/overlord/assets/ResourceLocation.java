@@ -13,7 +13,9 @@ public record ResourceLocation(String namespace, String path)
     public ResourceLocation {
         namespace = Objects.requireNonNull(namespace, "namespace");
         path = Objects.requireNonNull(path, "path");
-        if (!NAMESPACE.matcher(namespace).matches()) {
+        if (!NAMESPACE.matcher(namespace).matches()
+                || namespace.equals(".")
+                || namespace.equals("..")) {
             throw new IllegalArgumentException(
                     "Invalid resource namespace: " + namespace);
         }

@@ -7,7 +7,6 @@ import com.overlord.assets.AssetSeverity;
 import com.overlord.assets.ResourceLocation;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import java.util.Objects;
@@ -59,26 +58,27 @@ public final class TextureImageLoader {
                 STBImage.stbi_image_free(decoded);
             }
         } catch (AssetLoadException exception) {
-            if (!onlyMissingErrors(exception)) {
+            if (!onlyRecoverableErrors(exception)) {
                 throw exception;
             }
             return fallback(location, diagnostics);
         } catch (IOException exception) {
-            throw new UncheckedIOException(
-                    "Failed to read texture asset " + location,
-                    exception);
+            return fallback(location, diagnostics);
         }
     }
 
-    private static boolean onlyMissingErrors(
+    private static boolean onlyRecoverableErrors(
             AssetLoadException exception) {
         return !exception.report().errors().isEmpty()
                 && exception.report().errors().stream()
                         .allMatch(
                                 diagnostic ->
                                         diagnostic.code()
-                                                .equals(
-                                                        "ASSET_NOT_FOUND"));
+                                                        .equals(
+                                                                "ASSET_NOT_FOUND")
+                                                || diagnostic.code()
+                                                        .equals(
+                                                                "ASSET_IO"));
     }
 
     private static TextureImage fallback(
