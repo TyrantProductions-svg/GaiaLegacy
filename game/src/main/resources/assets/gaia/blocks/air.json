@@ -1,0 +1,12 @@
+{
+  "id": 0,
+  "name": "gaia:air",
+  "material": "gaia:missing",
+  "textures": {},
+  "hardness": 0.0,
+  "structuralIntegrity": 0.0,
+  "tolerance": 0.0,
+  "gravity": false,
+  "flammable": false,
+  "blastResistance": 0.0
+}

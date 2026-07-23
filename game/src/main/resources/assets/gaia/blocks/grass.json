@@ -1,0 +1,22 @@
+{
+  "id": 1,
+  "name": "gaia:grass",
+  "material": "gaia:opaque",
+  "textures": {
+    "top": "gaia:grass_top",
+    "bottom": "gaia:dirt",
+    "sides": "gaia:grass_side"
+  },
+  "hardness": 0.6,
+  "structuralIntegrity": 50.0,
+  "tolerance": 3.0,
+  "gravity": false,
+  "flammable": false,
+  "blastResistance": 1.0,
+  "item": {
+    "id": "gaia:grass",
+    "maxStackSize": 64,
+    "mouthHoldable": false,
+    "twoHanded": false
+  }
+}

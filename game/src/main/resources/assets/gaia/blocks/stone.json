@@ -1,0 +1,20 @@
+{
+  "id": 3,
+  "name": "gaia:stone",
+  "material": "gaia:opaque",
+  "textures": {
+    "all": "gaia:stone"
+  },
+  "hardness": 1.5,
+  "structuralIntegrity": 80.0,
+  "tolerance": 6.0,
+  "gravity": false,
+  "flammable": false,
+  "blastResistance": 1.0,
+  "item": {
+    "id": "gaia:stone",
+    "maxStackSize": 64,
+    "mouthHoldable": false,
+    "twoHanded": false
+  }
+}

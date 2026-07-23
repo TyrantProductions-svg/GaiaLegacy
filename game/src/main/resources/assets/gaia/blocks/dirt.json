@@ -1,0 +1,20 @@
+{
+  "id": 2,
+  "name": "gaia:dirt",
+  "material": "gaia:opaque",
+  "textures": {
+    "all": "gaia:dirt"
+  },
+  "hardness": 0.5,
+  "structuralIntegrity": 40.0,
+  "tolerance": 2.5,
+  "gravity": false,
+  "flammable": false,
+  "blastResistance": 1.0,
+  "item": {
+    "id": "gaia:dirt",
+    "maxStackSize": 64,
+    "mouthHoldable": false,
+    "twoHanded": false
+  }
+}
