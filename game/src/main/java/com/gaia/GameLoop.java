@@ -1,6 +1,9 @@
 package com.gaia;
 
 import com.gaia.GameBootstrap.GameContext;
+import com.overlord.core.ModuleManager;
+import com.overlord.core.TaskScheduler;
+import com.overlord.event.EventBus;
 import com.overlord.renderer.Mesh;
 
 import static org.lwjgl.glfw.GLFW.*;
@@ -16,14 +19,21 @@ public class GameLoop {
     public GameLoop(GameContext context) {
         this.context = context;
         setupMouseCallback();
+        
+        ModuleManager.getInstance().initAll();
     }
     
     public void run() {
         while (context.engine.isRunning()) {
             context.engine.submitToCore(
                 com.overlord.core.Engine.CORE_PLAYER,
-                context.playerManager::update
+                context.playerManager::update,
+                TaskScheduler.TaskPriority.HIGH
             );
+            
+            ModuleManager.getInstance().updateAll(1.0f / 60.0f);
+            
+            EventBus.getInstance().processAll();
             
             if (context.playerManager.shouldClose()) {
                 break;

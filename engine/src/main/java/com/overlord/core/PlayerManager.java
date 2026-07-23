@@ -14,7 +14,6 @@ public class PlayerManager {
     
     private long lastTime;
     private boolean jumpPressed = false;
-    private boolean noclipTogglePressed = false;
     
     private final org.joml.Vector3f forward = new org.joml.Vector3f();
     private final org.joml.Vector3f right = new org.joml.Vector3f();
@@ -82,24 +81,9 @@ public class PlayerManager {
         
         boolean spacePressed = glfwGetKey(windowHandle, GameConfig.Input.KEY_JUMP) == GLFW_PRESS;
         if (spacePressed && !jumpPressed) {
-            if (physicsManager.isNoclip()) {
-                physicsManager.applyNoclipMovement(deltaTime, 1.0f);
-            } else {
-                physicsManager.jump(GameConfig.Player.JUMP_VELOCITY);
-            }
+            physicsManager.jump(GameConfig.Player.JUMP_VELOCITY);
         }
         jumpPressed = spacePressed;
-        
-        boolean shiftPressed = glfwGetKey(windowHandle, GameConfig.Input.KEY_DESCEND) == GLFW_PRESS;
-        if (shiftPressed && physicsManager.isNoclip()) {
-            physicsManager.applyNoclipMovement(deltaTime, -1.0f);
-        }
-        
-        boolean fPressed = glfwGetKey(windowHandle, GameConfig.Input.KEY_NOCLIP) == GLFW_PRESS;
-        if (fPressed && !noclipTogglePressed) {
-            physicsManager.toggleNoclip();
-        }
-        noclipTogglePressed = fPressed;
     }
     
     public boolean shouldClose() {
