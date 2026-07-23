@@ -35,7 +35,9 @@ public record TextureImage(
                             + expectedBytes
                             + " remaining RGBA bytes");
         }
-        rgbaPixels = rgbaPixels.slice().asReadOnlyBuffer();
+        ByteBuffer owned = BufferUtils.createByteBuffer(expectedBytes);
+        owned.put(rgbaPixels.slice()).flip();
+        rgbaPixels = owned.asReadOnlyBuffer();
     }
 
     @Override

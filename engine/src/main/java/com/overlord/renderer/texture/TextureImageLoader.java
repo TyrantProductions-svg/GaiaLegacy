@@ -53,11 +53,8 @@ public final class TextureImageLoader {
                 if (decoded.remaining() != pixelBytes) {
                     return fallback(location, diagnostics);
                 }
-                ByteBuffer owned =
-                        BufferUtils.createByteBuffer(pixelBytes);
-                owned.put(decoded.duplicate()).flip();
                 return new TextureImage(
-                        imageWidth, imageHeight, owned);
+                        imageWidth, imageHeight, decoded);
             } finally {
                 STBImage.stbi_image_free(decoded);
             }

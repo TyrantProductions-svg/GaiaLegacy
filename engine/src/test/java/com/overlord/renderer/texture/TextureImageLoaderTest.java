@@ -11,6 +11,7 @@ import com.overlord.assets.AssetManager;
 import com.overlord.assets.AssetSeverity;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.renderer.RenderAssets;
+import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.ByteBuffer;
@@ -18,6 +19,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Enumeration;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -132,6 +134,25 @@ class TextureImageLoaderTest {
     }
 
     @Test
+    void copiesPixelsAwayFromRetainedWritableInput() {
+        ByteBuffer pixels = BufferUtils.createByteBuffer(6);
+        pixels.put(
+                new byte[] {
+                    9, 9, 1, 2, 3, 4
+                });
+        pixels.flip();
+        pixels.position(2);
+
+        TextureImage image = new TextureImage(1, 1, pixels);
+        pixels.put(2, (byte) 99);
+
+        assertEquals(2, pixels.position());
+        assertArrayEquals(
+                new byte[] {1, 2, 3, 4},
+                bytes(image.rgbaPixels()));
+    }
+
+    @Test
     void rejectsInvalidPixelDimensionsAndStorage() {
         assertThrows(
                 IllegalArgumentException.class,
@@ -216,6 +237,35 @@ class TextureImageLoaderTest {
                     exception.report().errors().get(0).code());
             assertTrue(diagnostics.isEmpty());
         }
+    }
+
+    @Test
+    void rethrowsAssetIoFailuresWithoutFallback() {
+        ClassLoader broken =
+                new ClassLoader(
+                        ClassLoader.getPlatformClassLoader()) {
+                    @Override
+                    public Enumeration<URL> getResources(String name)
+                            throws IOException {
+                        throw new IOException("broken resource access");
+                    }
+                };
+        List<AssetDiagnostic> diagnostics = new ArrayList<>();
+
+        AssetLoadException exception =
+                assertThrows(
+                        AssetLoadException.class,
+                        () ->
+                                new TextureImageLoader()
+                                        .load(
+                                                new AssetManager(broken),
+                                                LOCATION,
+                                                diagnostics::add));
+
+        assertEquals(
+                "ASSET_IO",
+                exception.report().errors().get(0).code());
+        assertTrue(diagnostics.isEmpty());
     }
 
     @Test
