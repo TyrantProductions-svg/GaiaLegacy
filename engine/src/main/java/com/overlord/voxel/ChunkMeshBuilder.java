@@ -1,14 +1,12 @@
 package com.overlord.voxel;
 
+import com.overlord.config.GameConfig;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 public class ChunkMeshBuilder {
-    
-    private static final int TEXTURE_SIZE = 16;
-    private static final int ATLAS_WIDTH = 128;
-    private static final int ATLAS_HEIGHT = 64;
     
     public static float[] buildChunkMeshData(Chunk chunk, int chunkX, int chunkZ, World world) {
         List<Float> vertices = new ArrayList<>();
@@ -22,17 +20,17 @@ public class ChunkMeshBuilder {
             int sectionIndex = entry.getKey();
             SubChunk subChunk = entry.getValue();
             
-            int baseY = sectionIndex * SubChunk.SIZE;
+            int baseY = sectionIndex * GameConfig.Chunk.SUBCHUNK_HEIGHT;
             
-            for (int x = 0; x < SubChunk.SIZE; x++) {
-                for (int y = 0; y < SubChunk.SIZE; y++) {
-                    for (int z = 0; z < SubChunk.SIZE; z++) {
+            for (int x = 0; x < GameConfig.Chunk.SUBCHUNK_HEIGHT; x++) {
+                for (int y = 0; y < GameConfig.Chunk.SUBCHUNK_HEIGHT; y++) {
+                    for (int z = 0; z < GameConfig.Chunk.SUBCHUNK_HEIGHT; z++) {
                         byte block = subChunk.getBlock(x, y, z);
                         if (block == 0) continue;
                         
                         int worldY = baseY + y;
-                        int worldX = chunkX * Chunk.SIZE + x;
-                        int worldZ = chunkZ * Chunk.SIZE + z;
+                        int worldX = chunkX * GameConfig.Chunk.SIZE + x;
+                        int worldZ = chunkZ * GameConfig.Chunk.SIZE + z;
                         
                         float px = worldX;
                         float py = worldY;
@@ -117,10 +115,10 @@ public class ChunkMeshBuilder {
     }
     
     private static float[] getFaceVertices(float x, float y, float z, int face, int textureIndex) {
-        float u = (textureIndex * TEXTURE_SIZE) / (float) ATLAS_WIDTH;
-        float uEnd = ((textureIndex + 1) * TEXTURE_SIZE) / (float) ATLAS_WIDTH;
+        float u = (textureIndex * GameConfig.Rendering.TEXTURE_SIZE) / (float) GameConfig.Rendering.ATLAS_WIDTH;
+        float uEnd = ((textureIndex + 1) * GameConfig.Rendering.TEXTURE_SIZE) / (float) GameConfig.Rendering.ATLAS_WIDTH;
         float v = 0.0f;
-        float vEnd = TEXTURE_SIZE / (float) ATLAS_HEIGHT;
+        float vEnd = GameConfig.Rendering.TEXTURE_SIZE / (float) GameConfig.Rendering.ATLAS_HEIGHT;
         
         boolean flipV = (face != 2);
         float v0 = flipV ? vEnd : v;

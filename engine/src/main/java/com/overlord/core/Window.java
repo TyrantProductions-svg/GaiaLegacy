@@ -1,5 +1,6 @@
 package com.overlord.core;
 
+import com.overlord.config.GameConfig;
 import org.lwjgl.glfw.GLFWVidMode;
 import org.lwjgl.opengl.GL;
 
@@ -11,6 +12,10 @@ public class Window {
     private final int width;
     private final int height;
     private long window;
+    
+    public Window() {
+        this(GameConfig.Window.TITLE, GameConfig.Window.WIDTH, GameConfig.Window.HEIGHT);
+    }
     
     public Window(String title, int width, int height) {
         this.title = title;
@@ -27,9 +32,9 @@ public class Window {
         
         glfwDefaultWindowHints();
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-        glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+        glfwWindowHint(GLFW_RESIZABLE, GameConfig.Window.RESIZABLE);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, GameConfig.Window.OPENGL_VERSION_MAJOR);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, GameConfig.Window.OPENGL_VERSION_MINOR);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
         glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
         

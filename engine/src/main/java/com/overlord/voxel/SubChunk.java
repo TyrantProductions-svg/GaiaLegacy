@@ -1,29 +1,29 @@
 package com.overlord.voxel;
 
+import com.overlord.config.GameConfig;
+
 public class SubChunk {
-    
-    public static final int SIZE = 16;
     
     private byte[] blocks;
     private boolean dirty;
     
     public SubChunk() {
-        blocks = new byte[SIZE * SIZE * SIZE];
+        blocks = new byte[GameConfig.Chunk.SIZE * GameConfig.Chunk.SUBCHUNK_HEIGHT * GameConfig.Chunk.SIZE];
         dirty = true;
     }
     
     public byte getBlock(int x, int y, int z) {
-        if (x < 0 || x >= SIZE || y < 0 || y >= SIZE || z < 0 || z >= SIZE) {
+        if (x < 0 || x >= GameConfig.Chunk.SIZE || y < 0 || y >= GameConfig.Chunk.SUBCHUNK_HEIGHT || z < 0 || z >= GameConfig.Chunk.SIZE) {
             return 0;
         }
-        return blocks[x + (y * SIZE) + (z * SIZE * SIZE)];
+        return blocks[x + (y * GameConfig.Chunk.SIZE) + (z * GameConfig.Chunk.SIZE * GameConfig.Chunk.SIZE)];
     }
     
     public void setBlock(int x, int y, int z, byte blockType) {
-        if (x < 0 || x >= SIZE || y < 0 || y >= SIZE || z < 0 || z >= SIZE) {
+        if (x < 0 || x >= GameConfig.Chunk.SIZE || y < 0 || y >= GameConfig.Chunk.SUBCHUNK_HEIGHT || z < 0 || z >= GameConfig.Chunk.SIZE) {
             return;
         }
-        blocks[x + (y * SIZE) + (z * SIZE * SIZE)] = blockType;
+        blocks[x + (y * GameConfig.Chunk.SIZE) + (z * GameConfig.Chunk.SIZE * GameConfig.Chunk.SIZE)] = blockType;
         dirty = true;
     }
     

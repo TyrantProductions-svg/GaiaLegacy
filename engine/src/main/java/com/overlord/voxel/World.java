@@ -1,5 +1,7 @@
 package com.overlord.voxel;
 
+import com.overlord.config.GameConfig;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -13,25 +15,25 @@ public class World {
     }
     
     public byte getBlock(int x, int y, int z) {
-        int chunkX = Math.floorDiv(x, Chunk.SIZE);
-        int chunkZ = Math.floorDiv(z, Chunk.SIZE);
+        int chunkX = Math.floorDiv(x, GameConfig.Chunk.SIZE);
+        int chunkZ = Math.floorDiv(z, GameConfig.Chunk.SIZE);
         
         Chunk chunk = getChunk(chunkX, chunkZ);
         
-        int localX = Math.floorMod(x, Chunk.SIZE);
-        int localZ = Math.floorMod(z, Chunk.SIZE);
+        int localX = Math.floorMod(x, GameConfig.Chunk.SIZE);
+        int localZ = Math.floorMod(z, GameConfig.Chunk.SIZE);
         
         return chunk.getBlock(localX, y, localZ);
     }
     
     public void setBlock(int x, int y, int z, byte blockType) {
-        int chunkX = Math.floorDiv(x, Chunk.SIZE);
-        int chunkZ = Math.floorDiv(z, Chunk.SIZE);
+        int chunkX = Math.floorDiv(x, GameConfig.Chunk.SIZE);
+        int chunkZ = Math.floorDiv(z, GameConfig.Chunk.SIZE);
         
         Chunk chunk = getChunk(chunkX, chunkZ);
         
-        int localX = Math.floorMod(x, Chunk.SIZE);
-        int localZ = Math.floorMod(z, Chunk.SIZE);
+        int localX = Math.floorMod(x, GameConfig.Chunk.SIZE);
+        int localZ = Math.floorMod(z, GameConfig.Chunk.SIZE);
         
         chunk.setBlock(localX, y, localZ, blockType);
     }

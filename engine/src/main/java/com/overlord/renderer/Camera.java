@@ -1,5 +1,6 @@
 package com.overlord.renderer;
 
+import com.overlord.config.GameConfig;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
@@ -27,7 +28,7 @@ public class Camera {
         yaw = -90.0f;
         pitch = 0.0f;
         
-        movementSpeed = 5.0f;
+        movementSpeed = GameConfig.Player.MOVEMENT_SPEED;
         mouseSensitivity = 0.1f;
         
         updateVectors();
@@ -43,24 +44,24 @@ public class Camera {
     public void processKeyboard(int direction, float deltaTime) {
         float velocity = movementSpeed * deltaTime;
         
-        if (direction == 0) { // FORWARD - horizontal only
+        if (direction == 0) {
             Vector3f forward = new Vector3f(front.x, 0.0f, front.z).normalize();
             position.add(forward.mul(velocity));
         }
-        if (direction == 1) { // BACKWARD - horizontal only
+        if (direction == 1) {
             Vector3f backward = new Vector3f(front.x, 0.0f, front.z).normalize();
             position.sub(backward.mul(velocity));
         }
-        if (direction == 2) { // LEFT
+        if (direction == 2) {
             position.sub(new Vector3f(right).mul(velocity));
         }
-        if (direction == 3) { // RIGHT
+        if (direction == 3) {
             position.add(new Vector3f(right).mul(velocity));
         }
-        if (direction == 4) { // UP (Space)
+        if (direction == 4) {
             position.y += velocity;
         }
-        if (direction == 5) { // DOWN (Shift)
+        if (direction == 5) {
             position.y -= velocity;
         }
     }
@@ -72,12 +73,8 @@ public class Camera {
         yaw += xoffset;
         pitch += yoffset;
         
-        if (pitch > 89.0f) {
-            pitch = 89.0f;
-        }
-        if (pitch < -89.0f) {
-            pitch = -89.0f;
-        }
+        if (pitch > 89.0f) pitch = 89.0f;
+        if (pitch < -89.0f) pitch = -89.0f;
         
         updateVectors();
     }
@@ -129,8 +126,16 @@ public class Camera {
         return front;
     }
     
+    public Vector3f getForward(Vector3f dest) {
+        return dest.set(front);
+    }
+    
     public Vector3f getRight() {
         return right;
+    }
+    
+    public Vector3f getRight(Vector3f dest) {
+        return dest.set(right);
     }
     
     public float getPitch() {

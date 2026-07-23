@@ -1,29 +1,22 @@
 package com.overlord.core;
 
+import com.overlord.config.GameConfig;
+import com.overlord.event.EventBus;
 import com.overlord.renderer.Camera;
 import com.overlord.renderer.Renderer;
 import com.overlord.voxel.World;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class Engine {
     
-    /**
-     * Core assignments:
-     * Core 0 (CORE_RENDER):  Rendering pipeline (OpenGL, shaders, meshes)
-     * Core 1 (CORE_PLAYER):  Player input + Audio system (music, sound effects)
-     * Core 2 (CORE_WORLD):   World generation + Block updates (place/break)
-     * Core 3 (CORE_PHYSICS): Physics + Entity AI (collision, mob behavior)
-     */
-    public static final int CORE_RENDER = 0;
-    public static final int CORE_PLAYER = 1;
-    public static final int CORE_WORLD = 2;
-    public static final int CORE_PHYSICS = 3;
+    public static final int CORE_RENDER = GameConfig.Core.RENDER;
+    public static final int CORE_PLAYER = GameConfig.Core.PLAYER;
+    public static final int CORE_WORLD = GameConfig.Core.WORLD;
+    public static final int CORE_PHYSICS = GameConfig.Core.PHYSICS;
     
     private final int availableCores;
-    private final ExecutorService[] coreThreads;
+    private final TaskScheduler taskScheduler;
     private final AtomicBoolean running = new AtomicBoolean(false);
     
     private Window window;
@@ -35,21 +28,18 @@ public class Engine {
         int maxCores = Runtime.getRuntime().availableProcessors();
         this.availableCores = Math.min(4, Math.max(1, maxCores));
         
-        coreThreads = new ExecutorService[availableCores];
-        for (int i = 0; i < availableCores; i++) {
-            final int coreIndex = i;
-            coreThreads[i] = Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r, "Core-" + coreIndex);
-                t.setDaemon(true);
-                return t;
-            });
-        }
+        this.taskScheduler = new TaskScheduler(availableCores);
+        
+        ServiceLocator.getInstance().register(Engine.class, this);
+        ServiceLocator.getInstance().register(EventBus.class, EventBus.getInstance());
+        ServiceLocator.getInstance().register(ModuleManager.class, ModuleManager.getInstance());
+        ServiceLocator.getInstance().register(TaskScheduler.class, taskScheduler);
         
         System.out.println("[Engine] Initialized with " + availableCores + " cores");
     }
     
     public void init() {
-        window = new Window("Overlord Engine - Gaia Legacy", 1280, 720);
+        window = new Window();
         camera = new Camera();
         renderer = new Renderer();
         world = new World();
@@ -57,14 +47,22 @@ public class Engine {
         renderer.init(camera, window.getWidth(), window.getHeight());
         window.setCursorCaptured(true);
         
+        ServiceLocator.getInstance().register(Window.class, window);
+        ServiceLocator.getInstance().register(Camera.class, camera);
+        ServiceLocator.getInstance().register(Renderer.class, renderer);
+        ServiceLocator.getInstance().register(World.class, world);
+        
+        taskScheduler.start();
+        
         running.set(true);
     }
     
     public void submitToCore(int core, Runnable task) {
-        if (core >= availableCores) {
-            core = core % availableCores;
-        }
-        coreThreads[core].submit(task);
+        taskScheduler.submit(task, core);
+    }
+    
+    public void submitToCore(int core, Runnable task, TaskScheduler.TaskPriority priority) {
+        taskScheduler.submit(task, core, priority);
     }
     
     public int getAvailableCores() {
@@ -93,10 +91,14 @@ public class Engine {
     
     public void shutdown() {
         running.set(false);
-        for (ExecutorService core : coreThreads) {
-            core.shutdownNow();
-        }
+        
+        ModuleManager.getInstance().shutdownAll();
+        taskScheduler.shutdown();
+        
         renderer.cleanup();
         window.destroy();
+        
+        ServiceLocator.getInstance().clear();
+        EventBus.getInstance().clear();
     }
 }
