@@ -68,6 +68,29 @@ class ChunkMeshBuilderTest {
         assertEquals(0, vertices.length);
     }
 
+    @Test
+    void nonRenderableNonZeroNeighborDoesNotOccludeFace() {
+        BlockRenderInfo solid = renderInfo();
+        BlockRenderInfo nonRenderable =
+                BlockRenderInfo.nonRenderable(
+                        material(), region("fallback", 0));
+        ChunkMeshBuilder meshBuilder =
+                new ChunkMeshBuilder(
+                        unsignedBlockId ->
+                                unsignedBlockId == 1
+                                        ? solid
+                                        : nonRenderable);
+        World world = new World();
+        world.setBlock(1, 1, 1, (byte) 1);
+        world.setBlock(1, 1, 0, (byte) 7);
+
+        float[] vertices =
+                meshBuilder.buildChunkMeshData(
+                        world.getChunk(0, 0), 0, 0, world);
+
+        assertEquals(180, vertices.length);
+    }
+
     private static BlockRenderInfo renderInfo() {
         Map<BlockFace, TextureRegion> regions =
                 new EnumMap<>(BlockFace.class);

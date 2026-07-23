@@ -109,9 +109,13 @@ public final class ChunkMeshBuilder {
         return vertexArray;
     }
     
-    private static boolean isBlockSolid(World world, int x, int y, int z) {
+    private boolean isBlockSolid(World world, int x, int y, int z) {
         if (y < 0) return false;
-        return world.getBlock(x, y, z) != 0;
+        byte neighbor = world.getBlock(x, y, z);
+        return neighbor != 0
+                && renderResolver
+                        .resolve(Byte.toUnsignedInt(neighbor))
+                        .renderable();
     }
     
     private static void addFace(
