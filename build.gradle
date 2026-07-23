@@ -10,3 +10,9 @@ subprojects {
         options.encoding = 'UTF-8'
     }
 }
+
+tasks.register('game') {
+    group = 'application'
+    description = 'Runs the GaiaLegacy game application.'
+    dependsOn(':game:run')
+}

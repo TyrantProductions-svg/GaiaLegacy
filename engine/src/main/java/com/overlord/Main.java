@@ -1,62 +1,28 @@
 package com.overlord;
 
 import com.overlord.core.Engine;
-import com.overlord.core.PlayerManager;
-import com.overlord.physics.PhysicsManager;
 
-import static org.lwjgl.glfw.GLFW.*;
+public final class Main {
+    private Main() {}
 
-public class Main {
-    
-    private static double lastX;
-    private static double lastY;
-    private static boolean firstMouse = true;
-    
     public static void main(String[] args) {
         Engine engine = new Engine();
-        engine.init();
-        
-        PhysicsManager physicsManager = new PhysicsManager(
-            engine.getCamera(),
-            engine.getWorld()
-        );
-        
-        PlayerManager playerManager = new PlayerManager(
-            engine.getCamera(), 
-            physicsManager,
-            engine.getWindow().getWindow()
-        );
-        
-        glfwSetCursorPosCallback(engine.getWindow().getWindow(), (win, xpos, ypos) -> {
-            if (firstMouse) {
-                lastX = xpos;
-                lastY = ypos;
-                firstMouse = false;
+        try {
+            engine.init();
+            while (engine.isRunning() && !engine.getWindow().shouldClose()) {
+                engine.getWindow().pollEvents();
+                engine.getWindow()
+                        .consumeFramebufferResize()
+                        .ifPresent(
+                                size ->
+                                        engine.getRenderer()
+                                                .resizeFramebuffer(size.width(), size.height()));
+                engine.getRenderer().clear();
+                engine.getRenderer().render();
+                engine.getWindow().swapBuffers();
             }
-            
-            double xoffset = xpos - lastX;
-            double yoffset = lastY - ypos;
-            
-            lastX = xpos;
-            lastY = ypos;
-            
-            engine.getCamera().processMouseMovement((float) xoffset, (float) yoffset);
-        });
-        
-        engine.getCamera().setPosition(new org.joml.Vector3f(0, 0, 5));
-        
-        while (engine.isRunning()) {
-            engine.submitToCore(Engine.CORE_PLAYER, playerManager::update);
-            
-            if (playerManager.shouldClose()) {
-                break;
-            }
-            
-            engine.getRenderer().render();
-            glfwSwapBuffers(engine.getWindow().getWindow());
-            glfwPollEvents();
+        } finally {
+            engine.shutdown();
         }
-        
-        engine.shutdown();
     }
 }
