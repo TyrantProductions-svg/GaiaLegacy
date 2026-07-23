@@ -16,6 +16,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Supplier;
 
 final class StrictJson {
     private final JsonObject object;
@@ -181,6 +182,39 @@ final class StrictJson {
             result.add(element.getAsString());
         }
         return List.copyOf(result);
+    }
+
+    <T> T requireSemantic(
+            String field, Supplier<T> parser) {
+        Objects.requireNonNull(parser, "parser");
+        try {
+            return parser.get();
+        } catch (IllegalArgumentException failure) {
+            String qualifiedField = field(field);
+            throw new JsonFieldException(
+                    qualifiedField,
+                    source
+                            + " field '"
+                            + qualifiedField
+                            + "' is invalid: "
+                            + Objects.toString(
+                                    failure.getMessage(),
+                                    failure.getClass()
+                                            .getSimpleName()));
+        }
+    }
+
+    void requireSemantic(
+            String field,
+            boolean condition,
+            String expected) {
+        if (!condition) {
+            throw invalid(field, expected);
+        }
+    }
+
+    String fieldPath(String child) {
+        return field(child);
     }
 
     private JsonPrimitive requirePrimitive(

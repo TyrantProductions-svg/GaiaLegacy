@@ -3,6 +3,7 @@ package com.gaia.assets;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -31,10 +32,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 import javax.imageio.ImageIO;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class GaiaResourceLoaderTest {
@@ -287,6 +291,109 @@ class GaiaResourceLoaderTest {
                 "id");
     }
 
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("invalidBlockSemanticFields")
+    void reportsBlockSemanticValidationWithExactField(
+            String description,
+            String original,
+            String replacement,
+            String field)
+            throws Exception {
+        Map<String, byte[]> entries = validEntries();
+        String valid =
+                solidJson(
+                        "test:solid",
+                        1,
+                        "test:opaque",
+                        texturesAll("test:missing"));
+        String invalid = valid.replace(original, replacement);
+        assertNotEquals(valid, invalid, description);
+        putJson(entries, SOLID, invalid);
+
+        assertFatal(
+                entries,
+                "ASSET_JSON_INVALID",
+                SOLID,
+                ResourceLocation.parse("test:blocks/solid.json"),
+                field);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("invalidMaterialSemanticFields")
+    void reportsMaterialSemanticValidationWithExactField(
+            String description,
+            String original,
+            String replacement,
+            String field)
+            throws Exception {
+        Map<String, byte[]> entries = validEntries();
+        String valid =
+                materialJson(
+                        "test:opaque",
+                        "test:blocks",
+                        "opaque",
+                        "test:missing");
+        String invalid = valid.replace(original, replacement);
+        assertNotEquals(valid, invalid, description);
+        putJson(entries, OPAQUE_MATERIAL, invalid);
+
+        assertFatal(
+                entries,
+                "ASSET_JSON_INVALID",
+                OPAQUE_MATERIAL,
+                ResourceLocation.parse(
+                        "test:materials/opaque.json"),
+                field);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("invalidAtlasSemanticFields")
+    void reportsAtlasSemanticValidationWithExactField(
+            String description,
+            String original,
+            String replacement,
+            String code,
+            String field)
+            throws Exception {
+        Map<String, byte[]> entries = validEntries();
+        String valid =
+                atlasJson(
+                        "test:blocks",
+                        "test:textures/atlas.png",
+                        Map.of("test:missing", region()));
+        String invalid = valid.replace(original, replacement);
+        assertNotEquals(valid, invalid, description);
+        putJson(entries, BLOCK_ATLAS, invalid);
+
+        assertFatal(
+                entries,
+                code,
+                BLOCK_ATLAS,
+                ResourceLocation.parse(
+                        "test:atlases/blocks.json"),
+                field);
+    }
+
+    @Test
+    void rejectsAirBlockWithItemForm() throws Exception {
+        Map<String, byte[]> entries = validEntries();
+        String valid = airJson();
+        putJson(
+                entries,
+                AIR,
+                valid.substring(0, valid.length() - 1)
+                        + ",\"item\":{\"maxStackSize\":64,"
+                        + "\"mouthHoldable\":false,"
+                        + "\"twoHanded\":false}}");
+
+        assertFatal(
+                entries,
+                "ASSET_JSON_INVALID",
+                AIR,
+                ResourceLocation.parse("test:blocks/air.json"),
+                "item");
+    }
+
     @Test
     void rejectsDuplicateManifestNamespacesBeforeOpeningDefinitions()
             throws Exception {
@@ -331,7 +438,16 @@ class GaiaResourceLoaderTest {
         putJson(
                 entries,
                 SOLID,
-                solidJson("test:solid", 0, "test:opaque", texturesAll("test:missing")));
+                solidJson(
+                                "test:solid",
+                                0,
+                                "test:opaque",
+                                texturesAll("test:missing"))
+                        .replace(
+                                ",\"item\":{\"maxStackSize\":64,"
+                                        + "\"mouthHoldable\":true,"
+                                        + "\"twoHanded\":false}",
+                                ""));
 
         assertFatal(
                 entries,
@@ -551,7 +667,7 @@ class GaiaResourceLoaderTest {
                 "ASSET_ATLAS_REGION_BOUNDS",
                 BLOCK_ATLAS,
                 ResourceLocation.parse("test:atlases/blocks.json"),
-                "regions.test:missing");
+                "regions.test:missing.width");
     }
 
     @Test
@@ -1399,6 +1515,157 @@ class GaiaResourceLoaderTest {
                         Map.of("test:missing", region())));
         entries.put(ATLAS_IMAGE, PNG);
         return entries;
+    }
+
+    private static Stream<Arguments>
+            invalidBlockSemanticFields() {
+        return Stream.of(
+                Arguments.of(
+                        "block name",
+                        "\"name\":\"test:solid\"",
+                        "\"name\":\"INVALID\"",
+                        "name"),
+                Arguments.of(
+                        "block material",
+                        "\"material\":\"test:opaque\"",
+                        "\"material\":\"INVALID\"",
+                        "material"),
+                Arguments.of(
+                        "block texture",
+                        "\"all\":\"test:missing\"",
+                        "\"all\":\"INVALID\"",
+                        "textures.all"),
+                Arguments.of(
+                        "block id",
+                        "\"id\":1",
+                        "\"id\":256",
+                        "id"),
+                Arguments.of(
+                        "block hardness",
+                        "\"hardness\":1.5",
+                        "\"hardness\":-1",
+                        "hardness"),
+                Arguments.of(
+                        "block structural integrity",
+                        "\"structuralIntegrity\":50.0",
+                        "\"structuralIntegrity\":-1",
+                        "structuralIntegrity"),
+                Arguments.of(
+                        "block tolerance",
+                        "\"tolerance\":2.0",
+                        "\"tolerance\":-1",
+                        "tolerance"),
+                Arguments.of(
+                        "block blast resistance",
+                        "\"blastResistance\":2.0",
+                        "\"blastResistance\":-1",
+                        "blastResistance"),
+                Arguments.of(
+                        "item id",
+                        "\"item\":{\"maxStackSize\":64",
+                        "\"item\":{\"id\":\"INVALID\","
+                                + "\"maxStackSize\":64",
+                        "item.id"),
+                Arguments.of(
+                        "item max stack size",
+                        "\"maxStackSize\":64",
+                        "\"maxStackSize\":0",
+                        "item.maxStackSize"));
+    }
+
+    private static Stream<Arguments>
+            invalidMaterialSemanticFields() {
+        return Stream.of(
+                Arguments.of(
+                        "material id",
+                        "\"id\":\"test:opaque\"",
+                        "\"id\":\"INVALID\"",
+                        "id"),
+                Arguments.of(
+                        "material atlas",
+                        "\"atlas\":\"test:blocks\"",
+                        "\"atlas\":\"INVALID\"",
+                        "atlas"),
+                Arguments.of(
+                        "material render type",
+                        "\"renderType\":\"opaque\"",
+                        "\"renderType\":\"glow\"",
+                        "renderType"),
+                Arguments.of(
+                        "material alpha cutoff",
+                        "\"alphaCutoff\":0.5",
+                        "\"alphaCutoff\":2",
+                        "alphaCutoff"),
+                Arguments.of(
+                        "material missing region",
+                        "\"missingRegion\":\"test:missing\"",
+                        "\"missingRegion\":\"INVALID\"",
+                        "missingRegion"));
+    }
+
+    private static Stream<Arguments>
+            invalidAtlasSemanticFields() {
+        return Stream.of(
+                Arguments.of(
+                        "atlas id",
+                        "\"id\":\"test:blocks\"",
+                        "\"id\":\"INVALID\"",
+                        "ASSET_JSON_INVALID",
+                        "id"),
+                Arguments.of(
+                        "atlas texture",
+                        "\"texture\":\"test:textures/atlas.png\"",
+                        "\"texture\":\"INVALID\"",
+                        "ASSET_JSON_INVALID",
+                        "texture"),
+                Arguments.of(
+                        "atlas width",
+                        "\"width\":1",
+                        "\"width\":0",
+                        "ASSET_JSON_INVALID",
+                        "width"),
+                Arguments.of(
+                        "atlas height",
+                        "\"height\":1",
+                        "\"height\":0",
+                        "ASSET_JSON_INVALID",
+                        "height"),
+                Arguments.of(
+                        "atlas region id",
+                        "\"test:missing\":",
+                        "\"INVALID\":",
+                        "ASSET_JSON_INVALID",
+                        "regions.INVALID"),
+                Arguments.of(
+                        "atlas region object",
+                        "\"test:missing\":" + region(),
+                        "\"test:missing\":1",
+                        "ASSET_JSON_INVALID",
+                        "regions.test:missing"),
+                Arguments.of(
+                        "atlas region x",
+                        "\"x\":0",
+                        "\"x\":-1",
+                        "ASSET_ATLAS_REGION_BOUNDS",
+                        "regions.test:missing.x"),
+                Arguments.of(
+                        "atlas region y",
+                        "\"y\":0",
+                        "\"y\":-1",
+                        "ASSET_ATLAS_REGION_BOUNDS",
+                        "regions.test:missing.y"),
+                Arguments.of(
+                        "atlas region width",
+                        "\"width\":1,\"height\":1}",
+                        "\"width\":0,\"height\":1}",
+                        "ASSET_ATLAS_REGION_BOUNDS",
+                        "regions.test:missing.width"),
+                Arguments.of(
+                        "atlas region height",
+                        "\"width\":1,\"height\":1}",
+                        "\"width\":1,\"height\":0}",
+                        "ASSET_ATLAS_REGION_BOUNDS",
+                        "regions.test:missing.height"));
     }
 
     private static String manifestJson(

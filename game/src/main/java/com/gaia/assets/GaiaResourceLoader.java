@@ -3,7 +3,6 @@ package com.gaia.assets;
 import com.gaia.blocks.BlockDefinition;
 import com.gaia.blocks.BlockRegistry;
 import com.gaia.blocks.ItemFormDefinition;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.overlord.assets.AssetDiagnostic;
@@ -256,8 +255,7 @@ public final class GaiaResourceLoader {
                 "regions");
 
         ResourceLocation id =
-                ResourceLocation.parse(
-                        strict.requireString("id"));
+                resourceLocation(strict, "id");
         if (!ownedByManifest(
                 id,
                 request,
@@ -266,18 +264,25 @@ public final class GaiaResourceLoader {
             return null;
         }
         ResourceLocation texture =
-                ResourceLocation.parse(
-                        strict.requireString("texture"));
+                resourceLocation(strict, "texture");
         int width = strict.requireInt("width");
         int height = strict.requireInt("height");
-        if (width <= 0 || height <= 0) {
-            throw new JsonParseException(
-                    source
-                            + " fields 'width' and 'height' must be positive");
-        }
+        strict.requireSemantic(
+                "width",
+                width > 0,
+                "a positive integer");
+        strict.requireSemantic(
+                "height",
+                height > 0,
+                "a positive integer");
 
         JsonObject regionsObject =
                 strict.requireObject("regions");
+        StrictJson regionsJson =
+                new StrictJson(
+                        regionsObject,
+                        source,
+                        "regions");
         Map<ResourceLocation, TextureRegion> regions =
                 new LinkedHashMap<>();
         for (String regionText :
@@ -285,7 +290,11 @@ public final class GaiaResourceLoader {
                         .sorted()
                         .toList()) {
             ResourceLocation regionId =
-                    ResourceLocation.parse(regionText);
+                    regionsJson.requireSemantic(
+                            regionText,
+                            () ->
+                                    ResourceLocation.parse(
+                                            regionText));
             if (!ownedByManifest(
                     regionId,
                     request,
@@ -294,45 +303,66 @@ public final class GaiaResourceLoader {
                 continue;
             }
 
-            JsonElement regionElement =
-                    regionsObject.get(regionText);
-            if (regionElement == null
-                    || regionElement.isJsonNull()
-                    || !regionElement.isJsonObject()) {
-                throw new JsonParseException(
-                        source
-                                + " field 'regions."
-                                + regionId
-                                + "' must be an object");
-            }
             StrictJson regionJson =
                     new StrictJson(
-                            regionElement.getAsJsonObject(),
+                            regionsJson.requireObject(
+                                    regionText),
                             source,
                             "regions." + regionId);
             regionJson.requireOnly(
                     "x", "y", "width", "height");
-            try {
-                regions.put(
-                        regionId,
-                        new TextureRegion(
-                                regionId,
-                                regionJson.requireInt("x"),
-                                regionJson.requireInt("y"),
-                                regionJson.requireInt("width"),
-                                regionJson.requireInt("height"),
-                                width,
-                                height));
-            } catch (IllegalArgumentException failure) {
+            int x = regionJson.requireInt("x");
+            int y = regionJson.requireInt("y");
+            int regionWidth =
+                    regionJson.requireInt("width");
+            int regionHeight =
+                    regionJson.requireInt("height");
+            String boundsField = null;
+            String boundsMessage = null;
+            if (x < 0) {
+                boundsField = "x";
+                boundsMessage =
+                        "Region x coordinate must be non-negative";
+            } else if (y < 0) {
+                boundsField = "y";
+                boundsMessage =
+                        "Region y coordinate must be non-negative";
+            } else if (regionWidth <= 0) {
+                boundsField = "width";
+                boundsMessage =
+                        "Region width must be positive";
+            } else if (regionHeight <= 0) {
+                boundsField = "height";
+                boundsMessage =
+                        "Region height must be positive";
+            } else if ((long) x + regionWidth > width) {
+                boundsField = "width";
+                boundsMessage =
+                        "Region width must fit within the atlas";
+            } else if ((long) y + regionHeight > height) {
+                boundsField = "height";
+                boundsMessage =
+                        "Region height must fit within the atlas";
+            }
+            if (boundsField != null) {
                 addError(
                         diagnostics,
                         "ASSET_ATLAS_REGION_BOUNDS",
                         request.sourceContext(),
-                        "regions." + regionId,
-                        Objects.toString(
-                                failure.getMessage(),
-                                "Invalid atlas region bounds"));
+                        regionJson.fieldPath(boundsField),
+                        boundsMessage);
+                continue;
             }
+            regions.put(
+                    regionId,
+                    new TextureRegion(
+                            regionId,
+                            x,
+                            y,
+                            regionWidth,
+                            regionHeight,
+                            width,
+                            height));
         }
 
         return new TextureAtlasMetadata(
@@ -400,8 +430,7 @@ public final class GaiaResourceLoader {
                 "missingRegion");
 
         ResourceLocation id =
-                ResourceLocation.parse(
-                        strict.requireString("id"));
+                resourceLocation(strict, "id");
         if (!ownedByManifest(
                 id,
                 request,
@@ -409,16 +438,31 @@ public final class GaiaResourceLoader {
                 diagnostics)) {
             return null;
         }
+        ResourceLocation atlas =
+                resourceLocation(strict, "atlas");
+        RenderType renderType =
+                strict.requireSemantic(
+                        "renderType",
+                        () ->
+                                RenderType.parse(
+                                        strict.requireString(
+                                                "renderType")));
+        float alphaCutoff =
+                strict.requireFloat("alphaCutoff");
+        strict.requireSemantic(
+                "alphaCutoff",
+                alphaCutoff >= 0.0f
+                        && alphaCutoff <= 1.0f,
+                "within 0..1");
+        ResourceLocation missingRegion =
+                resourceLocation(
+                        strict, "missingRegion");
         return new MaterialDefinition(
                 id,
-                ResourceLocation.parse(
-                        strict.requireString("atlas")),
-                RenderType.parse(
-                        strict.requireString("renderType")),
-                strict.requireFloat("alphaCutoff"),
-                ResourceLocation.parse(
-                        strict.requireString(
-                                "missingRegion")));
+                atlas,
+                renderType,
+                alphaCutoff,
+                missingRegion);
     }
 
     private List<BlockDefinition> parseBlocks(
@@ -508,9 +552,12 @@ public final class GaiaResourceLoader {
                 "item");
 
         int id = strict.requireInt("id");
+        strict.requireSemantic(
+                "id",
+                id >= 0 && id <= 255,
+                "within 0..255");
         ResourceLocation name =
-                ResourceLocation.parse(
-                        strict.requireString("name"));
+                resourceLocation(strict, "name");
         if (!ownedByManifest(
                 name,
                 request,
@@ -519,8 +566,7 @@ public final class GaiaResourceLoader {
             return null;
         }
         ResourceLocation material =
-                ResourceLocation.parse(
-                        strict.requireString("material"));
+                resourceLocation(strict, "material");
         Map<BlockFace, ResourceLocation> textures =
                 parseTextures(
                         strict.requireObject("textures"),
@@ -531,19 +577,44 @@ public final class GaiaResourceLoader {
                         ? null
                         : parseItem(
                                 itemObject, name, source);
+        strict.requireSemantic(
+                "item",
+                id != 0 || item == null,
+                "absent when block id is 0");
+
+        float hardness =
+                strict.requireFloat("hardness");
+        requireFiniteNonNegative(
+                strict, "hardness", hardness);
+        float structuralIntegrity =
+                strict.requireFloat(
+                        "structuralIntegrity");
+        requireFiniteNonNegative(
+                strict,
+                "structuralIntegrity",
+                structuralIntegrity);
+        float tolerance =
+                strict.requireFloat("tolerance");
+        requireFiniteNonNegative(
+                strict, "tolerance", tolerance);
+        float blastResistance =
+                strict.requireFloat("blastResistance");
+        requireFiniteNonNegative(
+                strict,
+                "blastResistance",
+                blastResistance);
 
         return new BlockDefinition(
                 id,
                 name,
                 material,
                 textures,
-                strict.requireFloat("hardness"),
-                strict.requireFloat(
-                        "structuralIntegrity"),
-                strict.requireFloat("tolerance"),
+                hardness,
+                structuralIntegrity,
+                tolerance,
                 strict.requireBoolean("gravity"),
                 strict.requireBoolean("flammable"),
-                strict.requireFloat("blastResistance"),
+                blastResistance,
                 item);
     }
 
@@ -563,12 +634,18 @@ public final class GaiaResourceLoader {
                 "twoHanded");
         ResourceLocation itemId =
                 itemObject.has("id")
-                        ? ResourceLocation.parse(
-                                item.requireString("id"))
+                        ? resourceLocation(item, "id")
                         : blockName;
+        int maxStackSize =
+                item.requireInt("maxStackSize");
+        item.requireSemantic(
+                "maxStackSize",
+                maxStackSize >= 1
+                        && maxStackSize <= 64,
+                "within 1..64");
         return new ItemFormDefinition(
                 itemId,
-                item.requireInt("maxStackSize"),
+                maxStackSize,
                 item.requireBoolean("mouthHoldable"),
                 item.requireBoolean("twoHanded"));
     }
@@ -657,8 +734,7 @@ public final class GaiaResourceLoader {
             return;
         }
         ResourceLocation region =
-                ResourceLocation.parse(
-                        textures.requireString(field));
+                resourceLocation(textures, field);
         for (BlockFace face : BlockFace.values()) {
             faces.put(face, region);
         }
@@ -673,8 +749,7 @@ public final class GaiaResourceLoader {
             return;
         }
         ResourceLocation region =
-                ResourceLocation.parse(
-                        textures.requireString(field));
+                resourceLocation(textures, field);
         faces.put(BlockFace.NORTH, region);
         faces.put(BlockFace.SOUTH, region);
         faces.put(BlockFace.EAST, region);
@@ -690,9 +765,27 @@ public final class GaiaResourceLoader {
         if (object.has(field)) {
             faces.put(
                     face,
-                    ResourceLocation.parse(
-                            textures.requireString(field)));
+                    resourceLocation(textures, field));
         }
+    }
+
+    private static ResourceLocation resourceLocation(
+            StrictJson json, String field) {
+        return json.requireSemantic(
+                field,
+                () ->
+                        ResourceLocation.parse(
+                                json.requireString(field)));
+    }
+
+    private static void requireFiniteNonNegative(
+            StrictJson json,
+            String field,
+            float value) {
+        json.requireSemantic(
+                field,
+                Float.isFinite(value) && value >= 0.0f,
+                "finite and non-negative");
     }
 
     private GaiaAssetCatalog resolve(
