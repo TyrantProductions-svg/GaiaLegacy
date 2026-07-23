@@ -138,10 +138,13 @@ public class Camera {
         return right;
     }
     
+<<<<<<< HEAD
     public Vector3f getRight(Vector3f dest) {
         return dest.set(right);
     }
     
+=======
+>>>>>>> 4a233705f8ce7b58cfd97d93e8f5aa28dfdee6bd
     public float getPitch() {
         return pitch;
     }
