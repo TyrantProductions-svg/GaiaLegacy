@@ -120,6 +120,56 @@ class AssetManagerTest {
     }
 
     @Test
+    void rejectsIndexEntriesWithoutMatchingManifests() throws Exception {
+        Path jar =
+                jar(
+                        temp.resolve("missing-manifest.jar"),
+                        Map.of(
+                                "META-INF/gaialegacy/resource-indexes.list",
+                                "assets/gaia/missing.json\n"));
+
+        try (URLClassLoader loader =
+                new URLClassLoader(
+                        new URL[] {jar.toUri().toURL()},
+                        ClassLoader.getPlatformClassLoader())) {
+            AssetLoadException exception =
+                    assertThrows(
+                            AssetLoadException.class,
+                            () -> new AssetManager(loader)
+                                    .discoverResourceIndexes());
+
+            assertEquals(
+                    "ASSET_INDEX_NOT_FOUND",
+                    exception.report().errors().get(0).code());
+        }
+    }
+
+    @Test
+    void rejectsUnsafeDiscoveryPaths() throws Exception {
+        Path jar =
+                jar(
+                        temp.resolve("unsafe-path.jar"),
+                        Map.of(
+                                "META-INF/gaialegacy/resource-indexes.list",
+                                "assets/gaia/../resource-index.json\n"));
+
+        try (URLClassLoader loader =
+                new URLClassLoader(
+                        new URL[] {jar.toUri().toURL()},
+                        ClassLoader.getPlatformClassLoader())) {
+            AssetLoadException exception =
+                    assertThrows(
+                            AssetLoadException.class,
+                            () -> new AssetManager(loader)
+                                    .discoverResourceIndexes());
+
+            assertEquals(
+                    "ASSET_INDEX_INVALID",
+                    exception.report().errors().get(0).code());
+        }
+    }
+
+    @Test
     void discoversIndexesInDeterministicOrder() throws Exception {
         Path alpha =
                 jar(
@@ -145,6 +195,10 @@ class AssetManagerTest {
             List<AssetSource> sources =
                     new AssetManager(loader).discoverResourceIndexes();
 
+            assertEquals(2, sources.size());
+            assertEquals(
+                    List.of("assets/gaia/a.json", "assets/gaia/b.json"),
+                    sources.stream().map(AssetSource::classpathPath).toList());
             assertEquals(sources.stream().sorted().toList(), sources);
         }
     }
