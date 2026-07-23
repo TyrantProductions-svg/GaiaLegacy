@@ -6,7 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.overlord.core.input.InputManager;
+import com.overlord.renderer.RenderAssets;
 import com.overlord.renderer.Renderer;
+import com.overlord.renderer.Texture;
+import com.overlord.renderer.texture.TextureImage;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -35,13 +38,33 @@ class MainThreadGuardTest {
 
     @Test
     void rendererRejectsWorkerBeforeCallingOpenGl() throws InterruptedException {
-        Renderer renderer = new Renderer(MainThreadGuard.captureCurrentThread());
+        Renderer renderer =
+                new Renderer(
+                        MainThreadGuard.captureCurrentThread(),
+                        RenderAssets.missing());
         ExecutorService worker = Executors.newSingleThreadExecutor();
         try {
             ExecutionException failure =
                     assertThrows(
                             ExecutionException.class,
                             () -> worker.submit(() -> renderer.resizeFramebuffer(800, 600)).get());
+
+            assertInstanceOf(IllegalStateException.class, failure.getCause());
+        } finally {
+            worker.shutdownNow();
+        }
+    }
+
+    @Test
+    void textureRejectsWorkerBeforeUploadingToOpenGl() throws InterruptedException {
+        MainThreadGuard guard = MainThreadGuard.captureCurrentThread();
+        TextureImage image = TextureImage.missing();
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        try {
+            ExecutionException failure =
+                    assertThrows(
+                            ExecutionException.class,
+                            () -> worker.submit(() -> new Texture(guard, image)).get());
 
             assertInstanceOf(IllegalStateException.class, failure.getCause());
         } finally {

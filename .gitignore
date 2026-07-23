@@ -16,3 +16,4 @@ bin/
 Thumbs.db
 *.log
 out/
+.superpowers/

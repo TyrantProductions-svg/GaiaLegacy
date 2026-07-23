@@ -9,6 +9,7 @@ import static org.lwjgl.opengl.GL30C.*;
 
 public class Renderer {
     private final MainThreadGuard mainThreadGuard;
+    private final RenderAssets renderAssets;
     private Shader shader;
     private Mesh mesh;
     private Mesh fallbackMesh;
@@ -17,8 +18,11 @@ public class Renderer {
     
     private Matrix4f projectionMatrix;
 
-    public Renderer(MainThreadGuard mainThreadGuard) {
+    public Renderer(
+            MainThreadGuard mainThreadGuard,
+            RenderAssets renderAssets) {
         this.mainThreadGuard = Objects.requireNonNull(mainThreadGuard, "mainThreadGuard");
+        this.renderAssets = Objects.requireNonNull(renderAssets, "renderAssets");
     }
 
     public void init(Camera camera, int width, int height) {
@@ -55,7 +59,10 @@ public class Renderer {
         
         shader = new Shader(mainThreadGuard, vertexSource, fragmentSource);
 
-        textureAtlas = new Texture(mainThreadGuard, "textures/atlas.png");
+        textureAtlas =
+                new Texture(
+                        mainThreadGuard,
+                        renderAssets.blockAtlas());
         
         float[] vertices = {
             -0.5f, -0.5f, -0.5f,  0.0f, 0.0f,

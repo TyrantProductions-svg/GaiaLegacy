@@ -34,9 +34,6 @@ public class GameConfig {
     }
     
     public static final class Rendering {
-        public static final int TEXTURE_SIZE = 16;
-        public static final int ATLAS_WIDTH = 128;
-        public static final int ATLAS_HEIGHT = 64;
         public static final float FOV = 70.0f;
         public static final float NEAR_PLANE = 0.1f;
         public static final float FAR_PLANE = 1000.0f;

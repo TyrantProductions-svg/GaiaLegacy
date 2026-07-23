@@ -1,0 +1,7 @@
+{
+  "id": "gaia:opaque",
+  "atlas": "gaia:blocks",
+  "renderType": "opaque",
+  "alphaCutoff": 0.5,
+  "missingRegion": "gaia:missing"
+}

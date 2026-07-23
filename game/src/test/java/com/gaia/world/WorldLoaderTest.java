@@ -6,7 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.gaia.assets.GaiaAssetCatalog;
+import com.gaia.assets.GaiaResourceLoader;
+import com.overlord.assets.AssetManager;
+import com.overlord.assets.ResourceLocation;
 import com.overlord.config.GameConfig;
+import com.overlord.voxel.ChunkMeshBuilder;
 import com.overlord.voxel.World;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
@@ -18,6 +23,15 @@ import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
 class WorldLoaderTest {
+    private static final GaiaAssetCatalog CATALOG = productionCatalog();
+    private static final WorldLoader LOADER =
+            new WorldLoader(
+                    new GaiaWorldGenerator(CATALOG.blockRegistry()),
+                    new ChunkMeshBuilder(CATALOG.blockRegistry()),
+                    CATALOG.blockRegistry()
+                            .requireStoredId(
+                                    ResourceLocation.parse("gaia:grass")));
+
     @Test
     void generatesTerrainAndCpuMeshOnWorkerThread() throws Exception {
         Thread testThread = Thread.currentThread();
@@ -34,7 +48,7 @@ class WorldLoaderTest {
                                         "world-loader-test"));
         try {
             Future<WorldLoadResult> future =
-                    worker.submit(() -> new WorldLoader().load(world));
+                    worker.submit(() -> LOADER.load(world));
             WorldLoadResult result = future.get();
 
             assertNotEquals(testThread, loaderThread.get());
@@ -67,7 +81,7 @@ class WorldLoaderTest {
                     worker.submit(
                             () -> {
                                 Thread.currentThread().interrupt();
-                                return new WorldLoader().load(new World());
+                                return LOADER.load(new World());
                             });
 
             ExecutionException failure =
@@ -78,5 +92,12 @@ class WorldLoaderTest {
         } finally {
             worker.shutdownNow();
         }
+    }
+
+    private static GaiaAssetCatalog productionCatalog() {
+        return new GaiaResourceLoader(
+                        new AssetManager(
+                                WorldLoaderTest.class.getClassLoader()))
+                .load();
     }
 }

@@ -4,6 +4,7 @@ import com.overlord.config.GameConfig;
 import com.overlord.core.thread.MainThreadGuard;
 import com.overlord.event.EventBus;
 import com.overlord.renderer.Camera;
+import com.overlord.renderer.RenderAssets;
 import com.overlord.renderer.Renderer;
 import com.overlord.voxel.World;
 import java.util.Objects;
@@ -18,6 +19,7 @@ public class Engine {
     private final int availableCores;
     private final TaskScheduler taskScheduler;
     private final MainThreadGuard mainThreadGuard;
+    private final RenderAssets renderAssets;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
@@ -27,12 +29,22 @@ public class Engine {
     private World world;
 
     public Engine() {
-        this(MainThreadGuard.captureCurrentThread());
+        this(
+                MainThreadGuard.captureCurrentThread(),
+                RenderAssets.missing());
     }
 
     public Engine(MainThreadGuard mainThreadGuard) {
+        this(mainThreadGuard, RenderAssets.missing());
+    }
+
+    public Engine(
+            MainThreadGuard mainThreadGuard,
+            RenderAssets renderAssets) {
         this.mainThreadGuard =
                 Objects.requireNonNull(mainThreadGuard, "mainThreadGuard");
+        this.renderAssets =
+                Objects.requireNonNull(renderAssets, "renderAssets");
         int maxCores = Runtime.getRuntime().availableProcessors();
         availableCores = Math.min(4, Math.max(1, maxCores));
         taskScheduler = new TaskScheduler(availableCores);
@@ -53,7 +65,8 @@ public class Engine {
         try {
             initializedWindow = new Window(mainThreadGuard);
             Camera initializedCamera = new Camera();
-            initializedRenderer = new Renderer(mainThreadGuard);
+            initializedRenderer =
+                    new Renderer(mainThreadGuard, renderAssets);
             World initializedWorld = new World();
 
             initializedRenderer.init(

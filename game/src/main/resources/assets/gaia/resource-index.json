@@ -1,0 +1,16 @@
+{
+  "namespace": "gaia",
+  "blocks": [
+    "blocks/air.json",
+    "blocks/grass.json",
+    "blocks/dirt.json",
+    "blocks/stone.json"
+  ],
+  "materials": [
+    "materials/opaque.json",
+    "materials/missing.json"
+  ],
+  "atlases": [
+    "atlases/blocks.json"
+  ]
+}

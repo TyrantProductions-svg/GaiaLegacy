@@ -35,3 +35,34 @@ dependencies {
 test {
     useJUnitPlatform()
 }
+
+tasks.register('verifyPackagedResources') {
+    dependsOn tasks.named('jar')
+    doLast {
+        def archive = tasks.named('jar').get().archiveFile.get().asFile
+        def required = [
+            'META-INF/gaialegacy/resource-indexes.list',
+            'assets/gaia/resource-index.json',
+            'assets/gaia/blocks/air.json',
+            'assets/gaia/blocks/grass.json',
+            'assets/gaia/blocks/dirt.json',
+            'assets/gaia/blocks/stone.json',
+            'assets/gaia/materials/opaque.json',
+            'assets/gaia/materials/missing.json',
+            'assets/gaia/atlases/blocks.json',
+            'assets/gaia/textures/atlas.png'
+        ]
+        new java.util.zip.ZipFile(archive).withCloseable { zip ->
+            required.each { path ->
+                if (zip.getEntry(path) == null) {
+                    throw new GradleException(
+                        "Packaged game JAR is missing ${path}")
+                }
+            }
+        }
+    }
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('verifyPackagedResources')
+}

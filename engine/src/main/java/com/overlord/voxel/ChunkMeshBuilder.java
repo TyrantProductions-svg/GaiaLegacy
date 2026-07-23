@@ -1,14 +1,33 @@
 package com.overlord.voxel;
 
 import com.overlord.config.GameConfig;
+import com.overlord.renderer.texture.TextureRegion;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
-public class ChunkMeshBuilder {
-    
-    public static float[] buildChunkMeshData(Chunk chunk, int chunkX, int chunkZ, World world) {
+public final class ChunkMeshBuilder {
+    private static final BlockFace[] FACES = {
+        BlockFace.NORTH,
+        BlockFace.SOUTH,
+        BlockFace.UP,
+        BlockFace.DOWN,
+        BlockFace.WEST,
+        BlockFace.EAST
+    };
+
+    private final BlockRenderResolver renderResolver;
+
+    public ChunkMeshBuilder(BlockRenderResolver renderResolver) {
+        this.renderResolver =
+                Objects.requireNonNull(
+                        renderResolver, "renderResolver");
+    }
+
+    public float[] buildChunkMeshData(
+            Chunk chunk, int chunkX, int chunkZ, World world) {
         List<Float> vertices = new ArrayList<>();
         
         Map<Integer, SubChunk> subChunks = chunk.getSubChunks();
@@ -27,6 +46,13 @@ public class ChunkMeshBuilder {
                     for (int z = 0; z < GameConfig.Chunk.SUBCHUNK_HEIGHT; z++) {
                         byte block = subChunk.getBlock(x, y, z);
                         if (block == 0) continue;
+
+                        BlockRenderInfo renderInfo =
+                                renderResolver.resolve(
+                                        Byte.toUnsignedInt(block));
+                        if (!renderInfo.renderable()) {
+                            continue;
+                        }
                         
                         int worldY = baseY + y;
                         int worldX = chunkX * GameConfig.Chunk.SIZE + x;
@@ -36,27 +62,35 @@ public class ChunkMeshBuilder {
                         float py = worldY;
                         float pz = worldZ;
                         
-                        int topTexture = getTopTexture(block);
-                        int sideTexture = getSideTexture(block);
-                        int bottomTexture = getBottomTexture(block);
-                        
                         if (!isBlockSolid(world, worldX, worldY, worldZ - 1)) {
-                            addFace(vertices, px, py, pz, 0, sideTexture);
+                            addFace(
+                                    vertices, px, py, pz, 0,
+                                    renderInfo.region(FACES[0]));
                         }
                         if (!isBlockSolid(world, worldX, worldY, worldZ + 1)) {
-                            addFace(vertices, px, py, pz, 1, sideTexture);
+                            addFace(
+                                    vertices, px, py, pz, 1,
+                                    renderInfo.region(FACES[1]));
                         }
                         if (!isBlockSolid(world, worldX, worldY + 1, worldZ)) {
-                            addFace(vertices, px, py, pz, 2, topTexture);
+                            addFace(
+                                    vertices, px, py, pz, 2,
+                                    renderInfo.region(FACES[2]));
                         }
                         if (!isBlockSolid(world, worldX, worldY - 1, worldZ)) {
-                            addFace(vertices, px, py, pz, 3, bottomTexture);
+                            addFace(
+                                    vertices, px, py, pz, 3,
+                                    renderInfo.region(FACES[3]));
                         }
                         if (!isBlockSolid(world, worldX - 1, worldY, worldZ)) {
-                            addFace(vertices, px, py, pz, 4, sideTexture);
+                            addFace(
+                                    vertices, px, py, pz, 4,
+                                    renderInfo.region(FACES[4]));
                         }
                         if (!isBlockSolid(world, worldX + 1, worldY, worldZ)) {
-                            addFace(vertices, px, py, pz, 5, sideTexture);
+                            addFace(
+                                    vertices, px, py, pz, 5,
+                                    renderInfo.region(FACES[5]));
                         }
                     }
                 }
@@ -75,50 +109,39 @@ public class ChunkMeshBuilder {
         return vertexArray;
     }
     
-    private static int getTopTexture(byte blockType) {
-        switch (blockType) {
-            case 1: return 0;
-            case 2: return 2;
-            case 3: return 3;
-            default: return 0;
-        }
-    }
-    
-    private static int getSideTexture(byte blockType) {
-        switch (blockType) {
-            case 1: return 1;
-            case 2: return 2;
-            case 3: return 3;
-            default: return 0;
-        }
-    }
-    
-    private static int getBottomTexture(byte blockType) {
-        switch (blockType) {
-            case 1: return 2;
-            case 2: return 2;
-            case 3: return 3;
-            default: return 0;
-        }
-    }
-    
-    private static boolean isBlockSolid(World world, int x, int y, int z) {
+    private boolean isBlockSolid(World world, int x, int y, int z) {
         if (y < 0) return false;
-        return world.getBlock(x, y, z) != 0;
+        byte neighbor = world.getBlock(x, y, z);
+        return neighbor != 0
+                && renderResolver
+                        .resolve(Byte.toUnsignedInt(neighbor))
+                        .renderable();
     }
     
-    private static void addFace(List<Float> vertices, float x, float y, float z, int face, int textureIndex) {
-        float[] faceVerts = getFaceVertices(x, y, z, face, textureIndex);
+    private static void addFace(
+            List<Float> vertices,
+            float x,
+            float y,
+            float z,
+            int face,
+            TextureRegion region) {
+        float[] faceVerts =
+                getFaceVertices(x, y, z, face, region);
         for (float v : faceVerts) {
             vertices.add(v);
         }
     }
     
-    private static float[] getFaceVertices(float x, float y, float z, int face, int textureIndex) {
-        float u = (textureIndex * GameConfig.Rendering.TEXTURE_SIZE) / (float) GameConfig.Rendering.ATLAS_WIDTH;
-        float uEnd = ((textureIndex + 1) * GameConfig.Rendering.TEXTURE_SIZE) / (float) GameConfig.Rendering.ATLAS_WIDTH;
-        float v = 0.0f;
-        float vEnd = GameConfig.Rendering.TEXTURE_SIZE / (float) GameConfig.Rendering.ATLAS_HEIGHT;
+    private static float[] getFaceVertices(
+            float x,
+            float y,
+            float z,
+            int face,
+            TextureRegion region) {
+        float u = region.uMin();
+        float uEnd = region.uMax();
+        float v = region.vMin();
+        float vEnd = region.vMax();
         
         boolean flipV = (face != 2);
         float v0 = flipV ? vEnd : v;
