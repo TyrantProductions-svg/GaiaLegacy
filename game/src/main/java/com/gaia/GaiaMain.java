@@ -105,6 +105,10 @@ public class GaiaMain {
             engine.getWindow().getWindow()
         );
         
+        int fps = 0;
+        int frameCount = 0;
+        long lastFpsTime = System.nanoTime();
+        
         glfwSetCursorPosCallback(engine.getWindow().getWindow(), (win, xpos, ypos) -> {
             if (firstMouse) {
                 lastX = xpos;
@@ -131,6 +135,15 @@ public class GaiaMain {
             
             if (playerManager.shouldClose()) {
                 break;
+            }
+            
+            // Calculate FPS
+            frameCount++;
+            long currentTime = System.nanoTime();
+            if (currentTime - lastFpsTime >= 1_000_000_000L) {
+                fps = frameCount;
+                frameCount = 0;
+                lastFpsTime = currentTime;
             }
             
             float[] pendingData = chunkMeshData.getAndSet(null);
