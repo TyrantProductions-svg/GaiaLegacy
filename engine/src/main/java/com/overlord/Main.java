@@ -47,7 +47,6 @@ public class Main {
         
         while (engine.isRunning()) {
             engine.submitToCore(Engine.CORE_PLAYER, playerManager::update);
-            engine.submitToCore(Engine.CORE_PHYSICS, () -> physicsManager.update(0.016f));
             
             if (playerManager.shouldClose()) {
                 break;

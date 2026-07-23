@@ -18,7 +18,33 @@ repositories {
 dependencies {
     def lwjglVersion = '3.3.3'
     def jomlVersion = '1.10.5'
-    def lwjglNatives = 'natives-macos-arm64'
+    def osName = System.getProperty('os.name').toLowerCase()
+    def osArch = System.getProperty('os.arch').toLowerCase()
+
+    def isArm64 = osArch.contains('aarch64') || osArch.contains('arm64')
+
+    def lwjglNatives
+
+    if (osName.contains('win')) {
+        lwjglNatives = isArm64
+            ? 'natives-windows-arm64'
+            : 'natives-windows'
+    } else if (osName.contains('mac')) {
+        lwjglNatives = isArm64
+            ? 'natives-macos-arm64'
+            : 'natives-macos'
+    } else if (osName.contains('linux')) {
+        lwjglNatives = isArm64
+            ? 'natives-linux-arm64'
+            : 'natives-linux'
+    } else {
+        throw new GradleException(
+            "Unsupported operating system: ${System.getProperty('os.name')} " +
+            "${System.getProperty('os.arch')}"
+        )
+    }
+
+    println "Using LWJGL natives: ${lwjglNatives}"
 
     api platform("org.lwjgl:lwjgl-bom:$lwjglVersion")
 
