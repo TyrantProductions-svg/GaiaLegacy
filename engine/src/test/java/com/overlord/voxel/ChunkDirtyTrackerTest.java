@@ -3,32 +3,48 @@ package com.overlord.voxel;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.overlord.config.GameConfig;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class ChunkDirtyTrackerTest {
+    private static final int CHUNK_SIZE = GameConfig.Chunk.SIZE;
+    private static final int INTERIOR_LOCAL_COORDINATE = CHUNK_SIZE / 2;
+    private static final int LAST_LOCAL_COORDINATE = CHUNK_SIZE - 1;
+
     private final ChunkDirtyTracker tracker = new ChunkDirtyTracker();
     private final ChunkKey center = new ChunkKey(0, 0);
 
     @Test
     void interiorChangeDirtiesOnlyTarget() {
-        assertEquals(Set.of(center), tracker.affectedByBlock(center, 8, 8));
+        assertEquals(
+                Set.of(center),
+                tracker.affectedByBlock(
+                        center,
+                        INTERIOR_LOCAL_COORDINATE,
+                        INTERIOR_LOCAL_COORDINATE));
     }
 
     @Test
     void edgeChangesDirtyTheirMatchingNeighbor() {
         assertEquals(
                 Set.of(center, center.west()),
-                tracker.affectedByBlock(center, 0, 8));
+                tracker.affectedByBlock(center, 0, INTERIOR_LOCAL_COORDINATE));
         assertEquals(
                 Set.of(center, center.east()),
-                tracker.affectedByBlock(center, 15, 8));
+                tracker.affectedByBlock(
+                        center,
+                        LAST_LOCAL_COORDINATE,
+                        INTERIOR_LOCAL_COORDINATE));
         assertEquals(
                 Set.of(center, center.north()),
-                tracker.affectedByBlock(center, 8, 0));
+                tracker.affectedByBlock(center, INTERIOR_LOCAL_COORDINATE, 0));
         assertEquals(
                 Set.of(center, center.south()),
-                tracker.affectedByBlock(center, 8, 15));
+                tracker.affectedByBlock(
+                        center,
+                        INTERIOR_LOCAL_COORDINATE,
+                        LAST_LOCAL_COORDINATE));
     }
 
     @Test
@@ -38,13 +54,16 @@ class ChunkDirtyTrackerTest {
                 tracker.affectedByBlock(center, 0, 0));
         assertEquals(
                 Set.of(center, center.east(), center.north()),
-                tracker.affectedByBlock(center, 15, 0));
+                tracker.affectedByBlock(center, LAST_LOCAL_COORDINATE, 0));
         assertEquals(
                 Set.of(center, center.west(), center.south()),
-                tracker.affectedByBlock(center, 0, 15));
+                tracker.affectedByBlock(center, 0, LAST_LOCAL_COORDINATE));
         assertEquals(
                 Set.of(center, center.east(), center.south()),
-                tracker.affectedByBlock(center, 15, 15));
+                tracker.affectedByBlock(
+                        center,
+                        LAST_LOCAL_COORDINATE,
+                        LAST_LOCAL_COORDINATE));
     }
 
     @Test
@@ -57,10 +76,10 @@ class ChunkDirtyTrackerTest {
                 () -> tracker.affectedByBlock(center, 0, -1));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> tracker.affectedByBlock(center, 16, 0));
+                () -> tracker.affectedByBlock(center, CHUNK_SIZE, 0));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> tracker.affectedByBlock(center, 0, 16));
+                () -> tracker.affectedByBlock(center, 0, CHUNK_SIZE));
     }
 
     @Test
