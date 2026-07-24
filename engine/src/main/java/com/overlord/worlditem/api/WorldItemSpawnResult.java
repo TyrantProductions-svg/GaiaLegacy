@@ -19,9 +19,24 @@ public record WorldItemSpawnResult(
                 throw new IllegalArgumentException(
                         "SPAWNED requires an item and no remainder");
             }
+            validateSpawnedItem(request, item.orElseThrow());
         } else if (item.isPresent() || !remainder.equals(Optional.of(request.stack()))) {
             throw new IllegalArgumentException(
                     "REJECTED requires no item and the full request remainder");
+        }
+    }
+
+    private static void validateSpawnedItem(
+            WorldItemSpawnRequest request, WorldItemSnapshot item) {
+        if (!item.stack().equals(request.stack())
+                || Double.compare(item.positionX(), request.positionX()) != 0
+                || Double.compare(item.positionY(), request.positionY()) != 0
+                || Double.compare(item.positionZ(), request.positionZ()) != 0
+                || Double.compare(item.velocityX(), request.velocityX()) != 0
+                || Double.compare(item.velocityY(), request.velocityY()) != 0
+                || Double.compare(item.velocityZ(), request.velocityZ()) != 0) {
+            throw new IllegalArgumentException(
+                    "SPAWNED item must match the request stack, position, and velocity");
         }
     }
 

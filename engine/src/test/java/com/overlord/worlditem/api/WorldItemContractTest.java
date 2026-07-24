@@ -77,6 +77,21 @@ class WorldItemContractTest {
         assertThrows(IllegalArgumentException.class,
                 () -> new WorldItemSpawnResult(request, WorldItemSpawnResult.Status.SPAWNED,
                         Optional.of(item), Optional.of(STONE)));
+        assertThrows(IllegalArgumentException.class,
+                () -> new WorldItemSpawnResult(request, WorldItemSpawnResult.Status.SPAWNED,
+                        Optional.of(snapshot(new WorldItemId(2),
+                                new ItemStack(ResourceLocation.parse("gaia:dirt"), 5), 0)),
+                        Optional.empty()));
+        assertThrows(IllegalArgumentException.class,
+                () -> new WorldItemSpawnResult(request, WorldItemSpawnResult.Status.SPAWNED,
+                        Optional.of(new WorldItemSnapshot(
+                                new WorldItemId(3), STONE, 1, 20, 3, 4, 5, 6, 0)),
+                        Optional.empty()));
+        assertThrows(IllegalArgumentException.class,
+                () -> new WorldItemSpawnResult(request, WorldItemSpawnResult.Status.SPAWNED,
+                        Optional.of(new WorldItemSnapshot(
+                                new WorldItemId(4), STONE, 1, 2, 3, 4, 5, 60, 0)),
+                        Optional.empty()));
         assertEquals(Optional.of(STONE),
                 new WorldItemSpawnResult(request, WorldItemSpawnResult.Status.REJECTED,
                         Optional.empty(), Optional.of(STONE)).remainder());
