@@ -297,10 +297,10 @@ Interactive/platform status:
 
 ## Final phase report
 
-The exact reviewed implementation diff at HEAD `95d78d0` is:
+The final branch diff at documentation commit `7d738b2` is:
 
 ```text
-49 files changed, 8734 insertions(+), 289 deletions(-)
+51 files changed, 9215 insertions(+), 317 deletions(-)
 ```
 
 Engine-owner review: 0 Critical, 0 Important, 1 nonblocking Minor coverage
