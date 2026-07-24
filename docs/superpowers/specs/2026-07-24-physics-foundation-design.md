@@ -188,7 +188,8 @@ float inverseMass();
 ```
 
 Dynamic mass must be finite and greater than zero. A static body has
-`inverseMass == 0`. Mass and inverse mass cannot be set independently.
+`mass == 0` and `inverseMass == 0`; zero mass is a documented static sentinel,
+not a dynamic value. Mass and inverse mass cannot be set independently.
 
 ### `ForceAccumulator`
 
