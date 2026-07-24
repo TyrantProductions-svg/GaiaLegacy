@@ -55,6 +55,19 @@ class BlockMutationContractTest {
     }
 
     @Test
+    void dirtyEventCopiesAffectedChunkSet() {
+        Set<ChunkKey> mutable =
+                new java.util.HashSet<>(Set.of(new ChunkKey(0, 0)));
+        ChunkDirtyEvent event = new ChunkDirtyEvent(request, mutable);
+        mutable.add(new ChunkKey(1, 0));
+
+        assertEquals(Set.of(new ChunkKey(0, 0)), event.chunks());
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> event.chunks().add(new ChunkKey(2, 0)));
+    }
+
+    @Test
     void dispatchExceptionReportsCommitState() {
         BlockChangeDispatchException failure =
                 new BlockChangeDispatchException(
