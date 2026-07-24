@@ -1,5 +1,6 @@
 package com.overlord.voxel;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
@@ -13,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class ChunkMeshLifecycleStructureTest {
@@ -61,7 +63,7 @@ class ChunkMeshLifecycleStructureTest {
 
     @Test
     void mesherAcceptsOnlyImmutableChunkMeshInput()
-            throws IOException, NoSuchMethodException {
+            throws IOException {
         String builder =
                 readMainSource(
                         "com/overlord/voxel/ChunkMeshBuilder.java");
@@ -72,9 +74,31 @@ class ChunkMeshLifecycleStructureTest {
                 hasAnyPublicMethod(
                         ChunkMeshBuilder.class,
                         "buildChunkMeshData"));
-        Method build =
-                ChunkMeshBuilder.class.getMethod(
-                        "build", ChunkMeshInput.class);
+
+        List<Method> publicMethods =
+                Arrays.stream(
+                                ChunkMeshBuilder.class
+                                        .getDeclaredMethods())
+                        .filter(
+                                method ->
+                                        Modifier.isPublic(
+                                                method.getModifiers()))
+                        .toList();
+        assertEquals(
+                1,
+                publicMethods.size(),
+                () ->
+                        "Unexpected public meshing surface: "
+                                + publicMethods.stream()
+                                        .map(Method::toGenericString)
+                                        .toList());
+        Method build = publicMethods.get(0);
+        assertFalse(build.isSynthetic());
+        assertFalse(build.isBridge());
+        assertEquals("build", build.getName());
+        assertArrayEquals(
+                new Class<?>[] {ChunkMeshInput.class},
+                build.getParameterTypes());
         assertEquals(ChunkMeshData.class, build.getReturnType());
     }
 
@@ -83,12 +107,27 @@ class ChunkMeshLifecycleStructureTest {
             throws IOException {
         String world =
                 readMainSource("com/overlord/voxel/World.java");
+        String repository =
+                readMainSource(
+                        "com/overlord/voxel/ChunkRepository.java");
 
         assertFalse(world.contains("Map<String, Chunk>"));
         assertFalse(world.contains("computeIfAbsent"));
+        assertFalse(
+                repository.contains(
+                        "mutableChunkForCompatibility"));
         assertFalse(hasAnyPublicMethod(World.class, "getChunk"));
         assertFalse(
                 hasAnyPublicMethod(Chunk.class, "getSubChunks"));
+        assertFalse(
+                Arrays.stream(
+                                ChunkRepository.class
+                                        .getDeclaredMethods())
+                        .anyMatch(
+                                method ->
+                                        method.getName()
+                                                .equals(
+                                                        "mutableChunkForCompatibility")));
     }
 
     private static String readMainSource(String relativePath)
