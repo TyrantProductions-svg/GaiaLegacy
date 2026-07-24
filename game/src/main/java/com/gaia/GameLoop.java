@@ -7,6 +7,8 @@ import com.overlord.core.Window;
 import com.overlord.core.input.InputSnapshot;
 import com.overlord.core.input.MouseDelta;
 import com.overlord.event.EventBus;
+import com.overlord.physics.PlayerController;
+import java.util.Objects;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletionException;
 import org.joml.Vector3f;
@@ -104,11 +106,24 @@ public final class GameLoop {
             throw new RuntimeException("World loading failed", cause);
         }
 
-        context.playerController()
-                .teleport(loadResult.playerFeetPosition());
-        context.playerController().recoverFromPenetration();
+        completePlayerLoading(
+                context.playerController(), loadResult);
         updateRenderCamera();
         context.engine().getCamera().setPitch(-30.0f);
+    }
+
+    static void completePlayerLoading(
+            PlayerController playerController,
+            WorldLoadResult loadResult) {
+        Objects.requireNonNull(
+                playerController, "playerController");
+        Objects.requireNonNull(loadResult, "loadResult");
+        playerController.teleport(
+                loadResult.playerFeetPosition());
+        if (!playerController.recoverFromPenetration()) {
+            throw new IllegalStateException(
+                    "Player safe spawn recovery failed after world loading");
+        }
     }
 
     private void pumpChunkMeshes() {
