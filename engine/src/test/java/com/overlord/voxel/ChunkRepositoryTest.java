@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.overlord.config.GameConfig;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -17,6 +18,204 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class ChunkRepositoryTest {
+    @Test
+    void eastEdgeChangeDirtiesOnlyTargetAndEastNeighbor() {
+        ChunkRepository repository = generatedPairEastWest();
+        ChunkKey center = new ChunkKey(0, 0);
+        ChunkKey east = center.east();
+        long centerRevision = repository.revision(center);
+        long eastRevision = repository.revision(east);
+
+        repository.setBlock(
+                GameConfig.Chunk.SIZE - 1, 4, 2, (byte) 1);
+
+        assertEquals(ChunkState.DIRTY, repository.state(center));
+        assertEquals(ChunkState.DIRTY, repository.state(east));
+        assertEquals(centerRevision + 1, repository.revision(center));
+        assertEquals(eastRevision + 1, repository.revision(east));
+        assertEquals(Set.of(center, east), repository.keys());
+    }
+
+    @Test
+    void westEdgeChangeDirtiesOnlyTargetAndWestNeighbor() {
+        ChunkRepository repository =
+                generatedPair(new ChunkKey(0, 0), new ChunkKey(-1, 0));
+        ChunkKey center = new ChunkKey(0, 0);
+        ChunkKey west = center.west();
+        long centerRevision = repository.revision(center);
+        long westRevision = repository.revision(west);
+
+        repository.setBlock(0, 4, 2, (byte) 1);
+
+        assertEquals(ChunkState.DIRTY, repository.state(center));
+        assertEquals(ChunkState.DIRTY, repository.state(west));
+        assertEquals(centerRevision + 1, repository.revision(center));
+        assertEquals(westRevision + 1, repository.revision(west));
+        assertEquals(Set.of(center, west), repository.keys());
+    }
+
+    @Test
+    void northEdgeChangeDirtiesOnlyTargetAndNorthNeighbor() {
+        ChunkRepository repository =
+                generatedPair(new ChunkKey(0, 0), new ChunkKey(0, -1));
+        ChunkKey center = new ChunkKey(0, 0);
+        ChunkKey north = center.north();
+        long centerRevision = repository.revision(center);
+        long northRevision = repository.revision(north);
+
+        repository.setBlock(2, 4, 0, (byte) 1);
+
+        assertEquals(ChunkState.DIRTY, repository.state(center));
+        assertEquals(ChunkState.DIRTY, repository.state(north));
+        assertEquals(centerRevision + 1, repository.revision(center));
+        assertEquals(northRevision + 1, repository.revision(north));
+        assertEquals(Set.of(center, north), repository.keys());
+    }
+
+    @Test
+    void southEdgeChangeDirtiesOnlyTargetAndSouthNeighbor() {
+        ChunkRepository repository =
+                generatedPair(new ChunkKey(0, 0), new ChunkKey(0, 1));
+        ChunkKey center = new ChunkKey(0, 0);
+        ChunkKey south = center.south();
+        long centerRevision = repository.revision(center);
+        long southRevision = repository.revision(south);
+
+        repository.setBlock(
+                2, 4, GameConfig.Chunk.SIZE - 1, (byte) 1);
+
+        assertEquals(ChunkState.DIRTY, repository.state(center));
+        assertEquals(ChunkState.DIRTY, repository.state(south));
+        assertEquals(centerRevision + 1, repository.revision(center));
+        assertEquals(southRevision + 1, repository.revision(south));
+        assertEquals(Set.of(center, south), repository.keys());
+    }
+
+    @Test
+    void cornerChangesDirtyTwoOrthogonalNeighborsWithoutDiagonals() {
+        assertCornerDirtiesOnly(
+                0,
+                0,
+                new ChunkKey(0, 0).west(),
+                new ChunkKey(0, 0).north());
+        assertCornerDirtiesOnly(
+                GameConfig.Chunk.SIZE - 1,
+                0,
+                new ChunkKey(0, 0).east(),
+                new ChunkKey(0, 0).north());
+        assertCornerDirtiesOnly(
+                0,
+                GameConfig.Chunk.SIZE - 1,
+                new ChunkKey(0, 0).west(),
+                new ChunkKey(0, 0).south());
+        assertCornerDirtiesOnly(
+                GameConfig.Chunk.SIZE - 1,
+                GameConfig.Chunk.SIZE - 1,
+                new ChunkKey(0, 0).east(),
+                new ChunkKey(0, 0).south());
+    }
+
+    @Test
+    void interiorChangeDoesNotDirtyNeighbor() {
+        ChunkRepository repository = generatedPairEastWest();
+        ChunkKey east = new ChunkKey(1, 0);
+        long eastRevision = repository.revision(east);
+        ChunkState eastState = repository.state(east);
+
+        repository.setBlock(2, 4, 2, (byte) 1);
+
+        assertEquals(eastRevision, repository.revision(east));
+        assertEquals(eastState, repository.state(east));
+    }
+
+    @Test
+    void successfulGenerationDirtiesEachPresentCardinalNeighborOnce() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey center = new ChunkKey(0, 0);
+        Set<ChunkKey> neighbors =
+                Set.of(
+                        center.north(),
+                        center.south(),
+                        center.west(),
+                        center.east());
+        for (ChunkKey neighbor : neighbors) {
+            repository.generate(
+                    neighbor,
+                    chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
+        }
+
+        repository.generate(
+                center,
+                chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
+
+        assertEquals(ChunkState.GENERATED, repository.state(center));
+        assertEquals(1L, repository.revision(center));
+        for (ChunkKey neighbor : neighbors) {
+            assertEquals(ChunkState.DIRTY, repository.state(neighbor));
+            assertEquals(2L, repository.revision(neighbor));
+        }
+    }
+
+    @Test
+    void boundaryChangeDoesNotCreateMissingNeighbors() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey center = new ChunkKey(0, 0);
+        repository.generate(
+                center, chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
+        long centerRevision = repository.revision(center);
+
+        repository.setBlock(
+                GameConfig.Chunk.SIZE - 1,
+                4,
+                GameConfig.Chunk.SIZE - 1,
+                (byte) 1);
+
+        assertEquals(Set.of(center), repository.keys());
+        assertEquals(centerRevision + 1, repository.revision(center));
+    }
+
+    @Test
+    void unchangedBoundaryWriteDoesNotDirtyTargetOrNeighbor() {
+        ChunkRepository repository = generatedPairEastWest();
+        ChunkKey center = new ChunkKey(0, 0);
+        ChunkKey east = center.east();
+        int worldX = GameConfig.Chunk.SIZE - 1;
+        repository.setBlock(worldX, 4, 2, (byte) 1);
+        long centerRevision = repository.revision(center);
+        long eastRevision = repository.revision(east);
+        ChunkState centerState = repository.state(center);
+        ChunkState eastState = repository.state(east);
+
+        assertFalse(repository.setBlock(worldX, 4, 2, (byte) 1));
+
+        assertEquals(centerRevision, repository.revision(center));
+        assertEquals(eastRevision, repository.revision(east));
+        assertEquals(centerState, repository.state(center));
+        assertEquals(eastState, repository.state(east));
+    }
+
+    @Test
+    void negativeWorldCornerDirtiesNegativeCardinalNeighbors() {
+        ChunkKey target = new ChunkKey(-1, -1);
+        ChunkKey west = target.west();
+        ChunkKey north = target.north();
+        ChunkRepository repository = generatedChunks(target, west, north);
+        long targetRevision = repository.revision(target);
+        long westRevision = repository.revision(west);
+        long northRevision = repository.revision(north);
+
+        repository.setBlock(
+                target.worldOriginX(),
+                4,
+                target.worldOriginZ(),
+                (byte) 1);
+
+        assertEquals(targetRevision + 1, repository.revision(target));
+        assertEquals(westRevision + 1, repository.revision(west));
+        assertEquals(northRevision + 1, repository.revision(north));
+        assertFalse(repository.contains(new ChunkKey(-2, -2)));
+    }
+
     @Test
     void generationTransitionsOnceAndSnapshotOwnsBytes() {
         ChunkRepository repository = new ChunkRepository();
@@ -222,5 +421,53 @@ class ChunkRepositoryTest {
         assertFalse(repository.isRenderable(key));
         repository.generate(key, chunk -> {});
         assertFalse(repository.isRenderable(key));
+    }
+
+    private static ChunkRepository generatedPairEastWest() {
+        return generatedPair(new ChunkKey(0, 0), new ChunkKey(1, 0));
+    }
+
+    private static ChunkRepository generatedPair(
+            ChunkKey first, ChunkKey second) {
+        return generatedChunks(first, second);
+    }
+
+    private static ChunkRepository generatedChunks(ChunkKey... keys) {
+        ChunkRepository repository = new ChunkRepository();
+        for (ChunkKey key : keys) {
+            repository.generate(
+                    key,
+                    chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
+        }
+        return repository;
+    }
+
+    private static void assertCornerDirtiesOnly(
+            int localX,
+            int localZ,
+            ChunkKey firstNeighbor,
+            ChunkKey secondNeighbor) {
+        ChunkKey center = new ChunkKey(0, 0);
+        ChunkKey diagonal =
+                new ChunkKey(
+                        firstNeighbor.x() + secondNeighbor.x(),
+                        firstNeighbor.z() + secondNeighbor.z());
+        ChunkRepository repository =
+                generatedChunks(
+                        center,
+                        firstNeighbor,
+                        secondNeighbor,
+                        diagonal);
+        long centerRevision = repository.revision(center);
+        long firstRevision = repository.revision(firstNeighbor);
+        long secondRevision = repository.revision(secondNeighbor);
+        long diagonalRevision = repository.revision(diagonal);
+
+        repository.setBlock(localX, 4, localZ, (byte) 1);
+
+        assertEquals(centerRevision + 1, repository.revision(center));
+        assertEquals(firstRevision + 1, repository.revision(firstNeighbor));
+        assertEquals(secondRevision + 1, repository.revision(secondNeighbor));
+        assertEquals(diagonalRevision, repository.revision(diagonal));
     }
 }

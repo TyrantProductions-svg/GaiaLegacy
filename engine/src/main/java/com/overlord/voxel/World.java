@@ -1,40 +1,39 @@
 package com.overlord.voxel;
 
-import com.overlord.config.GameConfig;
+import java.util.Objects;
+import java.util.function.Consumer;
 
-import java.util.HashMap;
-import java.util.Map;
+public final class World {
+    private final ChunkRepository chunks;
 
-public class World {
-    
-    private Map<String, Chunk> chunks = new HashMap<>();
-    
+    public World() {
+        this(new ChunkRepository());
+    }
+
+    public World(ChunkRepository chunks) {
+        this.chunks = Objects.requireNonNull(chunks, "chunks");
+    }
+
+    public ChunkRepository chunks() {
+        return chunks;
+    }
+
+    @Deprecated
     public Chunk getChunk(int chunkX, int chunkZ) {
-        String key = chunkX + "," + chunkZ;
-        return chunks.computeIfAbsent(key, k -> new Chunk());
+        return chunks.mutableChunkForCompatibility(
+                new ChunkKey(chunkX, chunkZ));
     }
-    
+
     public byte getBlock(int x, int y, int z) {
-        int chunkX = Math.floorDiv(x, GameConfig.Chunk.SIZE);
-        int chunkZ = Math.floorDiv(z, GameConfig.Chunk.SIZE);
-        
-        Chunk chunk = getChunk(chunkX, chunkZ);
-        
-        int localX = Math.floorMod(x, GameConfig.Chunk.SIZE);
-        int localZ = Math.floorMod(z, GameConfig.Chunk.SIZE);
-        
-        return chunk.getBlock(localX, y, localZ);
+        return chunks.getBlock(x, y, z);
     }
-    
-    public void setBlock(int x, int y, int z, byte blockType) {
-        int chunkX = Math.floorDiv(x, GameConfig.Chunk.SIZE);
-        int chunkZ = Math.floorDiv(z, GameConfig.Chunk.SIZE);
-        
-        Chunk chunk = getChunk(chunkX, chunkZ);
-        
-        int localX = Math.floorMod(x, GameConfig.Chunk.SIZE);
-        int localZ = Math.floorMod(z, GameConfig.Chunk.SIZE);
-        
-        chunk.setBlock(localX, y, localZ, blockType);
+
+    public boolean setBlock(int x, int y, int z, byte blockId) {
+        return chunks.setBlock(x, y, z, blockId);
+    }
+
+    public void generate(
+            ChunkKey key, Consumer<Chunk> generator) {
+        chunks.generate(key, generator);
     }
 }

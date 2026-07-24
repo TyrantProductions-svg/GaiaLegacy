@@ -96,6 +96,9 @@ public final class ChunkRepository {
                 throw failure;
             }
         }
+        for (ChunkKey neighbor : dirtyTracker.horizontalNeighbors(key)) {
+            dirtyIfPresent(neighbor);
+        }
     }
 
     public boolean setBlock(
@@ -129,9 +132,22 @@ public final class ChunkRepository {
                 entry.revision++;
                 entry.failure = null;
                 entry.state = ChunkState.DIRTY;
-                return true;
             }
+            for (ChunkKey affected :
+                    dirtyTracker.affectedByBlock(key, localX, localZ)) {
+                if (!affected.equals(key)) {
+                    dirtyIfPresent(affected);
+                }
+            }
+            return true;
         }
+    }
+
+    Chunk mutableChunkForCompatibility(ChunkKey key) {
+        return entries.computeIfAbsent(
+                        Objects.requireNonNull(key, "key"),
+                        ignored -> new Entry(worldHeight))
+                .chunk;
     }
 
     public Optional<ChunkSnapshot> snapshot(ChunkKey key) {
@@ -156,6 +172,25 @@ public final class ChunkRepository {
 
     public boolean isRenderable(ChunkKey key) {
         return state(key) == ChunkState.RENDERABLE;
+    }
+
+    private void dirtyIfPresent(ChunkKey key) {
+        Entry entry = entries.get(key);
+        if (entry == null) {
+            return;
+        }
+        synchronized (entry) {
+            if (entries.get(key) != entry
+                    || entry.state == ChunkState.UNLOADING
+                    || entry.state == ChunkState.EMPTY) {
+                return;
+            }
+            entry.revision++;
+            entry.failure = null;
+            if (entry.state != ChunkState.GENERATING) {
+                entry.state = ChunkState.DIRTY;
+            }
+        }
     }
 
     private static void transition(
