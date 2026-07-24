@@ -8,23 +8,38 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.interaction.api.EntityRef;
 import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class InventoryContractTest {
-    private static final ItemStackView STONE =
-            new ItemStackView() {
-                @Override
-                public ResourceLocation itemId() {
-                    return ResourceLocation.parse("gaia:stone");
-                }
-
-                @Override
-                public int count() {
-                    return 2;
-                }
-            };
+    private static final ItemStack STONE =
+            new ItemStack(ResourceLocation.parse("gaia:stone"), 2);
     private static final EntityRef OWNER = new EntityRef(4);
+
+    @Test
+    void itemStackIsTheCanonicalValidatedImmutableValue() {
+        ResourceLocation stone = ResourceLocation.parse("gaia:stone");
+
+        assertEquals(stone, new ItemStack(stone, 2).itemId());
+        assertEquals(2, new ItemStack(stone, 2).count());
+        assertThrows(NullPointerException.class, () -> new ItemStack(null, 1));
+        assertThrows(IllegalArgumentException.class, () -> new ItemStack(stone, 0));
+        assertThrows(IllegalArgumentException.class, () -> new ItemStack(stone, -1));
+    }
+
+    @Test
+    void commandValuesUseCanonicalStacksWhileInventoryViewsExposeReadOnlyStacks()
+            throws ReflectiveOperationException {
+        assertEquals(
+                ItemStack.class,
+                optionalElementType(
+                        InventoryChangeRequest.class.getMethod("replacement")));
+        assertEquals(
+                ItemStackView.class,
+                optionalElementType(InventoryView.class.getMethod("stack", BodySlot.class)));
+    }
 
     @Test
     void bodySlotsHaveStableThreeSlotOrder() {
@@ -171,5 +186,10 @@ class InventoryContractTest {
                 return Optional.empty();
             }
         };
+    }
+
+    private static Type optionalElementType(Method method) {
+        ParameterizedType optionalType = (ParameterizedType) method.getGenericReturnType();
+        return optionalType.getActualTypeArguments()[0];
     }
 }

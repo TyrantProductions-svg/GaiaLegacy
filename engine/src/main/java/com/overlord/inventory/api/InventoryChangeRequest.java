@@ -8,7 +8,7 @@ public record InventoryChangeRequest(
         EntityRef owner,
         BodySlot slot,
         long expectedRevision,
-        Optional<ItemStackView> replacement) {
+        Optional<ItemStack> replacement) {
     public InventoryChangeRequest {
         owner = Objects.requireNonNull(owner, "owner");
         slot = Objects.requireNonNull(slot, "slot");

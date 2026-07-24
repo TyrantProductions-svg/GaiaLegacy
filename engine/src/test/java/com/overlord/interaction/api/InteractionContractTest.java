@@ -6,7 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.overlord.assets.ResourceLocation;
 import com.overlord.inventory.api.BodySlot;
-import com.overlord.inventory.api.ItemStackView;
+import com.overlord.inventory.api.ItemStack;
+import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
@@ -265,16 +268,13 @@ class InteractionContractTest {
     }
 
     @Test
-    void itemUseContextRejectsInvalidHeldStackIdentityAndCount() {
-        assertThrows(
-                NullPointerException.class,
-                () -> itemUseContext(stack(null, 1)));
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> itemUseContext(stack(STONE, 0)));
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> itemUseContext(stack(STONE, -1)));
+    void itemUseContextCarriesCanonicalHeldStack() throws ReflectiveOperationException {
+        ItemStack heldStack = new ItemStack(STONE, 2);
+
+        assertEquals(Optional.of(heldStack), itemUseContext(heldStack).heldStack());
+        assertEquals(
+                ItemStack.class,
+                optionalElementType(ItemUseContext.class.getMethod("heldStack")));
     }
 
     private static BlockHitResult hitWithNormal(
@@ -320,7 +320,7 @@ class InteractionContractTest {
     }
 
     private static ItemUseContext itemUseContext(
-            ItemStackView heldStack) {
+            ItemStack heldStack) {
         return new ItemUseContext(
                 new EntityRef(9),
                 BodySlot.MOUTH,
@@ -331,18 +331,8 @@ class InteractionContractTest {
                 900);
     }
 
-    private static ItemStackView stack(
-            ResourceLocation itemId, int count) {
-        return new ItemStackView() {
-            @Override
-            public ResourceLocation itemId() {
-                return itemId;
-            }
-
-            @Override
-            public int count() {
-                return count;
-            }
-        };
+    private static Type optionalElementType(Method method) {
+        ParameterizedType optionalType = (ParameterizedType) method.getGenericReturnType();
+        return optionalType.getActualTypeArguments()[0];
     }
 }

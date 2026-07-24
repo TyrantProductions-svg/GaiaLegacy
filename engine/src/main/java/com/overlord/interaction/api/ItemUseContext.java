@@ -1,14 +1,14 @@
 package com.overlord.interaction.api;
 
 import com.overlord.inventory.api.BodySlot;
-import com.overlord.inventory.api.ItemStackView;
+import com.overlord.inventory.api.ItemStack;
 import java.util.Objects;
 import java.util.Optional;
 
 public record ItemUseContext(
         EntityRef actor,
         BodySlot activeBodySlot,
-        Optional<ItemStackView> heldStack,
+        Optional<ItemStack> heldStack,
         Optional<BlockHitResult> raycastResult,
         InteractionAction action,
         long tick,
@@ -23,12 +23,5 @@ public record ItemUseContext(
         if (tick < 0 || timestampNanos < 0) {
             throw new IllegalArgumentException("tick and timestampNanos must be non-negative");
         }
-        heldStack.ifPresent(
-                stack -> {
-                    Objects.requireNonNull(stack.itemId(), "held stack itemId");
-                    if (stack.count() <= 0) {
-                        throw new IllegalArgumentException("held stack count must be positive");
-                    }
-                });
     }
 }

@@ -6,6 +6,7 @@ import com.overlord.assets.ResourceLocation;
 import com.overlord.interaction.api.EntityRef;
 import com.overlord.inventory.api.BodySlot;
 import com.overlord.inventory.api.InventoryChangeResult;
+import com.overlord.inventory.api.ItemStack;
 import com.overlord.inventory.testing.StubInventoryService;
 import com.overlord.inventory.testing.TestInventoryView;
 import com.overlord.inventory.testing.TestItemStackView;
@@ -14,6 +15,15 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class EngineContractFixtureSmokeTest {
+    @Test
+    void gameTestsCanUseCanonicalItemStacks() {
+        ItemStack stack =
+                new ItemStack(ResourceLocation.parse("gaia:stone"), 2);
+
+        assertEquals(ResourceLocation.parse("gaia:stone"), stack.itemId());
+        assertEquals(2, stack.count());
+    }
+
     @Test
     void gameTestsConsumeSharedInventoryFixtures() {
         TestItemStackView stack =

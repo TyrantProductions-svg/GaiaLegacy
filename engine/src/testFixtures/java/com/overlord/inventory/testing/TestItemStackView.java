@@ -4,6 +4,7 @@ import com.overlord.assets.ResourceLocation;
 import com.overlord.inventory.api.ItemStackView;
 import java.util.Objects;
 
+/** Test-only read-only stack projection fixture. */
 public record TestItemStackView(
         ResourceLocation itemId, int count)
         implements ItemStackView {
