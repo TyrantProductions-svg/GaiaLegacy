@@ -229,6 +229,20 @@ class InventoryReservationContractTest {
     }
 
     @Test
+    void fakeConsumesTheNextReservationLimitForAnUnknownOwnerAttempt() {
+        FakeInventoryReservationService service =
+                new FakeInventoryReservationService(Optional.empty());
+
+        service.setNextReservationLimit(2);
+        assertEquals(InventoryReserveResult.Status.UNKNOWN_OWNER,
+                service.reserve(request(InventoryReservationOperation.INSERT)).status());
+        service.simulateOrdinaryStateChange(inventory(1));
+
+        assertEquals(InventoryReserveResult.Status.RESERVED,
+                service.reserve(request(InventoryReservationOperation.INSERT)).status());
+    }
+
+    @Test
     void fakeCommitIsIdempotent() {
         FakeInventoryReservationService service =
                 new FakeInventoryReservationService(Optional.of(inventory(1)));

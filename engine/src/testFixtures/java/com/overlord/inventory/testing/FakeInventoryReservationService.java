@@ -51,11 +51,11 @@ public final class FakeInventoryReservationService implements InventoryService {
     @Override
     public InventoryReserveResult reserve(InventoryReservationRequest request) {
         Objects.requireNonNull(request, "request");
+        int limit = nextReservationLimit;
+        nextReservationLimit = Integer.MAX_VALUE;
         if (snapshot.isEmpty()) {
             return failedReserve(request, InventoryReserveResult.Status.UNKNOWN_OWNER);
         }
-        int limit = nextReservationLimit;
-        nextReservationLimit = Integer.MAX_VALUE;
         if (limit <= 0) {
             return failedReserve(request, InventoryReserveResult.Status.REJECTED);
         }
