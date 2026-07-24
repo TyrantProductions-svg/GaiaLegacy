@@ -11,10 +11,12 @@ import com.overlord.core.thread.MainThreadGuard;
 import com.overlord.renderer.ChunkGpuMesh;
 import com.overlord.renderer.ChunkRenderBackend;
 import com.overlord.renderer.ChunkRenderObject;
+import java.lang.reflect.Field;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.Executor;
@@ -485,6 +487,47 @@ class ChunkMeshManagerTest {
     }
 
     @Test
+    void staleReadyResultIsRejectedBeforeGpuUploadAndCanBeRescheduled() {
+        UploadFixture fixture = readyFixture(1, 1);
+        assertTrue(
+                fixture.repository.setBlock(
+                        2, 1, 1, (byte) 2));
+
+        assertEquals(0, fixture.manager.processMainThreadWork());
+
+        assertEquals(0, fixture.backend.uploadCalls);
+        assertEquals(ChunkState.DIRTY, fixture.repository.state(KEY));
+        assertEquals(1, fixture.manager.scheduleEligible());
+    }
+
+    @Test
+    void staleReadyResultDoesNotConsumeUploadBudget() {
+        UploadFixture fixture = readyFixture(1, 1);
+        ChunkKey stale = fixture.keys.get(0);
+        ChunkKey current = new ChunkKey(2, 0);
+        fixture.repository.generate(
+                current,
+                chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
+        assertEquals(1, fixture.manager.scheduleEligible());
+        fixture.executor.runAll();
+        assertEquals(1, fixture.manager.drainCompletedCpuWork());
+        assertTrue(
+                fixture.repository.setBlock(
+                        stale.worldOriginX() + 2,
+                        1,
+                        stale.worldOriginZ() + 1,
+                        (byte) 2));
+
+        assertEquals(1, fixture.manager.processMainThreadWork());
+
+        assertEquals(1, fixture.backend.uploadCalls);
+        assertEquals(ChunkState.DIRTY, fixture.repository.state(stale));
+        assertEquals(
+                ChunkState.RENDERABLE,
+                fixture.repository.state(current));
+    }
+
+    @Test
     void currentEmptyRebuildReleasesOldAndLeavesNoRenderObject() {
         UploadFixture fixture = uploadedFixture();
         ChunkRenderObject previous =
@@ -509,7 +552,7 @@ class ChunkMeshManagerTest {
         dirtyBuild(fixture, KEY);
         fixture.repository.setBlock(2, 1, 1, (byte) 3);
 
-        assertEquals(1, fixture.manager.processMainThreadWork());
+        assertEquals(0, fixture.manager.processMainThreadWork());
 
         assertEquals(1, fixture.backend.uploadCalls);
         assertTrue(fixture.backend.released.isEmpty());
@@ -559,6 +602,87 @@ class ChunkMeshManagerTest {
         assertEquals(0, fixture.manager.processMainThreadWork());
         assertEquals(2, fixture.backend.uploadCalls);
         assertEquals(ChunkState.DIRTY, fixture.repository.state(KEY));
+    }
+
+    @Test
+    void newerSuccessfulUploadDiscardsOlderFailedPayload() {
+        UploadFixture fixture = uploadedFixture();
+        dirtyBuild(fixture, KEY);
+        fixture.backend.nextUploadFailure =
+                new IllegalStateException("revision N failed");
+        fixture.manager.processMainThreadWork();
+        fixture.manager.pollFailure();
+        assertTrue(failedUploadPayloads(fixture.manager).containsKey(KEY));
+
+        assertTrue(
+                fixture.repository.setBlock(
+                        2, 1, 1, (byte) 3));
+        assertEquals(1, fixture.manager.scheduleEligible());
+        fixture.executor.runAll();
+        assertEquals(1, fixture.manager.drainCompletedCpuWork());
+        assertEquals(1, fixture.manager.processMainThreadWork());
+
+        assertFalse(failedUploadPayloads(fixture.manager).containsKey(KEY));
+        assertEquals(ChunkState.RENDERABLE, fixture.repository.state(KEY));
+    }
+
+    @Test
+    void obsoleteNewerCompletionDiscardsOlderFailedPayloadBeforeGpuUpload() {
+        UploadFixture fixture = uploadedFixture();
+        dirtyBuild(fixture, KEY);
+        fixture.backend.nextUploadFailure =
+                new IllegalStateException("revision N failed");
+        fixture.manager.processMainThreadWork();
+        fixture.manager.pollFailure();
+
+        assertTrue(
+                fixture.repository.setBlock(
+                        2, 1, 1, (byte) 3));
+        assertEquals(1, fixture.manager.scheduleEligible());
+        fixture.executor.runAll();
+        assertEquals(1, fixture.manager.drainCompletedCpuWork());
+        assertTrue(
+                fixture.repository.setBlock(
+                        3, 1, 1, (byte) 4));
+
+        assertEquals(0, fixture.manager.processMainThreadWork());
+
+        assertEquals(2, fixture.backend.uploadCalls);
+        assertFalse(failedUploadPayloads(fixture.manager).containsKey(KEY));
+        assertEquals(ChunkState.DIRTY, fixture.repository.state(KEY));
+    }
+
+    @Test
+    void staleUploadCleanupPreservesGenuinelyNewerFailedPayload() {
+        UploadFixture fixture = readyFixture(1, 2);
+        IllegalStateException newerFailure =
+                new IllegalStateException("newer revision failed");
+        AtomicInteger nestedProcessed = new AtomicInteger();
+        fixture.backend.beforeUpload =
+                () -> {
+                    fixture.repository.setBlock(
+                            2, 1, 1, (byte) 3);
+                    fixture.manager.scheduleEligible();
+                    fixture.executor.runAll();
+                    fixture.manager.drainCompletedCpuWork();
+                    fixture.backend.nextUploadFailure = newerFailure;
+                    nestedProcessed.set(
+                            fixture.manager.processMainThreadWork());
+                };
+
+        assertEquals(1, fixture.manager.processMainThreadWork());
+
+        assertEquals(1, nestedProcessed.get());
+        ChunkMeshData retained =
+                failedUploadPayloads(fixture.manager).get(KEY);
+        assertEquals(fixture.repository.revision(KEY), retained.revision());
+        assertSame(newerFailure, fixture.manager.pollFailure().orElseThrow());
+
+        fixture.manager.retry(KEY);
+
+        assertEquals(1, fixture.manager.processMainThreadWork());
+        assertFalse(failedUploadPayloads(fixture.manager).containsKey(KEY));
+        assertEquals(ChunkState.RENDERABLE, fixture.repository.state(KEY));
     }
 
     @Test
@@ -1228,6 +1352,20 @@ class ChunkMeshManagerTest {
         worker.join(TimeUnit.SECONDS.toMillis(5));
         assertFalse(worker.isAlive(), "worker did not terminate");
         assertTrue(failure.get() instanceof IllegalStateException);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<ChunkKey, ChunkMeshData> failedUploadPayloads(
+            ChunkMeshManager manager) {
+        try {
+            Field field =
+                    ChunkMeshManager.class.getDeclaredField(
+                            "failedUploads");
+            field.setAccessible(true);
+            return (Map<ChunkKey, ChunkMeshData>) field.get(manager);
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError(failure);
+        }
     }
 
     private record Fixture(

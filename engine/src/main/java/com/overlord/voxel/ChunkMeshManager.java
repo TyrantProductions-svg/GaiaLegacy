@@ -103,8 +103,12 @@ public final class ChunkMeshManager implements AutoCloseable {
         MeshingCompletion completion;
         while ((completion = completed.poll()) != null) {
             drained++;
-            if (repository.markReadyForUpload(
-                    completion.key(), completion.revision())) {
+            boolean ready =
+                    repository.markReadyForUpload(
+                            completion.key(), completion.revision());
+            discardFailedUploadAtOrBefore(
+                    completion.key(), completion.revision());
+            if (ready) {
                 awaitingUpload.add(completion.data());
             }
         }
@@ -116,6 +120,8 @@ public final class ChunkMeshManager implements AutoCloseable {
                     failure.key(),
                     failure.revision(),
                     failure.cause())) {
+                discardFailedUploadAtOrBefore(
+                        failure.key(), failure.revision());
                 reportedFailures.add(failure.cause());
             }
         }
@@ -140,6 +146,12 @@ public final class ChunkMeshManager implements AutoCloseable {
         while (!closed
                 && processed < maxUploadsPerFrame
                 && (data = awaitingUpload.poll()) != null) {
+            if (!repository.isReadyForUpload(
+                    data.key(), data.revision())) {
+                discardFailedUploadAtOrBefore(
+                        data.key(), data.revision());
+                continue;
+            }
             processed++;
             if (data.isEmpty()) {
                 installEmptyMesh(data);
@@ -162,10 +174,11 @@ public final class ChunkMeshManager implements AutoCloseable {
             return;
         }
 
-        ChunkMeshData failedUpload = failedUploads.remove(key);
+        ChunkMeshData failedUpload = failedUploads.get(key);
         if (failedUpload != null
-                && repository.state(key) == ChunkState.READY_FOR_UPLOAD
-                && repository.revision(key) == failedUpload.revision()) {
+                && repository.isReadyForUpload(
+                        key, failedUpload.revision())
+                && failedUploads.remove(key, failedUpload)) {
             awaitingUpload.add(failedUpload);
             return;
         }
@@ -285,9 +298,12 @@ public final class ChunkMeshManager implements AutoCloseable {
     private void installEmptyMesh(ChunkMeshData data) {
         if (!repository.markRenderable(
                 data.key(), data.revision())) {
+            discardFailedUploadAtOrBefore(
+                    data.key(), data.revision());
             return;
         }
-        failedUploads.remove(data.key(), data);
+        discardFailedUploadAtOrBefore(
+                data.key(), data.revision());
         ChunkRenderObject previous =
                 installedRenderObjects.remove(data.key());
         if (previous != null) {
@@ -296,6 +312,13 @@ public final class ChunkMeshManager implements AutoCloseable {
     }
 
     private void uploadReplacement(ChunkMeshData data) {
+        if (!repository.isReadyForUpload(
+                data.key(), data.revision())) {
+            discardFailedUploadAtOrBefore(
+                    data.key(), data.revision());
+            return;
+        }
+
         ChunkRenderObject replacement;
         try {
             replacement =
@@ -311,7 +334,12 @@ public final class ChunkMeshManager implements AutoCloseable {
                 }
                 return;
             }
-            failedUploads.put(data.key(), data);
+            ChunkMeshData current =
+                    failedUploads.get(data.key());
+            if (current == null
+                    || current.revision() <= data.revision()) {
+                failedUploads.put(data.key(), data);
+            }
             reportedFailures.add(failure);
             return;
         }
@@ -351,7 +379,8 @@ public final class ChunkMeshManager implements AutoCloseable {
             return;
         }
 
-        failedUploads.remove(data.key(), data);
+        discardFailedUploadAtOrBefore(
+                data.key(), data.revision());
         ChunkRenderObject previous =
                 installedRenderObjects.put(data.key(), replacement);
         if (previous != null) {
@@ -369,6 +398,16 @@ public final class ChunkMeshManager implements AutoCloseable {
                 reportedFailures.add(failure);
             }
         }
+    }
+
+    private void discardFailedUploadAtOrBefore(
+            ChunkKey key, long revision) {
+        failedUploads.computeIfPresent(
+                key,
+                (ignored, failedUpload) ->
+                        failedUpload.revision() <= revision
+                                ? null
+                                : failedUpload);
     }
 
     private Throwable releaseForClose(

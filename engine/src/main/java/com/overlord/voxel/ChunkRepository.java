@@ -6,6 +6,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 public final class ChunkRepository {
@@ -13,8 +14,7 @@ public final class ChunkRepository {
     private final ChunkDirtyTracker dirtyTracker;
     private final ConcurrentHashMap<ChunkKey, Entry> entries =
             new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<ChunkKey, Long> unloadedRevisions =
-            new ConcurrentHashMap<>();
+    private final AtomicLong revisionSequence = new AtomicLong();
 
     public ChunkRepository() {
         this(GameConfig.Chunk.MAX_HEIGHT, new ChunkDirtyTracker());
@@ -91,7 +91,7 @@ public final class ChunkRepository {
                     ChunkState.GENERATING);
             try {
                 generator.accept(entry.chunk);
-                entry.revision++;
+                entry.revision = nextRevision();
                 entry.state = ChunkState.GENERATED;
             } catch (RuntimeException | Error failure) {
                 entry.failure = failure;
@@ -135,7 +135,7 @@ public final class ChunkRepository {
                     return false;
                 }
                 entry.chunk.setBlock(localX, y, localZ, blockId);
-                entry.revision++;
+                entry.revision = nextRevision();
                 entry.failure = null;
                 entry.state = ChunkState.DIRTY;
             }
@@ -302,6 +302,19 @@ public final class ChunkRepository {
         }
     }
 
+    public boolean isReadyForUpload(ChunkKey key, long revision) {
+        Objects.requireNonNull(key, "key");
+        Entry entry = entries.get(key);
+        if (entry == null) {
+            return false;
+        }
+        synchronized (entry) {
+            return entries.get(key) == entry
+                    && entry.state == ChunkState.READY_FOR_UPLOAD
+                    && entry.revision == revision;
+        }
+    }
+
     public boolean beginUnload(ChunkKey key) {
         Objects.requireNonNull(key, "key");
         Entry entry = entries.get(key);
@@ -314,6 +327,7 @@ public final class ChunkRepository {
                 return false;
             }
             entry.failure = null;
+            entry.revision = nextRevision();
             entry.state = ChunkState.UNLOADING;
         }
         for (ChunkKey neighbor : dirtyTracker.horizontalNeighbors(key)) {
@@ -333,8 +347,6 @@ public final class ChunkRepository {
                     || entry.state != ChunkState.UNLOADING) {
                 return false;
             }
-            unloadedRevisions.merge(
-                    key, entry.revision, Math::max);
             return entries.remove(key, entry);
         }
     }
@@ -401,7 +413,7 @@ public final class ChunkRepository {
                     || entry.state == ChunkState.EMPTY) {
                 return;
             }
-            entry.revision++;
+            entry.revision = nextRevision();
             entry.failure = null;
             if (entry.state != ChunkState.GENERATING) {
                 entry.state = ChunkState.DIRTY;
@@ -427,9 +439,11 @@ public final class ChunkRepository {
     }
 
     private Entry newEntry(ChunkKey key) {
-        return new Entry(
-                worldHeight,
-                unloadedRevisions.getOrDefault(key, 0L));
+        return new Entry(worldHeight);
+    }
+
+    private long nextRevision() {
+        return revisionSequence.incrementAndGet();
     }
 
     private static final class Entry {
@@ -438,9 +452,8 @@ public final class ChunkRepository {
         private long revision;
         private Throwable failure;
 
-        private Entry(int worldHeight, long revision) {
+        private Entry(int worldHeight) {
             chunk = new Chunk(worldHeight);
-            this.revision = revision;
         }
     }
 }

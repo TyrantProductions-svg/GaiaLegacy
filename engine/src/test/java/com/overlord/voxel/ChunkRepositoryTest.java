@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.config.GameConfig;
 import java.lang.reflect.Field;
+import java.util.Arrays;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -34,8 +36,8 @@ class ChunkRepositoryTest {
 
         assertEquals(ChunkState.DIRTY, repository.state(center));
         assertEquals(ChunkState.DIRTY, repository.state(east));
-        assertEquals(centerRevision + 1, repository.revision(center));
-        assertEquals(eastRevision + 1, repository.revision(east));
+        assertTrue(repository.revision(center) > centerRevision);
+        assertTrue(repository.revision(east) > eastRevision);
         assertEquals(Set.of(center, east), repository.keys());
     }
 
@@ -52,8 +54,8 @@ class ChunkRepositoryTest {
 
         assertEquals(ChunkState.DIRTY, repository.state(center));
         assertEquals(ChunkState.DIRTY, repository.state(west));
-        assertEquals(centerRevision + 1, repository.revision(center));
-        assertEquals(westRevision + 1, repository.revision(west));
+        assertTrue(repository.revision(center) > centerRevision);
+        assertTrue(repository.revision(west) > westRevision);
         assertEquals(Set.of(center, west), repository.keys());
     }
 
@@ -70,8 +72,8 @@ class ChunkRepositoryTest {
 
         assertEquals(ChunkState.DIRTY, repository.state(center));
         assertEquals(ChunkState.DIRTY, repository.state(north));
-        assertEquals(centerRevision + 1, repository.revision(center));
-        assertEquals(northRevision + 1, repository.revision(north));
+        assertTrue(repository.revision(center) > centerRevision);
+        assertTrue(repository.revision(north) > northRevision);
         assertEquals(Set.of(center, north), repository.keys());
     }
 
@@ -89,8 +91,8 @@ class ChunkRepositoryTest {
 
         assertEquals(ChunkState.DIRTY, repository.state(center));
         assertEquals(ChunkState.DIRTY, repository.state(south));
-        assertEquals(centerRevision + 1, repository.revision(center));
-        assertEquals(southRevision + 1, repository.revision(south));
+        assertTrue(repository.revision(center) > centerRevision);
+        assertTrue(repository.revision(south) > southRevision);
         assertEquals(Set.of(center, south), repository.keys());
     }
 
@@ -146,16 +148,29 @@ class ChunkRepositoryTest {
                     neighbor,
                     chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
         }
+        var neighborRevisions =
+                neighbors.stream()
+                        .collect(
+                                java.util.stream.Collectors.toMap(
+                                        key -> key,
+                                        repository::revision));
 
         repository.generate(
                 center,
                 chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
 
         assertEquals(ChunkState.GENERATED, repository.state(center));
-        assertEquals(1L, repository.revision(center));
+        assertTrue(
+                repository.revision(center)
+                        > neighborRevisions.values().stream()
+                                .mapToLong(Long::longValue)
+                                .max()
+                                .orElseThrow());
         for (ChunkKey neighbor : neighbors) {
             assertEquals(ChunkState.DIRTY, repository.state(neighbor));
-            assertEquals(2L, repository.revision(neighbor));
+            assertTrue(
+                    repository.revision(neighbor)
+                            > neighborRevisions.get(neighbor));
         }
     }
 
@@ -239,9 +254,9 @@ class ChunkRepositoryTest {
 
         repository.setBlock(worldX, 4, worldZ, (byte) 1);
 
-        assertEquals(targetRevision + 1, repository.revision(target));
-        assertEquals(eastRevision + 1, repository.revision(east));
-        assertEquals(southRevision + 1, repository.revision(south));
+        assertTrue(repository.revision(target) > targetRevision);
+        assertTrue(repository.revision(east) > eastRevision);
+        assertTrue(repository.revision(south) > southRevision);
         assertEquals(diagonalRevision, repository.revision(diagonal));
         assertEquals(
                 1,
@@ -714,6 +729,24 @@ class ChunkRepositoryTest {
     }
 
     @Test
+    void readyForUploadQueryRequiresCurrentStateAndRevision() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey key = new ChunkKey(0, 0);
+        repository.generate(key, chunk -> {});
+        long revision =
+                repository.claimMeshing(key).orElseThrow().center().revision();
+
+        assertFalse(repository.isReadyForUpload(key, revision));
+        assertTrue(repository.markReadyForUpload(key, revision));
+        assertTrue(repository.isReadyForUpload(key, revision));
+        assertFalse(repository.isReadyForUpload(key, revision + 1));
+
+        repository.setBlock(1, 1, 1, (byte) 1);
+
+        assertFalse(repository.isReadyForUpload(key, revision));
+    }
+
+    @Test
     void onlyCurrentReadyRevisionCanBecomeRenderable() {
         ChunkRepository repository = new ChunkRepository();
         ChunkKey key = new ChunkKey(0, 0);
@@ -775,14 +808,14 @@ class ChunkRepositoryTest {
         assertFalse(repository.beginUnload(center));
 
         assertEquals(ChunkState.UNLOADING, repository.state(center));
-        assertEquals(centerRevision, repository.revision(center));
+        assertTrue(repository.revision(center) > centerRevision);
         assertFalse(
                 repository.markReadyForUpload(
                         center, claimedRevision));
         for (ChunkKey neighbor : neighbors) {
-            assertEquals(
-                    neighborRevisions.get(neighbor) + 1,
-                    repository.revision(neighbor));
+            assertTrue(
+                    repository.revision(neighbor)
+                            > neighborRevisions.get(neighbor));
             assertEquals(ChunkState.DIRTY, repository.state(neighbor));
         }
     }
@@ -813,6 +846,68 @@ class ChunkRepositoryTest {
         repository.generate(key, chunk -> {});
 
         assertTrue(repository.revision(key) > unloadedRevision);
+    }
+
+    @Test
+    void revisionsAreGloballyUniqueAcrossEntriesAndReloads() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey first = new ChunkKey(0, 0);
+        ChunkKey second = new ChunkKey(2, 0);
+        repository.generate(first, chunk -> {});
+        repository.generate(second, chunk -> {});
+        long firstRevision = repository.revision(first);
+        long secondRevision = repository.revision(second);
+
+        assertTrue(secondRevision > firstRevision);
+        assertTrue(repository.beginUnload(first));
+        long unloadingRevision = repository.revision(first);
+        assertTrue(unloadingRevision > secondRevision);
+        assertTrue(repository.completeUnload(first));
+
+        repository.generate(first, chunk -> {});
+
+        assertTrue(repository.revision(first) > unloadingRevision);
+    }
+
+    @Test
+    void unloadingManyUniqueKeysRetainsNoPerKeyTombstoneMap() {
+        ChunkRepository repository = new ChunkRepository();
+        for (int index = 0; index < 1_000; index++) {
+            ChunkKey key = new ChunkKey(index, -index);
+            repository.generate(key, chunk -> {});
+            assertTrue(repository.beginUnload(key));
+            assertTrue(repository.completeUnload(key));
+        }
+
+        assertTrue(repository.keys().isEmpty());
+        Set<String> mapFields =
+                Arrays.stream(ChunkRepository.class.getDeclaredFields())
+                        .filter(
+                                field ->
+                                        Map.class.isAssignableFrom(
+                                                field.getType()))
+                        .map(Field::getName)
+                        .collect(java.util.stream.Collectors.toSet());
+        assertEquals(Set.of("entries"), mapFields);
+    }
+
+    @Test
+    void unloadedIncarnationCannotCompleteAgainstReloadedEntry() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey key = new ChunkKey(0, 0);
+        repository.generate(key, chunk -> {});
+        long oldRevision =
+                repository.claimMeshing(key).orElseThrow().center().revision();
+        assertTrue(repository.beginUnload(key));
+        assertTrue(repository.completeUnload(key));
+
+        repository.generate(key, chunk -> {});
+        long newRevision =
+                repository.claimMeshing(key).orElseThrow().center().revision();
+
+        assertTrue(newRevision > oldRevision);
+        assertFalse(repository.markReadyForUpload(key, oldRevision));
+        assertTrue(repository.markReadyForUpload(key, newRevision));
     }
 
     @Test
@@ -929,9 +1024,9 @@ class ChunkRepositoryTest {
 
         repository.setBlock(localX, 4, localZ, (byte) 1);
 
-        assertEquals(centerRevision + 1, repository.revision(center));
-        assertEquals(firstRevision + 1, repository.revision(firstNeighbor));
-        assertEquals(secondRevision + 1, repository.revision(secondNeighbor));
+        assertTrue(repository.revision(center) > centerRevision);
+        assertTrue(repository.revision(firstNeighbor) > firstRevision);
+        assertTrue(repository.revision(secondNeighbor) > secondRevision);
         assertEquals(diagonalRevision, repository.revision(diagonal));
     }
 
