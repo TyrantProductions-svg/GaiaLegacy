@@ -27,10 +27,6 @@ UI implementation was added.
 
 ## Unfinished work
 
-- Initial branch-wide owner review at `1583b34` reported two Important
-  findings: inventory owner isolation and the subscriber `Error` protocol.
-  This fix wave addresses both; controller re-review remains pending, and this
-  handoff does not claim a clean or approved owner-review verdict.
 - Gaia `BlockRaycastService` and resource-ID `BlockWorldAccess` adapters are
   not implemented or wired.
 - Production inventory storage/rules, a production world-item adapter,
@@ -232,11 +228,11 @@ Full Windows build:
 .\gradlew.bat clean test build --console=plain --no-daemon
 ```
 
-- Passed: `BUILD SUCCESSFUL in 18s`; 18 actionable tasks, all 18 executed.
+- Passed: `BUILD SUCCESSFUL in 17s`; 18 actionable tasks, all 18 executed.
 - Gradle selected `natives-windows`.
-- Engine JUnit XML: 48 suites, 479 tests, 0 failures, 0 errors, 0 skipped.
+- Engine JUnit XML: 48 suites, 489 tests, 0 failures, 0 errors, 0 skipped.
 - Game JUnit XML: 11 suites, 107 tests, 0 failures, 0 errors, 0 skipped.
-- Exact total: 59 suites, 586 tests, 0 failures, 0 errors, 0 skipped.
+- Exact total: 59 suites, 596 tests, 0 failures, 0 errors, 0 skipped.
 
 Packaged-resource verification:
 
@@ -249,8 +245,8 @@ Packaged-resource verification:
 Hygiene and scope checks:
 
 - `git diff --check`: passed after removing Task 7 trailing spaces.
-- Final post-Task-7 `git diff --check origin/main..HEAD` at
-  `3a5f0c0e386c54e2b1a8b189ac5eb96096913c61`: exit `0`, no output.
+- Post-owner-review-fix `git diff --check origin/main..HEAD` at
+  `0a7f3b0951c745c28674b9686696f98d327a9769`: exit `0`, no output.
 - Tracked `build/`, `bin/`, `.class`, crash-dump, and replay-dump scan:
   no matches.
 - Prohibited renderer/player/controller/mesh-manager production path changes
@@ -268,14 +264,17 @@ Owner-review input and final reconciliation HEAD:
 
 ```text
 Initial owner-review input: 1583b34
-Final fix/reconciliation HEAD: reported in the final external task report
-after the required commit because a commit cannot contain its own
-content-derived hash.
+Reviewed implementation HEAD: 0a7f3b0951c745c28674b9686696f98d327a9769
+Final documentation-reconciliation HEAD: reported in the external task report
+because a commit cannot contain its own content-derived hash.
 ```
 
-The initial review's two Important findings—inventory owner isolation and the
-subscriber `Error` protocol—are addressed by this fix wave pending controller
-re-review. No clean or approved owner-review verdict is claimed here.
+The Engine owner re-review returned **READY** with 0 Critical, 0 Important, and
+0 Minor findings. It confirmed that inventory owner isolation and the
+subscriber `Error` protocol are resolved. The Game/shared owner confirmed both
+earlier documentation Minors and all cross-boundary checks were resolved; its
+only final blocker was the stale test count and diff stat corrected by this
+documentation reconciliation.
 
 Interactive/platform truth:
 
@@ -285,8 +284,6 @@ Interactive/platform truth:
 
 ## Known risks
 
-- Controller re-review of the two addressed Important findings is pending;
-  owner review is not yet recorded as clean or approved.
 - Production adapters do not exist, so cross-service transaction sketches
   are contract obligations, not exercised gameplay paths.
 - Reservation fakes intentionally omit production capacity, persistence,
@@ -337,7 +334,7 @@ Interactive/platform truth:
 Final `git diff --stat origin/main..HEAD`:
 
 ```text
-76 files changed, 9617 insertions(+), 20 deletions(-)
+76 files changed, 9957 insertions(+), 20 deletions(-)
 ```
 
 ## Suggested overall commit and pull request
@@ -383,8 +380,8 @@ Suggested pull request description:
 
 ## Remaining
 
-- controller re-review of the two addressed Important findings remains
-  pending; no clean or approved verdict is claimed
+- both owner reviews found no remaining code or cross-boundary blocker; the
+  Game/shared stale-evidence blocker is corrected by this handoff update
 - production gameplay/adapters, formal inventory, world entities, physics
   drops, renderer/controller/mesh-manager work, and UI remain out of scope
 - Windows interactive and native macOS verification were not run for v2.1
