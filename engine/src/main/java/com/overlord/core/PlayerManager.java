@@ -3,23 +3,27 @@ package com.overlord.core;
 import com.overlord.config.GameConfig;
 import com.overlord.core.input.InputSnapshot;
 import com.overlord.core.input.MouseDelta;
-import com.overlord.physics.PhysicsManager;
+import com.overlord.physics.PlayerController;
 import com.overlord.renderer.Camera;
 import java.util.Objects;
 import org.joml.Vector3f;
 
 public class PlayerManager {
     private final Camera camera;
-    private final PhysicsManager physicsManager;
+    private final PlayerController playerController;
     private final Vector3f forward = new Vector3f();
     private final Vector3f right = new Vector3f();
     private final Vector3f horizontalForward = new Vector3f();
     private final Vector3f horizontalRight = new Vector3f();
     private final Vector3f movement = new Vector3f();
+    private int remainingNoclipTapSteps;
 
-    public PlayerManager(Camera camera, PhysicsManager physicsManager) {
+    public PlayerManager(
+            Camera camera, PlayerController playerController) {
         this.camera = Objects.requireNonNull(camera, "camera");
-        this.physicsManager = Objects.requireNonNull(physicsManager, "physicsManager");
+        this.playerController =
+                Objects.requireNonNull(
+                        playerController, "playerController");
     }
 
     public void applyLook(MouseDelta delta) {
@@ -60,12 +64,36 @@ public class PlayerManager {
         }
 
         if (movement.lengthSquared() > 0.0f) {
-            movement.normalize().mul(GameConfig.Player.MOVEMENT_SPEED * fixedDeltaSeconds);
+            movement.normalize();
         }
 
-        physicsManager.update(fixedDeltaSeconds, movement.x, movement.z);
+        boolean jumpPressed = false;
+        boolean togglePressed = false;
         if (input.isKeyPressed(GameConfig.Input.KEY_JUMP)) {
-            physicsManager.jump(GameConfig.Player.JUMP_VELOCITY);
+            if (remainingNoclipTapSteps > 0) {
+                togglePressed = true;
+                remainingNoclipTapSteps = 0;
+                playerController.setNoclip(
+                        !playerController.isNoclip());
+            } else {
+                jumpPressed = true;
+                remainingNoclipTapSteps =
+                        GameConfig.Player
+                                .NOCLIP_DOUBLE_TAP_STEPS;
+            }
+        } else if (remainingNoclipTapSteps > 0) {
+            remainingNoclipTapSteps--;
         }
+
+        playerController.fixedUpdate(
+                fixedDeltaSeconds,
+                movement.x,
+                movement.z,
+                jumpPressed,
+                !togglePressed
+                        && input.isKeyDown(
+                                GameConfig.Input.KEY_JUMP),
+                input.isKeyDown(
+                        GameConfig.Input.KEY_DESCEND));
     }
 }

@@ -99,7 +99,7 @@ public class Camera {
     }
     
     public void setPosition(Vector3f position) {
-        this.position = position;
+        this.position.set(position);
     }
     
     public float getMovementSpeed() {

@@ -19,12 +19,17 @@ public class GameConfig {
         public static final float WIDTH = 0.6f;
         public static final float HEIGHT = 1.8f;
         public static final float EYE_HEIGHT = 1.62f;
+        public static final float MAX_STEP_HEIGHT = 1.0f;
+        public static final float GROUND_SNAP_DISTANCE = 1.0f;
+        public static final int NOCLIP_DOUBLE_TAP_STEPS = 15;
     }
     
     public static final class Physics {
         public static final float GRAVITY = -25.0f;
         public static final float TERMINAL_VELOCITY = -60.0f;
         public static final float COLLISION_TOLERANCE = 0.001f;
+        public static final int MAX_SLIDE_ITERATIONS = 4;
+        public static final int MAX_DEPENETRATION_ITERATIONS = 8;
     }
     
     public static final class Chunk {

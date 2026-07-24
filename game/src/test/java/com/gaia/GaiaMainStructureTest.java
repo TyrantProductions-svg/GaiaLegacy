@@ -22,7 +22,11 @@ class GaiaMainStructureTest {
                     "Mesh",
                     "GLFW",
                     "PhysicsManager",
-                    "PlayerManager"
+                    "PlayerManager",
+                    "CollisionWorld",
+                    "PhysicsWorld",
+                    "PlayerController",
+                    "BlockRaycast"
                 }) {
             assertFalse(source.contains(forbidden), "GaiaMain must not reference " + forbidden);
         }

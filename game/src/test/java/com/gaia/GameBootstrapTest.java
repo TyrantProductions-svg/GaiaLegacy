@@ -11,10 +11,17 @@ import com.overlord.assets.AssetLoadReport;
 import com.overlord.assets.AssetSeverity;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.core.lifecycle.ShutdownCoordinator;
+import com.overlord.physics.BlockRaycast;
+import com.overlord.physics.CollisionWorld;
+import com.overlord.physics.PhysicsWorld;
+import com.overlord.physics.PlayerController;
 import com.overlord.voxel.ChunkMeshManager;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.PrintStream;
 import java.lang.reflect.RecordComponent;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -300,16 +307,63 @@ class GameBootstrapTest {
 
     @Test
     void gameContextCarriesTheIndependentChunkMeshManager() {
-        RecordComponent chunkMeshes =
-                Arrays.stream(GameContext.class.getRecordComponents())
-                        .filter(
-                                component ->
-                                        component.getName()
-                                                .equals("chunkMeshes"))
-                        .findFirst()
-                        .orElseThrow();
+        RecordComponent chunkMeshes = componentNamed("chunkMeshes");
 
         assertEquals(ChunkMeshManager.class, chunkMeshes.getType());
+    }
+
+    @Test
+    void gameContextCarriesExplicitPhysicsServices() {
+        assertEquals(
+                PhysicsWorld.class,
+                componentNamed("physicsWorld").getType());
+        assertEquals(
+                CollisionWorld.class,
+                componentNamed("collisionWorld").getType());
+        assertEquals(
+                PlayerController.class,
+                componentNamed("playerController").getType());
+        assertEquals(
+                BlockRaycast.class,
+                componentNamed("blockRaycast").getType());
+        assertFalse(
+                Arrays.stream(GameContext.class.getRecordComponents())
+                        .anyMatch(
+                                component ->
+                                        component.getType()
+                                                .getSimpleName()
+                                                .equals("PhysicsManager")));
+    }
+
+    @Test
+    void bootstrapComposesSharedPhysicsServicesAndEightStepCatchUp()
+            throws IOException {
+        String source =
+                Files.readString(
+                        Path.of(
+                                "src/main/java/com/gaia/"
+                                        + "GameBootstrap.java"));
+        String compact = source.replaceAll("\\s+", "");
+
+        assertTrue(
+                compact.contains(
+                        "MAX_FIXED_STEPS_PER_FRAME=8;"));
+        assertTrue(
+                compact.contains(
+                        "BlockCollisionShapeResolvershapes="
+                                + "BlockCollisionShapeResolver"
+                                + ".fullCubesForNonAir();"));
+        assertTrue(
+                compact.contains(
+                        "newCollisionWorld("
+                                + "engine.getWorld(),shapes)"));
+        assertTrue(
+                compact.contains(
+                        "newBlockRaycast("
+                                + "engine.getWorld(),shapes)"));
+        assertTrue(compact.contains("newPlayerController("));
+        assertTrue(compact.contains("newPhysicsWorld("));
+        assertFalse(source.contains("PhysicsManager"));
     }
 
     @Test
@@ -380,6 +434,13 @@ class GameBootstrapTest {
                 logged.contains(
                         "Block face references missing region"));
         assertTrue(logged.contains("gaia:missing"));
+    }
+
+    private static RecordComponent componentNamed(String name) {
+        return Arrays.stream(GameContext.class.getRecordComponents())
+                .filter(component -> component.getName().equals(name))
+                .findFirst()
+                .orElseThrow();
     }
 
     private static final class ScriptedExecutor

@@ -16,4 +16,8 @@ public record InputSnapshot(Set<Integer> downKeys, Set<Integer> pressedKeys) {
     public boolean isKeyPressed(int key) {
         return pressedKeys.contains(key);
     }
+
+    public InputSnapshot heldOnly() {
+        return new InputSnapshot(downKeys, Set.of());
+    }
 }
