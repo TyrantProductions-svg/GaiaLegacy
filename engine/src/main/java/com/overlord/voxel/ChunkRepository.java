@@ -2,8 +2,10 @@ package com.overlord.voxel;
 
 import com.overlord.config.GameConfig;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -18,6 +20,10 @@ public final class ChunkRepository {
     private final ConcurrentHashMap<ChunkKey, Entry> entries =
             new ConcurrentHashMap<>();
     private final AtomicLong revisionSequence = new AtomicLong();
+    private final AtomicLong generationAttemptSequence =
+            new AtomicLong();
+    private final GenerationAttempts generationAttempts =
+            new GenerationAttempts();
 
     public ChunkRepository() {
         this(GameConfig.Chunk.MAX_HEIGHT, new ChunkDirtyTracker());
@@ -59,6 +65,157 @@ public final class ChunkRepository {
         }
         synchronized (entry) {
             return entry.revision;
+        }
+    }
+
+    public ChunkGenerationTicket beginGeneration(
+            ChunkKey key, ChunkGenerationMode mode) {
+        Objects.requireNonNull(key, "key");
+        Objects.requireNonNull(mode, "mode");
+        if (mode != ChunkGenerationMode.INITIAL) {
+            throw new UnsupportedOperationException(
+                    "REBUILD generation is not supported yet");
+        }
+
+        synchronized (generationAttempts) {
+            GenerationAttempt current =
+                    generationAttempts.byKey.get(key);
+            if (current != null
+                    && current.status
+                            == ChunkGenerationStatus.GENERATING) {
+                throw new IllegalStateException(
+                        "Chunk "
+                                + key
+                                + " already has an active generation attempt");
+            }
+            if (entries.containsKey(key)) {
+                throw new IllegalStateException(
+                        "Initial generation requires an unloaded Chunk "
+                                + key);
+            }
+
+            ChunkGenerationTicket ticket =
+                    new ChunkGenerationTicket(
+                            key,
+                            mode,
+                            generationAttemptSequence.incrementAndGet(),
+                            0);
+            generationAttempts.byKey.put(
+                    key, new GenerationAttempt(ticket));
+            return ticket;
+        }
+    }
+
+    public ChunkGenerationResult commitGeneration(
+            ChunkGenerationTicket ticket,
+            ChunkGenerationData data) {
+        Objects.requireNonNull(ticket, "ticket");
+        Objects.requireNonNull(data, "data");
+        ChunkKey key =
+                Objects.requireNonNull(ticket.key(), "ticket.key");
+        Objects.requireNonNull(ticket.mode(), "ticket.mode");
+
+        if (!key.equals(data.key())
+                || data.worldHeight() != worldHeight) {
+            return terminalConflict(ticket);
+        }
+
+        Chunk detached =
+                Chunk.fromCanonicalBytes(
+                        data.worldHeight(), data.copyBlocks());
+        long committedRevision;
+        synchronized (generationAttempts) {
+            GenerationAttempt attempt =
+                    liveAttempt(ticket);
+            if (attempt == null) {
+                return conflictResult(key);
+            }
+            if (ticket.mode() != ChunkGenerationMode.INITIAL
+                    || ticket.baseRevision() != 0) {
+                generationAttempts.byKey.remove(key, attempt);
+                return conflictResult(key);
+            }
+
+            Entry created = new Entry(detached);
+            Entry resolved =
+                    entries.compute(
+                            key,
+                            (ignored, current) -> {
+                                if (current != null) {
+                                    return current;
+                                }
+                                created.revision = nextRevision();
+                                created.state = ChunkState.GENERATED;
+                                return created;
+                            });
+            if (resolved != created) {
+                generationAttempts.byKey.remove(key, attempt);
+                return conflictResult(key);
+            }
+
+            committedRevision = created.revision;
+            attempt.status = ChunkGenerationStatus.COMMITTED;
+            attempt.failure = null;
+        }
+
+        for (ChunkKey neighbor :
+                dirtyTracker.horizontalNeighbors(key)) {
+            dirtyIfPresent(neighbor);
+        }
+        return new ChunkGenerationResult(
+                ChunkGenerationResult.Status.COMMITTED,
+                key,
+                committedRevision,
+                Optional.empty());
+    }
+
+    public ChunkGenerationResult failGeneration(
+            ChunkGenerationTicket ticket, Throwable failure) {
+        Objects.requireNonNull(ticket, "ticket");
+        Objects.requireNonNull(failure, "failure");
+        ChunkKey key =
+                Objects.requireNonNull(ticket.key(), "ticket.key");
+        Objects.requireNonNull(ticket.mode(), "ticket.mode");
+
+        synchronized (generationAttempts) {
+            GenerationAttempt attempt =
+                    liveAttempt(ticket);
+            if (attempt == null) {
+                return conflictResult(key);
+            }
+            attempt.failure = failure;
+            attempt.status = ChunkGenerationStatus.FAILED;
+            return new ChunkGenerationResult(
+                    ChunkGenerationResult.Status.FAILED,
+                    key,
+                    0,
+                    Optional.of(failure));
+        }
+    }
+
+    public ChunkGenerationStatus generationStatus(ChunkKey key) {
+        Objects.requireNonNull(key, "key");
+        synchronized (generationAttempts) {
+            GenerationAttempt attempt =
+                    generationAttempts.byKey.get(key);
+            if (attempt == null) {
+                return ChunkGenerationStatus.IDLE;
+            }
+            return attempt.status;
+        }
+    }
+
+    public Optional<Throwable> generationFailure(ChunkKey key) {
+        Objects.requireNonNull(key, "key");
+        synchronized (generationAttempts) {
+            GenerationAttempt attempt =
+                    generationAttempts.byKey.get(key);
+            if (attempt == null
+                    || attempt.status
+                            != ChunkGenerationStatus.FAILED) {
+                return Optional.empty();
+            }
+            return Optional.of(attempt.failure);
         }
     }
 
@@ -524,8 +681,59 @@ public final class ChunkRepository {
         return new Entry(worldHeight);
     }
 
+    private ChunkGenerationResult terminalConflict(
+            ChunkGenerationTicket ticket) {
+        ChunkKey key =
+                Objects.requireNonNull(ticket.key(), "ticket.key");
+        synchronized (generationAttempts) {
+            GenerationAttempt attempt =
+                    liveAttempt(ticket);
+            if (attempt != null) {
+                generationAttempts.byKey.remove(key, attempt);
+            }
+            return conflictResult(key);
+        }
+    }
+
+    private GenerationAttempt liveAttempt(
+            ChunkGenerationTicket ticket) {
+        GenerationAttempt attempt =
+                generationAttempts.byKey.get(ticket.key());
+        if (attempt == null
+                || attempt.status
+                        != ChunkGenerationStatus.GENERATING
+                || !attempt.ticket.equals(ticket)) {
+            return null;
+        }
+        return attempt;
+    }
+
+    private ChunkGenerationResult conflictResult(ChunkKey key) {
+        return new ChunkGenerationResult(
+                ChunkGenerationResult.Status.CONFLICT,
+                key,
+                revision(key),
+                Optional.empty());
+    }
+
     private long nextRevision() {
         return revisionSequence.incrementAndGet();
+    }
+
+    private static final class GenerationAttempts {
+        private final Map<ChunkKey, GenerationAttempt> byKey =
+                new HashMap<>();
+    }
+
+    private static final class GenerationAttempt {
+        private final ChunkGenerationTicket ticket;
+        private ChunkGenerationStatus status =
+                ChunkGenerationStatus.GENERATING;
+        private Throwable failure;
+
+        private GenerationAttempt(ChunkGenerationTicket ticket) {
+            this.ticket = ticket;
+        }
     }
 
     private static final class Entry {
@@ -536,6 +744,10 @@ public final class ChunkRepository {
 
         private Entry(int worldHeight) {
             chunk = new Chunk(worldHeight);
+        }
+
+        private Entry(Chunk chunk) {
+            this.chunk = chunk;
         }
     }
 }

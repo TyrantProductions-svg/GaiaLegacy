@@ -4,6 +4,7 @@ import com.overlord.config.GameConfig;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 
 public class Chunk {
     
@@ -72,6 +73,47 @@ public class Chunk {
     
     public int getNumSubChunks() {
         return numSubChunks;
+    }
+
+    static Chunk fromCanonicalBytes(
+            int worldHeight, byte[] blocks) {
+        if (worldHeight <= 0) {
+            throw new IllegalArgumentException(
+                    "worldHeight must be greater than zero");
+        }
+        Objects.requireNonNull(blocks, "blocks");
+        int expectedLength =
+                Math.multiplyExact(
+                        Math.multiplyExact(
+                                GameConfig.Chunk.SIZE, worldHeight),
+                        GameConfig.Chunk.SIZE);
+        if (blocks.length != expectedLength) {
+            throw new IllegalArgumentException(
+                    "blocks must contain exactly "
+                            + expectedLength
+                            + " bytes");
+        }
+
+        Chunk chunk = new Chunk(worldHeight);
+        for (int localZ = 0;
+                localZ < GameConfig.Chunk.SIZE;
+                localZ++) {
+            for (int y = 0; y < worldHeight; y++) {
+                for (int localX = 0;
+                        localX < GameConfig.Chunk.SIZE;
+                        localX++) {
+                    int index =
+                            localX
+                                    + y * GameConfig.Chunk.SIZE
+                                    + localZ
+                                            * GameConfig.Chunk.SIZE
+                                            * worldHeight;
+                    chunk.setBlock(
+                            localX, y, localZ, blocks[index]);
+                }
+            }
+        }
+        return chunk;
     }
 
     void copyBlocksTo(byte[] target) {
