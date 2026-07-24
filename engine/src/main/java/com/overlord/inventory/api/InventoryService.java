@@ -1,9 +1,10 @@
 package com.overlord.inventory.api;
 
 import com.overlord.interaction.api.EntityRef;
+import java.util.Optional;
 
 public interface InventoryService {
-    InventoryView snapshot(EntityRef owner);
+    Optional<InventoryView> snapshot(EntityRef owner);
 
     InventoryChangeResult replaceSlot(
             InventoryChangeRequest request);

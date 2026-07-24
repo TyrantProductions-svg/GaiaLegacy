@@ -48,6 +48,42 @@ class BlockMutationContractTest {
     }
 
     @Test
+    void requestRejectsNullBlockResourceIdentities() {
+        assertThrows(
+                NullPointerException.class,
+                () ->
+                        new BlockChangeRequest(
+                                context,
+                                1,
+                                2,
+                                3,
+                                null,
+                                ResourceLocation.parse("gaia:air")));
+        assertThrows(
+                NullPointerException.class,
+                () ->
+                        new BlockChangeRequest(
+                                context,
+                                1,
+                                2,
+                                3,
+                                ResourceLocation.parse("gaia:stone"),
+                                null));
+    }
+
+    @Test
+    void resultRejectsNullObservedBlockOptionalContainer() {
+        assertThrows(
+                NullPointerException.class,
+                () ->
+                        new BlockChangeResult(
+                                request,
+                                BlockChangeResult.Status.CONFLICT,
+                                null,
+                                Set.of()));
+    }
+
+    @Test
     void dirtyEventRejectsEmptyAffectedSet() {
         assertThrows(
                 IllegalArgumentException.class,

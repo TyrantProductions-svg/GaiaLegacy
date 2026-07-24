@@ -20,11 +20,22 @@ public record BlockHitResult(
         float distance) {
     public BlockHitResult {
         block = Objects.requireNonNull(block, "block");
-        int axisMagnitude = Math.abs(normalX) + Math.abs(normalY) + Math.abs(normalZ);
-        if (axisMagnitude != 1
-                || Math.abs(normalX) > 1
-                || Math.abs(normalY) > 1
-                || Math.abs(normalZ) > 1) {
+        boolean xFace =
+                (normalX == 1
+                                || normalX == -1)
+                        && normalY == 0
+                        && normalZ == 0;
+        boolean yFace =
+                normalX == 0
+                        && (normalY == 1
+                                || normalY == -1)
+                        && normalZ == 0;
+        boolean zFace =
+                normalX == 0
+                        && normalY == 0
+                        && (normalZ == 1
+                                || normalZ == -1);
+        if (!(xFace || yFace || zFace)) {
             throw new IllegalArgumentException("normal must identify one axis-aligned face");
         }
         if (adjacentX != blockX + normalX

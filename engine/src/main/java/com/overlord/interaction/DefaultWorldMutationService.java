@@ -102,6 +102,21 @@ public final class DefaultWorldMutationService
                     Optional.of(current));
         }
 
+        ResourceLocation revalidatedCurrent =
+                Objects.requireNonNull(
+                        world.blockAt(
+                                request.x(),
+                                request.y(),
+                                request.z()),
+                        "world block");
+        if (!revalidatedCurrent.equals(
+                request.expectedBlock())) {
+            return rejected(
+                    request,
+                    BlockChangeResult.Status.CONFLICT,
+                    Optional.of(revalidatedCurrent));
+        }
+
         if (!world.setBlock(
                 request.x(),
                 request.y(),

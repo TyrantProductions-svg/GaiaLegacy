@@ -39,6 +39,8 @@ class DefaultWorldMutationServiceTest {
             ResourceLocation.parse("gaia:air");
     private static final ResourceLocation STONE =
             ResourceLocation.parse("gaia:stone");
+    private static final ResourceLocation DIRT =
+            ResourceLocation.parse("gaia:dirt");
 
     @Test
     void appliesInBeforeWriteChangedDirtyOrderAtChunkEdge() {
@@ -91,6 +93,36 @@ class DefaultWorldMutationServiceTest {
         assertEquals(0, access.writeAttempts);
         assertEquals(STONE, access.block);
         assertEquals(List.of("before"), order);
+        assertEquals(null, events.changedEvent);
+        assertEquals(null, events.dirtyEvent);
+    }
+
+    @Test
+    void revalidatesExpectedBlockAfterBeforeChangeBeforeOuterWrite() {
+        List<String> order = new ArrayList<>();
+        RecordingAccess access = new RecordingAccess(order, STONE);
+        access.known.add(DIRT);
+        RecordingPublisher events = new RecordingPublisher(order);
+        events.beforeAction =
+                () -> access.setBlock(2, 4, 3, DIRT);
+        BlockChangeRequest request = request(2, 4, 3);
+
+        BlockChangeResult result =
+                service(access, events).changeBlock(request);
+
+        assertEquals(BlockChangeResult.Status.CONFLICT, result.status());
+        assertSame(request, result.request());
+        assertEquals(Optional.of(DIRT), result.observedBlock());
+        assertTrue(result.dirtyChunks().isEmpty());
+        assertEquals(2, access.reads);
+        assertEquals(1, access.writeAttempts);
+        assertEquals(1, access.successfulWrites);
+        assertEquals(List.of(DIRT), access.writtenBlocks);
+        assertEquals(DIRT, access.block);
+        assertEquals(List.of("before", "write"), order);
+        assertEquals(
+                new BeforeBlockChangedEvent(request, STONE),
+                events.beforeEvent);
         assertEquals(null, events.changedEvent);
         assertEquals(null, events.dirtyEvent);
     }
@@ -493,6 +525,8 @@ class DefaultWorldMutationServiceTest {
         private int reads;
         private int writeAttempts;
         private int successfulWrites;
+        private final List<ResourceLocation> writtenBlocks =
+                new ArrayList<>();
         private boolean withinBounds = true;
         private boolean writeSucceeds = true;
 
@@ -528,6 +562,7 @@ class DefaultWorldMutationServiceTest {
                 ResourceLocation replacement) {
             order.add("write");
             writeAttempts++;
+            writtenBlocks.add(replacement);
             if (!writeSucceeds) {
                 return false;
             }
@@ -545,6 +580,7 @@ class DefaultWorldMutationServiceTest {
         private RuntimeException beforeFailure;
         private RuntimeException changedFailure;
         private RuntimeException dirtyFailure;
+        private Runnable beforeAction;
         private BeforeBlockChangedEvent beforeEvent;
         private BlockChangedEvent changedEvent;
         private ChunkDirtyEvent dirtyEvent;
@@ -560,6 +596,9 @@ class DefaultWorldMutationServiceTest {
             order.add("before");
             if (beforeFailure != null) {
                 throw beforeFailure;
+            }
+            if (beforeAction != null) {
+                beforeAction.run();
             }
             return decision;
         }

@@ -11,13 +11,26 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 class InteractionArchitectureTest {
-    private static final Path ENGINE_MAIN = Path.of("src/main/java");
-    private static final Path GAME_MAIN = Path.of("../game/src/main/java");
+    private static final Path REPOSITORY_ROOT =
+            Path.of("..").toAbsolutePath().normalize();
+    private static final Path ENGINE_MAIN =
+            Path.of("src/main/java").toAbsolutePath().normalize();
+    private static final Path GAME_MAIN =
+            REPOSITORY_ROOT.resolve("game/src/main/java");
+    private static final Set<Path> DIRECT_WORLD_WRITE_ALLOWLIST =
+            Set.of(
+                    GAME_MAIN.resolve(
+                                    "com/gaia/world/WorldLoader.java")
+                            .normalize(),
+                    GAME_MAIN.resolve(
+                                    "com/gaia/world/GaiaWorldGenerator.java")
+                            .normalize());
     private static final Pattern DIRECT_SET_BLOCK_CALL =
             Pattern.compile("\\.\\s*setBlock\\s*\\(");
 
@@ -58,8 +71,8 @@ class InteractionArchitectureTest {
             offenders =
                     sources.filter(
                                     source ->
-                                            !source.startsWith(
-                                                    GAME_MAIN.resolve("com/gaia/world")))
+                                            !isDirectWorldWriteAllowlisted(
+                                                    source))
                             .filter(
                                     source -> {
                                         String text = read(source);
@@ -70,6 +83,25 @@ class InteractionArchitectureTest {
         assertTrue(
                 offenders.isEmpty(),
                 "Gameplay bypasses WorldMutationService: " + offenders);
+    }
+
+    @Test
+    void directWorldWriteWhitelistAllowsOnlyExactGenerationFiles() {
+        Path worldLoader =
+                GAME_MAIN.resolve(
+                        "com/gaia/world/WorldLoader.java");
+        Path worldGenerator =
+                GAME_MAIN.resolve(
+                        "com/gaia/world/GaiaWorldGenerator.java");
+
+        assertTrue(Files.isRegularFile(worldLoader));
+        assertTrue(Files.isRegularFile(worldGenerator));
+        assertTrue(isDirectWorldWriteAllowlisted(worldLoader));
+        assertTrue(isDirectWorldWriteAllowlisted(worldGenerator));
+        assertFalse(
+                isDirectWorldWriteAllowlisted(
+                        GAME_MAIN.resolve(
+                                "com/gaia/world/FutureGameplayWriter.java")));
     }
 
     @Test
@@ -104,6 +136,12 @@ class InteractionArchitectureTest {
             }
         }
         return List.copyOf(sources).stream();
+    }
+
+    private static boolean isDirectWorldWriteAllowlisted(
+            Path source) {
+        return DIRECT_WORLD_WRITE_ALLOWLIST.contains(
+                source.toAbsolutePath().normalize());
     }
 
     private static String read(Path source) {

@@ -24,6 +24,7 @@ class InventoryContractTest {
                     return 2;
                 }
             };
+    private static final EntityRef OWNER = new EntityRef(4);
 
     @Test
     void bodySlotsHaveStableThreeSlotOrder() {
@@ -44,11 +45,10 @@ class InventoryContractTest {
 
     @Test
     void inventoryChangeRequiresValidRevisionAndReferences() {
-        EntityRef owner = new EntityRef(4);
         assertEquals(
                 Optional.of(STONE),
                 new InventoryChangeRequest(
-                                owner,
+                                OWNER,
                                 BodySlot.RIGHT_HAND,
                                 3,
                                 Optional.of(STONE))
@@ -57,7 +57,7 @@ class InventoryContractTest {
                 IllegalArgumentException.class,
                 () ->
                         new InventoryChangeRequest(
-                                owner,
+                                OWNER,
                                 BodySlot.RIGHT_HAND,
                                 -1,
                                 Optional.empty()));
@@ -65,10 +65,83 @@ class InventoryContractTest {
                 NullPointerException.class,
                 () ->
                         new InventoryChangeRequest(
-                                owner,
+                                OWNER,
                                 BodySlot.RIGHT_HAND,
                                 0,
                                 null));
+    }
+
+    @Test
+    void unknownInventoryOwnerIsRepresentedByEmptyOptional() {
+        InventoryChangeResult unknownOwner =
+                new InventoryChangeResult(
+                        InventoryChangeResult.Status.UNKNOWN_OWNER,
+                        Optional.empty());
+        InventoryService service =
+                new InventoryService() {
+                    @Override
+                    public Optional<InventoryView> snapshot(
+                            EntityRef owner) {
+                        assertEquals(OWNER, owner);
+                        return Optional.empty();
+                    }
+
+                    @Override
+                    public InventoryChangeResult replaceSlot(
+                            InventoryChangeRequest request) {
+                        return unknownOwner;
+                    }
+                };
+
+        assertEquals(Optional.empty(), service.snapshot(OWNER));
+        assertEquals(Optional.empty(), unknownOwner.inventory());
+    }
+
+    @Test
+    void inventoryChangeResultEnforcesStatusAndRevisionInvariants() {
+        InventoryView current = inventory(3);
+
+        assertEquals(
+                Optional.of(current),
+                new InventoryChangeResult(
+                                InventoryChangeResult.Status.APPLIED,
+                                Optional.of(current))
+                        .inventory());
+        assertThrows(
+                NullPointerException.class,
+                () ->
+                        new InventoryChangeResult(
+                                null, Optional.of(current)));
+        assertThrows(
+                NullPointerException.class,
+                () ->
+                        new InventoryChangeResult(
+                                InventoryChangeResult.Status.APPLIED,
+                                null));
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        new InventoryChangeResult(
+                                InventoryChangeResult.Status.UNKNOWN_OWNER,
+                                Optional.of(current)));
+        for (InventoryChangeResult.Status status :
+                new InventoryChangeResult.Status[] {
+                    InventoryChangeResult.Status.APPLIED,
+                    InventoryChangeResult.Status.CONFLICT,
+                    InventoryChangeResult.Status.INVALID_STACK
+                }) {
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () ->
+                            new InventoryChangeResult(
+                                    status, Optional.empty()));
+        }
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        new InventoryChangeResult(
+                                InventoryChangeResult.Status.CONFLICT,
+                                Optional.of(inventory(-1))));
     }
 
     @Test
@@ -79,5 +152,24 @@ class InventoryContractTest {
                             method.getReturnType()),
                     method.toString());
         }
+    }
+
+    private static InventoryView inventory(long revision) {
+        return new InventoryView() {
+            @Override
+            public EntityRef owner() {
+                return OWNER;
+            }
+
+            @Override
+            public long revision() {
+                return revision;
+            }
+
+            @Override
+            public Optional<ItemStackView> stack(BodySlot slot) {
+                return Optional.empty();
+            }
+        };
     }
 }

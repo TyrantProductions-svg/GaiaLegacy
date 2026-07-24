@@ -6,15 +6,16 @@ import com.overlord.inventory.api.InventoryChangeResult;
 import com.overlord.inventory.api.InventoryService;
 import com.overlord.inventory.api.InventoryView;
 import java.util.Objects;
+import java.util.Optional;
 
 public final class StubInventoryService
         implements InventoryService {
-    private InventoryView snapshot;
+    private Optional<InventoryView> snapshot;
     private InventoryChangeResult replacementResult;
     private InventoryChangeRequest lastRequest;
 
     public StubInventoryService(
-            InventoryView snapshot,
+            Optional<InventoryView> snapshot,
             InventoryChangeResult replacementResult) {
         this.snapshot = Objects.requireNonNull(snapshot, "snapshot");
         this.replacementResult =
@@ -23,7 +24,7 @@ public final class StubInventoryService
     }
 
     @Override
-    public InventoryView snapshot(EntityRef owner) {
+    public Optional<InventoryView> snapshot(EntityRef owner) {
         Objects.requireNonNull(owner, "owner");
         return snapshot;
     }
