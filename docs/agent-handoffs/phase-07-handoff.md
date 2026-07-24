@@ -3,8 +3,9 @@
 ## Completed work
 
 - Built Phase 7 on `feat/interaction-api-contracts` from `origin/main` at
-  `ed707ec`; the original reviewed handoff ends at `0f73604`, and the final
-  review production/test fixes are committed at `7415cf6`.
+  `ed707ec`; the original reviewed handoff ends at `0f73604`, the primary
+  final-review fixes are at `7415cf6`, and the boundary-adjacency hardening is
+  at `64f1743`.
 - Added game-neutral interaction values and contracts for entity references,
   gameplay actions and contexts, immutable `ResourceLocation` block hits,
   read-only block raycasts, and synchronous gameplay world mutation.
@@ -30,8 +31,9 @@
   The fixtures are absent from the production runtime classpath.
 - Added contract, transaction, dirty-propagation, fixture-consumption, and
   architecture tests. Value coverage includes extreme normals, non-finite hit
-  data, Optional containers, timestamps, held stacks, and resource identities.
-  The architecture guard allows direct `setBlock` patterns only in
+  data, overflow-only adjacent coordinates, Optional containers, timestamps,
+  held stacks, and resource identities. The architecture guard allows direct
+  `setBlock` patterns only in
   `WorldLoader.java` and `GaiaWorldGenerator.java`.
 - Reconciled the approved architecture document with the final public names
   and behavior and updated the current architecture baseline for Phase 7.
@@ -246,16 +248,16 @@ Final review fix-wave Windows verification on 2026-07-25:
 ```
 
 - Each focused command exited `0`. The changed engine suites contain,
-  respectively, 15, 6, 8, 6, and 6 tests; the game fixture consumer also
+  respectively, 15, 6, 9, 6, and 6 tests; the game fixture consumer also
   passed.
 - The full non-clean `test` command exited `0`: `BUILD SUCCESSFUL in 5s`;
-  `10 actionable tasks: 4 executed, 6 up-to-date`.
-- The final clean build exited `0`: `BUILD SUCCESSFUL in 8s`;
+  `10 actionable tasks: 2 executed, 8 up-to-date`.
+- The final clean build exited `0`: `BUILD SUCCESSFUL in 7s`;
   `18 actionable tasks: 18 executed`. It compiled, tested, packaged, produced
   distributions, and ran `:game:verifyPackagedResources`.
-- Engine JUnit XML: 46 suites, 399 tests, 0 failures, 0 errors, 0 skipped.
+- Engine JUnit XML: 46 suites, 400 tests, 0 failures, 0 errors, 0 skipped.
 - Game JUnit XML: 11 suites, 103 tests, 0 failures, 0 errors, 0 skipped.
-- Total JUnit XML: 57 suites, 502 tests, 0 failures, 0 errors, 0 skipped.
+- Total JUnit XML: 57 suites, 503 tests, 0 failures, 0 errors, 0 skipped.
 - The final review wave did not relaunch `.\gradlew.bat :game`; the qualified
   earlier Windows observation and unrun macOS status above remain unchanged.
 
@@ -265,6 +267,9 @@ Final review fix-wave Windows verification on 2026-07-25:
   expression and exempts exactly `WorldLoader.java` and
   `GaiaWorldGenerator.java`. It can match comments and string literals, and it
   cannot detect indirect writes through another method or abstraction.
+- `BlockHitResult` stores coordinates as `int`. An outward-facing hit at an
+  integer boundary has no representable adjacent coordinate and is rejected
+  by widened arithmetic rather than wrapped into the opposite boundary.
 - No Gaia `BlockWorldAccess` or `BlockRaycastService` adapter wiring exists,
   so the new contracts are not exercised by actual gameplay.
 - No production inventory implementation, inventory rules, gameplay,
@@ -333,7 +338,7 @@ Final review fix-wave Windows verification on 2026-07-25:
 The final Phase 7 branch diff relative to `origin/main` is:
 
 ```text
-43 files changed, 5425 insertions(+), 7 deletions(-)
+43 files changed, 5476 insertions(+), 7 deletions(-)
 ```
 
 ## Suggested commit message
@@ -354,7 +359,9 @@ Final review fix commits:
 
 ```text
 fix(api): harden interaction and inventory contracts
+fix(api): reject wrapped block hit adjacency
 docs: reconcile phase 7 final review
+docs: record block hit overflow hardening
 ```
 
 ## Suggested pull request
@@ -386,7 +393,7 @@ Description:
 
 - `.\gradlew.bat clean test build`
   - BUILD SUCCESSFUL; 18/18 actionable tasks executed
-  - 502 tests in 57 suites; 0 failures, 0 errors, 0 skipped
+  - 503 tests in 57 suites; 0 failures, 0 errors, 0 skipped
   - LWJGL selected `natives-windows`
 - `git diff --check`
 - tracked generated-file query returned no matches

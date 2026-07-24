@@ -545,9 +545,9 @@ public record BlockHitResult(
             throw new IllegalArgumentException(
                     "normal must identify one axis-aligned face");
         }
-        if (adjacentX != blockX + normalX
-                || adjacentY != blockY + normalY
-                || adjacentZ != blockZ + normalZ) {
+        if ((long) adjacentX != (long) blockX + normalX
+                || (long) adjacentY != (long) blockY + normalY
+                || (long) adjacentZ != (long) blockZ + normalZ) {
             throw new IllegalArgumentException(
                     "adjacent coordinates must follow the hit normal");
         }
@@ -2281,19 +2281,23 @@ Do not merge or push unless the user separately requests it.
 ## Final review reconciliation
 
 The user-approved final review wave was implemented on 2026-07-25. The
-production and test fixes are committed at `7415cf6`.
+primary production/test fixes are committed at `7415cf6`, with boundary
+adjacency hardening at `64f1743`.
 
 - Strict RED to GREEN evidence was captured for post-before precondition
   revalidation, the Optional inventory API/result invariants, and extreme
   integer face normals.
-- The five changed engine focused suites passed individually with 15, 6, 8,
+- A follow-up strict RED to GREEN regression proved that outward adjacency at
+  the integer coordinate boundaries can match only after `int` wrap; all
+  three adjacency comparisons now use widened arithmetic.
+- The five changed engine focused suites passed individually with 15, 6, 9,
   6, and 6 tests. The game fixture consumer also passed.
 - `.\gradlew.bat test` passed, followed by a clean
   `.\gradlew.bat clean test build` with 18 of 18 tasks executed.
-- Final clean-build XML contains 57 suites and 502 tests: engine 46/399 and
+- Final clean-build XML contains 57 suites and 503 tests: engine 46/400 and
   game 11/103, with zero failures, errors, or skipped tests.
 - The final branch diff relative to `origin/main` is 43 files changed,
-  5,425 insertions, and 7 deletions.
+  5,476 insertions, and 7 deletions.
 - The interactive game was not relaunched for the final review wave. The
   earlier Windows launch remains qualified because no Gradle exit code or
   independent visual confirmation was captured; macOS remains unrun.
