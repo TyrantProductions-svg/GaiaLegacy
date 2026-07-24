@@ -72,10 +72,6 @@ public final class ChunkRepository {
             ChunkKey key, ChunkGenerationMode mode) {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(mode, "mode");
-        if (mode != ChunkGenerationMode.INITIAL) {
-            throw new UnsupportedOperationException(
-                    "REBUILD generation is not supported yet");
-        }
 
         synchronized (generationAttempts) {
             GenerationAttempt current =
@@ -88,10 +84,32 @@ public final class ChunkRepository {
                                 + key
                                 + " already has an active generation attempt");
             }
-            if (entries.containsKey(key)) {
-                throw new IllegalStateException(
-                        "Initial generation requires an unloaded Chunk "
-                                + key);
+            long baseRevision;
+            if (mode == ChunkGenerationMode.INITIAL) {
+                if (entries.containsKey(key)) {
+                    throw new IllegalStateException(
+                            "Initial generation requires an unloaded Chunk "
+                                    + key);
+                }
+                baseRevision = 0;
+            } else {
+                Entry entry = entries.get(key);
+                if (entry == null) {
+                    throw new IllegalStateException(
+                            "Rebuild generation requires a loaded Chunk "
+                                    + key);
+                }
+                synchronized (entry) {
+                    if (entries.get(key) != entry
+                            || entry.state == ChunkState.EMPTY
+                            || entry.state == ChunkState.UNLOADING
+                            || entry.revision == 0) {
+                        throw new IllegalStateException(
+                                "Rebuild generation requires a stable loaded Chunk "
+                                        + key);
+                    }
+                    baseRevision = entry.revision;
+                }
             }
 
             ChunkGenerationTicket ticket =
@@ -99,7 +117,7 @@ public final class ChunkRepository {
                             key,
                             mode,
                             generationAttemptSequence.incrementAndGet(),
-                            0);
+                            baseRevision);
             generationAttempts.byKey.put(
                     key, new GenerationAttempt(ticket));
             return ticket;
@@ -127,43 +145,73 @@ public final class ChunkRepository {
                 Chunk.fromCanonicalBytes(
                         data.worldHeight(), data.copyBlocks());
         long committedRevision;
+        Set<ChunkKey> changedEdges = Set.of();
         synchronized (generationAttempts) {
             GenerationAttempt attempt =
                     liveAttempt(ticket);
             if (attempt == null) {
                 return conflictResult(key);
             }
-            if (ticket.mode() != ChunkGenerationMode.INITIAL
-                    || ticket.baseRevision() != 0) {
-                generationAttempts.byKey.remove(key, attempt);
-                return conflictResult(key);
+
+            if (ticket.mode() == ChunkGenerationMode.INITIAL) {
+                if (ticket.baseRevision() != 0) {
+                    generationAttempts.byKey.remove(key, attempt);
+                    return conflictResult(key);
+                }
+
+                Entry created = new Entry(detached);
+                Entry resolved =
+                        entries.compute(
+                                key,
+                                (ignored, current) -> {
+                                    if (current != null) {
+                                        return current;
+                                    }
+                                    created.revision = nextRevision();
+                                    created.state = ChunkState.GENERATED;
+                                    return created;
+                                });
+                if (resolved != created) {
+                    generationAttempts.byKey.remove(key, attempt);
+                    return conflictResult(key);
+                }
+                committedRevision = created.revision;
+            } else {
+                Entry entry = entries.get(key);
+                if (entry == null) {
+                    generationAttempts.byKey.remove(key, attempt);
+                    return conflictResult(key);
+                }
+                synchronized (entry) {
+                    if (entries.get(key) != entry
+                            || entry.state == ChunkState.UNLOADING
+                            || entry.revision
+                                    != ticket.baseRevision()) {
+                        generationAttempts.byKey.remove(key, attempt);
+                        return conflictResult(key);
+                    }
+                    changedEdges =
+                            changedHorizontalEdges(
+                                    key, entry.chunk, detached);
+                    entry.chunk = detached;
+                    entry.revision = nextRevision();
+                    entry.failure = null;
+                    entry.state = ChunkState.DIRTY;
+                    committedRevision = entry.revision;
+                }
             }
 
-            Entry created = new Entry(detached);
-            Entry resolved =
-                    entries.compute(
-                            key,
-                            (ignored, current) -> {
-                                if (current != null) {
-                                    return current;
-                                }
-                                created.revision = nextRevision();
-                                created.state = ChunkState.GENERATED;
-                                return created;
-                            });
-            if (resolved != created) {
-                generationAttempts.byKey.remove(key, attempt);
-                return conflictResult(key);
-            }
-
-            committedRevision = created.revision;
             attempt.status = ChunkGenerationStatus.COMMITTED;
             attempt.failure = null;
         }
 
-        for (ChunkKey neighbor :
-                dirtyTracker.horizontalNeighbors(key)) {
-            dirtyIfPresent(neighbor);
+        if (ticket.mode() == ChunkGenerationMode.INITIAL) {
+            for (ChunkKey neighbor :
+                    dirtyTracker.horizontalNeighbors(key)) {
+                dirtyIfPresent(neighbor);
+            }
+        } else {
+            dirtyChangedLoadedNeighbors(changedEdges);
         }
         return new ChunkGenerationResult(
                 ChunkGenerationResult.Status.COMMITTED,
@@ -675,6 +723,58 @@ public final class ChunkRepository {
         }
     }
 
+    private Set<ChunkKey> changedHorizontalEdges(
+            ChunkKey key, Chunk oldChunk, Chunk replacement) {
+        boolean northChanged = false;
+        boolean southChanged = false;
+        boolean westChanged = false;
+        boolean eastChanged = false;
+        int last = GameConfig.Chunk.SIZE - 1;
+        for (int y = 0; y < worldHeight; y++) {
+            for (int horizontal = 0;
+                    horizontal < GameConfig.Chunk.SIZE;
+                    horizontal++) {
+                northChanged |=
+                        oldChunk.getBlock(horizontal, y, 0)
+                                != replacement.getBlock(horizontal, y, 0);
+                southChanged |=
+                        oldChunk.getBlock(horizontal, y, last)
+                                != replacement.getBlock(
+                                        horizontal, y, last);
+                westChanged |=
+                        oldChunk.getBlock(0, y, horizontal)
+                                != replacement.getBlock(
+                                        0, y, horizontal);
+                eastChanged |=
+                        oldChunk.getBlock(last, y, horizontal)
+                                != replacement.getBlock(
+                                        last, y, horizontal);
+            }
+        }
+
+        Set<ChunkKey> changed = new HashSet<>();
+        if (northChanged) {
+            changed.add(key.north());
+        }
+        if (southChanged) {
+            changed.add(key.south());
+        }
+        if (westChanged) {
+            changed.add(key.west());
+        }
+        if (eastChanged) {
+            changed.add(key.east());
+        }
+        return Set.copyOf(changed);
+    }
+
+    private void dirtyChangedLoadedNeighbors(
+            Set<ChunkKey> changedEdges) {
+        for (ChunkKey neighbor : changedEdges) {
+            dirtyIfPresent(neighbor);
+        }
+    }
+
     private static void transition(
             Entry entry,
             ChunkKey key,
@@ -798,7 +898,7 @@ public final class ChunkRepository {
     }
 
     private static final class Entry {
-        private final Chunk chunk;
+        private Chunk chunk;
         private ChunkState state = ChunkState.EMPTY;
         private long revision;
         private Throwable failure;

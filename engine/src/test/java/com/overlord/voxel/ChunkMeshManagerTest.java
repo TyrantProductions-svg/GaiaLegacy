@@ -72,6 +72,41 @@ class ChunkMeshManagerTest {
     }
 
     @Test
+    void claimedOldRevisionCompletingAfterRebuildIsRejectedBeforeUpload() {
+        ChunkRepository repository = generatedRepository();
+        ManualExecutor executor = new ManualExecutor();
+        FakeRenderBackend backend = new FakeRenderBackend();
+        ChunkMeshManager manager =
+                new ChunkMeshManager(
+                        repository,
+                        ChunkMeshManagerTest::meshFor,
+                        executor,
+                        backend,
+                        MainThreadGuard.captureCurrentThread(),
+                        2);
+        assertEquals(1, manager.scheduleEligible());
+        long claimedRevision = repository.revision(KEY);
+        ChunkGenerationTicket ticket =
+                repository.beginGeneration(
+                        KEY, ChunkGenerationMode.REBUILD);
+
+        ChunkGenerationResult rebuild =
+                repository.commitGeneration(
+                        ticket, filledGenerationData(KEY, (byte) 2));
+        executor.runAll();
+
+        assertEquals(
+                ChunkGenerationResult.Status.COMMITTED,
+                rebuild.status());
+        assertTrue(rebuild.revision() > claimedRevision);
+        assertEquals(1, manager.drainCompletedCpuWork());
+        assertEquals(0, manager.processMainThreadWork());
+        assertEquals(0, backend.uploadCalls);
+        assertEquals(ChunkState.DIRTY, repository.state(KEY));
+        assertEquals(1, manager.scheduleEligible());
+    }
+
+    @Test
     void workerBuildsFromSnapshotCapturedWhenTaskWasClaimed() {
         ChunkRepository repository = generatedRepository();
         ManualExecutor executor = new ManualExecutor();
@@ -1145,6 +1180,18 @@ class ChunkMeshManagerTest {
         repository.generate(
                 KEY, chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
         return repository;
+    }
+
+    private static ChunkGenerationData filledGenerationData(
+            ChunkKey key, byte blockId) {
+        int worldHeight = GameConfig.Chunk.MAX_HEIGHT;
+        byte[] blocks =
+                new byte[
+                        GameConfig.Chunk.SIZE
+                                * worldHeight
+                                * GameConfig.Chunk.SIZE];
+        java.util.Arrays.fill(blocks, blockId);
+        return new ChunkGenerationData(key, worldHeight, blocks);
     }
 
     private static ChunkMeshData meshFor(ChunkMeshInput input) {

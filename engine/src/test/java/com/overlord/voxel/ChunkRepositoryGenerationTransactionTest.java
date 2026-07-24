@@ -10,6 +10,7 @@ import com.overlord.config.GameConfig;
 import java.lang.reflect.Field;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -18,6 +19,11 @@ import org.junit.jupiter.api.Test;
 
 class ChunkRepositoryGenerationTransactionTest {
     private static final int WORLD_HEIGHT = 32;
+    private static final ChunkKey KEY = new ChunkKey(0, 0);
+    private static final ChunkKey NORTH = KEY.north();
+    private static final ChunkKey SOUTH = KEY.south();
+    private static final ChunkKey WEST = KEY.west();
+    private static final ChunkKey EAST = KEY.east();
 
     @Test
     void generationQueriesAreInitiallyIdleAndNonAllocating() {
@@ -501,6 +507,277 @@ class ChunkRepositoryGenerationTransactionTest {
     }
 
     @Test
+    void rebuildTicketCapturesStableRevisionWithoutChangingLifecycle() {
+        ChunkRepository repository = renderableRepository(KEY);
+        long revision = repository.revision(KEY);
+
+        ChunkGenerationTicket ticket =
+                repository.beginGeneration(
+                        KEY, ChunkGenerationMode.REBUILD);
+
+        assertEquals(KEY, ticket.key());
+        assertEquals(ChunkGenerationMode.REBUILD, ticket.mode());
+        assertEquals(revision, ticket.baseRevision());
+        assertEquals(ChunkState.RENDERABLE, repository.state(KEY));
+        assertEquals(
+                ChunkGenerationStatus.GENERATING,
+                repository.generationStatus(KEY));
+    }
+
+    @Test
+    void rebuildFailurePreservesCommittedChunkAndLifecycle() {
+        ChunkRepository repository = renderableRepository(KEY);
+        long revision = repository.revision(KEY);
+        byte oldBlock = repository.getBlock(1, 4, 1);
+        ChunkGenerationTicket ticket =
+                repository.beginGeneration(
+                        KEY, ChunkGenerationMode.REBUILD);
+        IllegalStateException failure =
+                new IllegalStateException("provider failure");
+
+        ChunkGenerationResult result =
+                repository.failGeneration(ticket, failure);
+
+        assertEquals(ChunkGenerationResult.Status.FAILED, result.status());
+        assertSame(failure, result.failure().orElseThrow());
+        assertEquals(revision, repository.revision(KEY));
+        assertEquals(oldBlock, repository.getBlock(1, 4, 1));
+        assertEquals(ChunkState.RENDERABLE, repository.state(KEY));
+        assertEquals(
+                ChunkGenerationStatus.FAILED,
+                repository.generationStatus(KEY));
+        assertSame(
+                failure,
+                repository.generationFailure(KEY).orElseThrow());
+    }
+
+    @Test
+    void rebuildRejectsChangedBaseRevision() {
+        ChunkRepository repository = generatedRepository(KEY, EAST);
+        ChunkGenerationTicket ticket =
+                repository.beginGeneration(
+                        KEY, ChunkGenerationMode.REBUILD);
+        assertTrue(repository.setBlock(1, 4, 1, (byte) 7));
+        long changedRevision = repository.revision(KEY);
+
+        ChunkGenerationResult result =
+                repository.commitGeneration(
+                        ticket, filled(KEY, (byte) 3));
+
+        assertEquals(
+                ChunkGenerationResult.Status.CONFLICT,
+                result.status());
+        assertEquals(changedRevision, repository.revision(KEY));
+        assertEquals(7, repository.getBlock(1, 4, 1));
+        assertEquals(ChunkState.DIRTY, repository.state(KEY));
+        assertEquals(
+                ChunkGenerationStatus.IDLE,
+                repository.generationStatus(KEY));
+    }
+
+    @Test
+    void changedEastEdgeDirtiesOnlyTargetAndLoadedEastNeighbor() {
+        ChunkRepository repository =
+                generatedRepository(KEY, EAST, NORTH);
+        long eastRevision = repository.revision(EAST);
+        long northRevision = repository.revision(NORTH);
+        ChunkGenerationTicket ticket =
+                repository.beginGeneration(
+                        KEY, ChunkGenerationMode.REBUILD);
+
+        ChunkGenerationResult result =
+                repository.commitGeneration(
+                        ticket, withEastEdgeChanged(KEY));
+
+        assertEquals(
+                ChunkGenerationResult.Status.COMMITTED,
+                result.status());
+        assertEquals(ChunkState.DIRTY, repository.state(KEY));
+        assertDirtiedAfter(repository, EAST, eastRevision);
+        assertEquals(northRevision, repository.revision(NORTH));
+    }
+
+    @Test
+    void unchangedHorizontalEdgesDoNotDirtyLoadedNeighbors() {
+        ChunkRepository repository =
+                generatedRepository(KEY, NORTH, SOUTH, WEST, EAST);
+        Map<ChunkKey, Long> neighborRevisions =
+                Map.of(
+                        NORTH, repository.revision(NORTH),
+                        SOUTH, repository.revision(SOUTH),
+                        WEST, repository.revision(WEST),
+                        EAST, repository.revision(EAST));
+        long targetRevision = repository.revision(KEY);
+        ChunkGenerationTicket ticket =
+                repository.beginGeneration(
+                        KEY, ChunkGenerationMode.REBUILD);
+
+        ChunkGenerationResult result =
+                repository.commitGeneration(
+                        ticket, withInteriorChanged(KEY));
+
+        assertEquals(
+                ChunkGenerationResult.Status.COMMITTED,
+                result.status());
+        assertTrue(result.revision() > targetRevision);
+        assertEquals(ChunkState.DIRTY, repository.state(KEY));
+        for (Map.Entry<ChunkKey, Long> neighbor :
+                neighborRevisions.entrySet()) {
+            assertEquals(
+                    neighbor.getValue(),
+                    repository.revision(neighbor.getKey()));
+        }
+    }
+
+    @Test
+    void allChangedHorizontalEdgesDirtyAllLoadedNeighbors() {
+        ChunkRepository repository =
+                generatedRepository(KEY, NORTH, SOUTH, WEST, EAST);
+        Map<ChunkKey, Long> neighborRevisions =
+                Map.of(
+                        NORTH, repository.revision(NORTH),
+                        SOUTH, repository.revision(SOUTH),
+                        WEST, repository.revision(WEST),
+                        EAST, repository.revision(EAST));
+        ChunkGenerationTicket ticket =
+                repository.beginGeneration(
+                        KEY, ChunkGenerationMode.REBUILD);
+
+        ChunkGenerationResult result =
+                repository.commitGeneration(
+                        ticket, withAllEdgesChanged(KEY));
+
+        assertEquals(
+                ChunkGenerationResult.Status.COMMITTED,
+                result.status());
+        for (Map.Entry<ChunkKey, Long> neighbor :
+                neighborRevisions.entrySet()) {
+            assertDirtiedAfter(
+                    repository,
+                    neighbor.getKey(),
+                    neighbor.getValue());
+        }
+    }
+
+    @Test
+    void changedEdgesDoNotAllocateMissingNeighbors() {
+        ChunkRepository repository = generatedRepository(KEY);
+        ChunkGenerationTicket ticket =
+                repository.beginGeneration(
+                        KEY, ChunkGenerationMode.REBUILD);
+
+        ChunkGenerationResult result =
+                repository.commitGeneration(
+                        ticket, withAllEdgesChanged(KEY));
+
+        assertEquals(
+                ChunkGenerationResult.Status.COMMITTED,
+                result.status());
+        assertEquals(Set.of(KEY), repository.keys());
+    }
+
+    @Test
+    void rebuildBeginRejectsUnloadingChunk() {
+        ChunkRepository repository = generatedRepository(KEY);
+        assertTrue(repository.beginUnload(KEY));
+        long unloadingRevision = repository.revision(KEY);
+
+        assertThrows(
+                IllegalStateException.class,
+                () ->
+                        repository.beginGeneration(
+                                KEY, ChunkGenerationMode.REBUILD));
+
+        assertEquals(ChunkState.UNLOADING, repository.state(KEY));
+        assertEquals(unloadingRevision, repository.revision(KEY));
+    }
+
+    @Test
+    void pendingRebuildConflictsWhenUnloadBegins() {
+        ChunkRepository repository = generatedRepository(KEY);
+        byte oldBlock = repository.getBlock(1, 4, 1);
+        ChunkGenerationTicket ticket =
+                repository.beginGeneration(
+                        KEY, ChunkGenerationMode.REBUILD);
+        assertTrue(repository.beginUnload(KEY));
+        long unloadingRevision = repository.revision(KEY);
+
+        ChunkGenerationResult result =
+                repository.commitGeneration(
+                        ticket, filled(KEY, (byte) 3));
+
+        assertEquals(
+                ChunkGenerationResult.Status.CONFLICT,
+                result.status());
+        assertEquals(ChunkState.UNLOADING, repository.state(KEY));
+        assertEquals(unloadingRevision, repository.revision(KEY));
+        assertEquals(oldBlock, repository.getBlock(1, 4, 1));
+        assertTrue(repository.completeUnload(KEY));
+        assertEquals(
+                ChunkGenerationStatus.IDLE,
+                repository.generationStatus(KEY));
+    }
+
+    @Test
+    void rebuildDuplicateTerminalCallsPreserveFirstOutcome() {
+        ChunkRepository repository = generatedRepository(KEY);
+        ChunkGenerationTicket committedTicket =
+                repository.beginGeneration(
+                        KEY, ChunkGenerationMode.REBUILD);
+        ChunkGenerationResult committed =
+                repository.commitGeneration(
+                        committedTicket, filled(KEY, (byte) 3));
+        long committedRevision = repository.revision(KEY);
+
+        assertEquals(
+                ChunkGenerationResult.Status.CONFLICT,
+                repository
+                        .commitGeneration(
+                                committedTicket,
+                                filled(KEY, (byte) 4))
+                        .status());
+        assertEquals(
+                ChunkGenerationResult.Status.CONFLICT,
+                repository
+                        .failGeneration(
+                                committedTicket,
+                                new IllegalStateException("late failure"))
+                        .status());
+        assertEquals(committed.revision(), committedRevision);
+        assertEquals(3, repository.getBlock(1, 4, 1));
+        assertEquals(
+                ChunkGenerationStatus.COMMITTED,
+                repository.generationStatus(KEY));
+
+        ChunkGenerationTicket failedTicket =
+                repository.beginGeneration(
+                        KEY, ChunkGenerationMode.REBUILD);
+        IllegalStateException firstFailure =
+                new IllegalStateException("first failure");
+        repository.failGeneration(failedTicket, firstFailure);
+
+        assertEquals(
+                ChunkGenerationResult.Status.CONFLICT,
+                repository
+                        .failGeneration(
+                                failedTicket,
+                                new IllegalStateException("second failure"))
+                        .status());
+        assertEquals(
+                ChunkGenerationResult.Status.CONFLICT,
+                repository
+                        .commitGeneration(
+                                failedTicket,
+                                filled(KEY, (byte) 5))
+                        .status());
+        assertEquals(committedRevision, repository.revision(KEY));
+        assertEquals(3, repository.getBlock(1, 4, 1));
+        assertSame(
+                firstFailure,
+                repository.generationFailure(KEY).orElseThrow());
+    }
+
+    @Test
     void oldUnloadCleanupCannotClearNewIncarnationMetadata()
             throws InterruptedException {
         ChunkRepository repository = repository();
@@ -650,6 +927,26 @@ class ChunkRepositoryGenerationTransactionTest {
                 WORLD_HEIGHT, new ChunkDirtyTracker());
     }
 
+    private static ChunkRepository generatedRepository(
+            ChunkKey... keys) {
+        ChunkRepository repository = repository();
+        for (ChunkKey key : keys) {
+            commitInitial(
+                    repository, key, filled(key, (byte) 1));
+        }
+        return repository;
+    }
+
+    private static ChunkRepository renderableRepository(ChunkKey key) {
+        ChunkRepository repository = generatedRepository(key);
+        ChunkMeshInput input =
+                repository.claimMeshing(key).orElseThrow();
+        long revision = input.center().revision();
+        assertTrue(repository.markReadyForUpload(key, revision));
+        assertTrue(repository.markRenderable(key, revision));
+        return repository;
+    }
+
     private static void commitInitial(
             ChunkRepository repository,
             ChunkKey key,
@@ -677,6 +974,48 @@ class ChunkRepositoryGenerationTransactionTest {
             ChunkKey key, byte blockId) {
         byte[] blocks = blocks();
         java.util.Arrays.fill(blocks, blockId);
+        return new ChunkGenerationData(key, WORLD_HEIGHT, blocks);
+    }
+
+    private static ChunkGenerationData withInteriorChanged(
+            ChunkKey key) {
+        byte[] blocks = blocks();
+        java.util.Arrays.fill(blocks, (byte) 1);
+        blocks[canonicalIndex(1, 4, 1)] = 2;
+        return new ChunkGenerationData(key, WORLD_HEIGHT, blocks);
+    }
+
+    private static ChunkGenerationData withEastEdgeChanged(
+            ChunkKey key) {
+        byte[] blocks = blocks();
+        java.util.Arrays.fill(blocks, (byte) 1);
+        blocks[
+                        canonicalIndex(
+                                GameConfig.Chunk.SIZE - 1,
+                                4,
+                                1)] =
+                2;
+        return new ChunkGenerationData(key, WORLD_HEIGHT, blocks);
+    }
+
+    private static ChunkGenerationData withAllEdgesChanged(
+            ChunkKey key) {
+        byte[] blocks = blocks();
+        java.util.Arrays.fill(blocks, (byte) 1);
+        blocks[canonicalIndex(0, 1, 1)] = 2;
+        blocks[
+                        canonicalIndex(
+                                GameConfig.Chunk.SIZE - 1,
+                                2,
+                                2)] =
+                2;
+        blocks[canonicalIndex(3, 3, 0)] = 2;
+        blocks[
+                        canonicalIndex(
+                                4,
+                                4,
+                                GameConfig.Chunk.SIZE - 1)] =
+                2;
         return new ChunkGenerationData(key, WORLD_HEIGHT, blocks);
     }
 
