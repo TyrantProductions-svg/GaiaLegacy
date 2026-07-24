@@ -2,6 +2,11 @@ package com.overlord.voxel;
 
 import com.overlord.core.thread.MainThreadGuard;
 import com.overlord.renderer.ChunkRenderBackend;
+import com.overlord.renderer.ChunkRenderObject;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Queue;
@@ -24,6 +29,14 @@ public final class ChunkMeshManager implements AutoCloseable {
             new ConcurrentLinkedQueue<>();
     private final Queue<Throwable> reportedFailures =
             new ConcurrentLinkedQueue<>();
+    private final Queue<ChunkKey> pendingUnloads =
+            new ConcurrentLinkedQueue<>();
+    private final Map<ChunkKey, ChunkMeshData> failedUploads =
+            new HashMap<>();
+    private final Map<ChunkKey, ChunkRenderObject> installedRenderObjects =
+            new HashMap<>();
+    private final Object lifecycleLock = new Object();
+    private volatile boolean closed;
 
     public ChunkMeshManager(
             ChunkRepository repository,
@@ -50,6 +63,9 @@ public final class ChunkMeshManager implements AutoCloseable {
 
     public int scheduleEligible() {
         mainThreadGuard.assertMainThread("schedule chunk meshing");
+        if (closed) {
+            return 0;
+        }
         int scheduled = 0;
         for (ChunkKey key : repository.meshingCandidates()) {
             Optional<ChunkMeshInput> claimed =
@@ -75,6 +91,9 @@ public final class ChunkMeshManager implements AutoCloseable {
 
     public int drainCompletedCpuWork() {
         mainThreadGuard.assertMainThread("drain completed chunk meshes");
+        if (closed) {
+            return 0;
+        }
         int drained = 0;
         MeshingCompletion completion;
         while ((completion = completed.poll()) != null) {
@@ -103,6 +122,59 @@ public final class ChunkMeshManager implements AutoCloseable {
         return Optional.ofNullable(reportedFailures.poll());
     }
 
+    public int processMainThreadWork() {
+        mainThreadGuard.assertMainThread("chunk mesh upload");
+        if (closed) {
+            return 0;
+        }
+        drainUnloads();
+        drainCompletedCpuWork();
+
+        int processed = 0;
+        ChunkMeshData data;
+        while (!closed
+                && processed < maxUploadsPerFrame
+                && (data = awaitingUpload.poll()) != null) {
+            processed++;
+            if (data.isEmpty()) {
+                installEmptyMesh(data);
+            } else {
+                uploadReplacement(data);
+            }
+        }
+        return processed;
+    }
+
+    public Collection<ChunkRenderObject> renderObjects() {
+        mainThreadGuard.assertMainThread("read chunk render objects");
+        return List.copyOf(installedRenderObjects.values());
+    }
+
+    public void retry(ChunkKey key) {
+        mainThreadGuard.assertMainThread("retry chunk mesh");
+        Objects.requireNonNull(key, "key");
+        if (closed) {
+            return;
+        }
+
+        ChunkMeshData failedUpload = failedUploads.remove(key);
+        if (failedUpload != null
+                && repository.state(key) == ChunkState.READY_FOR_UPLOAD
+                && repository.revision(key) == failedUpload.revision()) {
+            awaitingUpload.add(failedUpload);
+            return;
+        }
+        repository.retry(key);
+    }
+
+    public void unload(ChunkKey key) {
+        mainThreadGuard.assertMainThread("unload chunk mesh");
+        Objects.requireNonNull(key, "key");
+        if (!closed && repository.beginUnload(key)) {
+            pendingUnloads.add(key);
+        }
+    }
+
     public boolean allRenderable(Set<ChunkKey> keys) {
         mainThreadGuard.assertMainThread("check renderable chunks");
         Objects.requireNonNull(keys, "keys");
@@ -112,6 +184,39 @@ public final class ChunkMeshManager implements AutoCloseable {
     @Override
     public void close() {
         mainThreadGuard.assertMainThread("close chunk mesh manager");
+        synchronized (lifecycleLock) {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            completed.clear();
+            failed.clear();
+        }
+
+        awaitingUpload.clear();
+        failedUploads.clear();
+        reportedFailures.clear();
+
+        Throwable firstFailure = null;
+        ChunkKey unloading;
+        while ((unloading = pendingUnloads.poll()) != null) {
+            ChunkRenderObject object =
+                    installedRenderObjects.remove(unloading);
+            if (object != null) {
+                firstFailure =
+                        releaseForClose(object, firstFailure);
+            }
+            repository.completeUnload(unloading);
+        }
+        for (ChunkRenderObject object :
+                installedRenderObjects.values()) {
+            firstFailure = releaseForClose(object, firstFailure);
+        }
+        installedRenderObjects.clear();
+
+        if (firstFailure != null) {
+            rethrow(firstFailure);
+        }
     }
 
     private void buildMesh(ChunkMeshInput input) {
@@ -130,16 +235,136 @@ public final class ChunkMeshManager implements AutoCloseable {
                                 + " revision "
                                 + claimedRevision);
             }
-            completed.add(
-                    new MeshingCompletion(
-                            claimedKey, claimedRevision, data));
+            synchronized (lifecycleLock) {
+                if (!closed) {
+                    completed.add(
+                            new MeshingCompletion(
+                                    claimedKey,
+                                    claimedRevision,
+                                    data));
+                }
+            }
         } catch (RuntimeException | Error failure) {
-            failed.add(
-                    new MeshingFailure(
-                            input.center().key(),
-                            input.center().revision(),
-                            failure));
+            synchronized (lifecycleLock) {
+                if (!closed) {
+                    failed.add(
+                            new MeshingFailure(
+                                    input.center().key(),
+                                    input.center().revision(),
+                                    failure));
+                }
+            }
         }
+    }
+
+    private void drainUnloads() {
+        ChunkKey key;
+        while ((key = pendingUnloads.poll()) != null) {
+            ChunkKey unloadingKey = key;
+            awaitingUpload.removeIf(
+                    data -> data.key().equals(unloadingKey));
+            failedUploads.remove(unloadingKey);
+            ChunkRenderObject object =
+                    installedRenderObjects.remove(unloadingKey);
+            try {
+                if (object != null) {
+                    releaseAndReport(object);
+                }
+            } finally {
+                repository.completeUnload(unloadingKey);
+            }
+        }
+    }
+
+    private void installEmptyMesh(ChunkMeshData data) {
+        if (!repository.markRenderable(
+                data.key(), data.revision())) {
+            return;
+        }
+        failedUploads.remove(data.key(), data);
+        ChunkRenderObject previous =
+                installedRenderObjects.remove(data.key());
+        if (previous != null) {
+            releaseAndReport(previous);
+        }
+    }
+
+    private void uploadReplacement(ChunkMeshData data) {
+        ChunkRenderObject replacement;
+        try {
+            replacement =
+                    Objects.requireNonNull(
+                            renderBackend.upload(data),
+                            "render backend upload result");
+        } catch (RuntimeException | Error failure) {
+            if (!closed) {
+                failedUploads.put(data.key(), data);
+                reportedFailures.add(failure);
+            }
+            return;
+        }
+
+        if (closed) {
+            renderBackend.release(replacement);
+            return;
+        }
+
+        boolean accepted;
+        try {
+            accepted =
+                    repository.markRenderable(
+                            data.key(), data.revision());
+        } catch (RuntimeException | Error failure) {
+            try {
+                renderBackend.release(replacement);
+            } catch (RuntimeException | Error cleanupFailure) {
+                failure.addSuppressed(cleanupFailure);
+            }
+            throw failure;
+        }
+        if (!accepted) {
+            releaseAndReport(replacement);
+            return;
+        }
+
+        failedUploads.remove(data.key(), data);
+        ChunkRenderObject previous =
+                installedRenderObjects.put(data.key(), replacement);
+        if (previous != null) {
+            releaseAndReport(previous);
+        }
+    }
+
+    private void releaseAndReport(ChunkRenderObject object) {
+        try {
+            renderBackend.release(object);
+        } catch (RuntimeException | Error failure) {
+            if (closed) {
+                rethrow(failure);
+            } else {
+                reportedFailures.add(failure);
+            }
+        }
+    }
+
+    private Throwable releaseForClose(
+            ChunkRenderObject object, Throwable firstFailure) {
+        try {
+            renderBackend.release(object);
+        } catch (RuntimeException | Error failure) {
+            if (firstFailure == null) {
+                return failure;
+            }
+            firstFailure.addSuppressed(failure);
+        }
+        return firstFailure;
+    }
+
+    private static void rethrow(Throwable failure) {
+        if (failure instanceof RuntimeException runtimeException) {
+            throw runtimeException;
+        }
+        throw (Error) failure;
     }
 
     private record MeshingCompletion(

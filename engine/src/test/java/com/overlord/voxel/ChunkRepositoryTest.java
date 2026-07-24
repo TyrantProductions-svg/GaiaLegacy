@@ -720,6 +720,141 @@ class ChunkRepositoryTest {
     }
 
     @Test
+    void onlyCurrentReadyRevisionCanBecomeRenderable() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey key = new ChunkKey(0, 0);
+        repository.generate(key, chunk -> {});
+        long revision =
+                repository.claimMeshing(key).orElseThrow().center().revision();
+        assertTrue(repository.markReadyForUpload(key, revision));
+
+        assertTrue(repository.markRenderable(key, revision));
+        assertEquals(ChunkState.RENDERABLE, repository.state(key));
+        assertFalse(repository.markRenderable(key, revision));
+    }
+
+    @Test
+    void staleReadyRevisionCannotBecomeRenderable() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey key = new ChunkKey(0, 0);
+        repository.generate(key, chunk -> {});
+        long revision =
+                repository.claimMeshing(key).orElseThrow().center().revision();
+        assertTrue(repository.markReadyForUpload(key, revision));
+        repository.setBlock(1, 1, 1, (byte) 1);
+
+        assertFalse(repository.markRenderable(key, revision));
+        assertEquals(ChunkState.DIRTY, repository.state(key));
+    }
+
+    @Test
+    void beginUnloadInvalidatesWorkAndDirtiesCardinalNeighborsOnce() {
+        ChunkKey center = new ChunkKey(0, 0);
+        Set<ChunkKey> neighbors =
+                Set.of(
+                        center.north(),
+                        center.south(),
+                        center.west(),
+                        center.east());
+        ChunkRepository repository =
+                generatedChunks(
+                        center,
+                        center.north(),
+                        center.south(),
+                        center.west(),
+                        center.east());
+        long centerRevision = repository.revision(center);
+        long claimedRevision =
+                repository
+                        .claimMeshing(center)
+                        .orElseThrow()
+                        .center()
+                        .revision();
+        var neighborRevisions =
+                neighbors.stream()
+                        .collect(
+                                java.util.stream.Collectors.toMap(
+                                        key -> key,
+                                        repository::revision));
+
+        assertTrue(repository.beginUnload(center));
+        assertFalse(repository.beginUnload(center));
+
+        assertEquals(ChunkState.UNLOADING, repository.state(center));
+        assertEquals(centerRevision, repository.revision(center));
+        assertFalse(
+                repository.markReadyForUpload(
+                        center, claimedRevision));
+        for (ChunkKey neighbor : neighbors) {
+            assertEquals(
+                    neighborRevisions.get(neighbor) + 1,
+                    repository.revision(neighbor));
+            assertEquals(ChunkState.DIRTY, repository.state(neighbor));
+        }
+    }
+
+    @Test
+    void completeUnloadOnlyRemovesEntryAfterBeginUnload() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey key = new ChunkKey(0, 0);
+        repository.generate(key, chunk -> {});
+
+        assertFalse(repository.completeUnload(key));
+        assertTrue(repository.contains(key));
+        assertTrue(repository.beginUnload(key));
+        assertTrue(repository.completeUnload(key));
+        assertFalse(repository.contains(key));
+        assertFalse(repository.completeUnload(key));
+    }
+
+    @Test
+    void regeneratedEntryUsesRevisionNewerThanUnloadedIncarnation() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey key = new ChunkKey(0, 0);
+        repository.generate(key, chunk -> {});
+        long unloadedRevision = repository.revision(key);
+        assertTrue(repository.beginUnload(key));
+        assertTrue(repository.completeUnload(key));
+
+        repository.generate(key, chunk -> {});
+
+        assertTrue(repository.revision(key) > unloadedRevision);
+    }
+
+    @Test
+    void unloadingEntryRejectsFurtherBlockMutation() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey key = new ChunkKey(0, 0);
+        repository.generate(
+                key, chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
+        assertTrue(repository.beginUnload(key));
+
+        assertFalse(repository.setBlock(1, 1, 1, (byte) 2));
+        assertEquals(ChunkState.UNLOADING, repository.state(key));
+        assertEquals(1, Byte.toUnsignedInt(repository.getBlock(1, 1, 1)));
+    }
+
+    @Test
+    void claimAfterBeginUnloadCapturesUnloadingNeighborAsEmpty() {
+        ChunkKey center = new ChunkKey(0, 0);
+        ChunkKey east = center.east();
+        ChunkRepository repository = new ChunkRepository();
+        repository.generate(
+                center, chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
+        repository.generate(
+                east, chunk -> chunk.setBlock(0, 1, 1, (byte) 2));
+
+        assertTrue(repository.beginUnload(east));
+        ChunkMeshInput input =
+                repository.claimMeshing(center).orElseThrow();
+
+        assertEquals(0L, input.east().revision());
+        assertEquals(
+                0,
+                Byte.toUnsignedInt(input.east().getBlock(0, 1, 1)));
+    }
+
+    @Test
     void failedClaimRequiresExplicitRetryBeforeItCanBeClaimedAgain() {
         ChunkRepository repository = new ChunkRepository();
         ChunkKey key = new ChunkKey(0, 0);

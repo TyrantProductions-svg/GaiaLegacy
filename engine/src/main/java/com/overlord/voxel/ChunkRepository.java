@@ -13,6 +13,8 @@ public final class ChunkRepository {
     private final ChunkDirtyTracker dirtyTracker;
     private final ConcurrentHashMap<ChunkKey, Entry> entries =
             new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<ChunkKey, Long> unloadedRevisions =
+            new ConcurrentHashMap<>();
 
     public ChunkRepository() {
         this(GameConfig.Chunk.MAX_HEIGHT, new ChunkDirtyTracker());
@@ -80,7 +82,7 @@ public final class ChunkRepository {
         Objects.requireNonNull(generator, "generator");
         Entry entry =
                 entries.computeIfAbsent(
-                        key, ignored -> new Entry(worldHeight));
+                        key, this::newEntry);
         synchronized (entry) {
             transition(
                     entry,
@@ -119,12 +121,15 @@ public final class ChunkRepository {
                 }
                 entry =
                         entries.computeIfAbsent(
-                                key, ignored -> new Entry(worldHeight));
+                                key, this::newEntry);
             }
 
             synchronized (entry) {
                 if (entries.get(key) != entry) {
                     continue;
+                }
+                if (entry.state == ChunkState.UNLOADING) {
+                    return false;
                 }
                 if (entry.chunk.getBlock(localX, y, localZ) == blockId) {
                     return false;
@@ -147,7 +152,7 @@ public final class ChunkRepository {
     Chunk mutableChunkForCompatibility(ChunkKey key) {
         return entries.computeIfAbsent(
                         Objects.requireNonNull(key, "key"),
-                        ignored -> new Entry(worldHeight))
+                        this::newEntry)
                 .chunk;
     }
 
@@ -157,6 +162,10 @@ public final class ChunkRepository {
             return Optional.empty();
         }
         synchronized (entry) {
+            if (entries.get(key) != entry
+                    || entry.state == ChunkState.UNLOADING) {
+                return Optional.empty();
+            }
             byte[] blocks =
                     new byte[
                             Math.multiplyExact(
@@ -282,6 +291,61 @@ public final class ChunkRepository {
         }
     }
 
+    public boolean markRenderable(ChunkKey key, long revision) {
+        Objects.requireNonNull(key, "key");
+        Entry entry = entries.get(key);
+        if (entry == null) {
+            return false;
+        }
+        synchronized (entry) {
+            if (entries.get(key) != entry
+                    || entry.state != ChunkState.READY_FOR_UPLOAD
+                    || entry.revision != revision) {
+                return false;
+            }
+            entry.failure = null;
+            entry.state = ChunkState.RENDERABLE;
+            return true;
+        }
+    }
+
+    public boolean beginUnload(ChunkKey key) {
+        Objects.requireNonNull(key, "key");
+        Entry entry = entries.get(key);
+        if (entry == null) {
+            return false;
+        }
+        synchronized (entry) {
+            if (entries.get(key) != entry
+                    || entry.state == ChunkState.UNLOADING) {
+                return false;
+            }
+            entry.failure = null;
+            entry.state = ChunkState.UNLOADING;
+        }
+        for (ChunkKey neighbor : dirtyTracker.horizontalNeighbors(key)) {
+            dirtyIfPresent(neighbor);
+        }
+        return true;
+    }
+
+    public boolean completeUnload(ChunkKey key) {
+        Objects.requireNonNull(key, "key");
+        Entry entry = entries.get(key);
+        if (entry == null) {
+            return false;
+        }
+        synchronized (entry) {
+            if (entries.get(key) != entry
+                    || entry.state != ChunkState.UNLOADING) {
+                return false;
+            }
+            unloadedRevisions.merge(
+                    key, entry.revision, Math::max);
+            return entries.remove(key, entry);
+        }
+    }
+
     public void markMeshingFailure(
             ChunkKey key, long revision, Throwable failure) {
         markMeshingFailureIfCurrent(key, revision, failure);
@@ -369,14 +433,21 @@ public final class ChunkRepository {
         entry.state = requested;
     }
 
+    private Entry newEntry(ChunkKey key) {
+        return new Entry(
+                worldHeight,
+                unloadedRevisions.getOrDefault(key, 0L));
+    }
+
     private static final class Entry {
         private final Chunk chunk;
         private ChunkState state = ChunkState.EMPTY;
         private long revision;
         private Throwable failure;
 
-        private Entry(int worldHeight) {
+        private Entry(int worldHeight, long revision) {
             chunk = new Chunk(worldHeight);
+            this.revision = revision;
         }
     }
 }
