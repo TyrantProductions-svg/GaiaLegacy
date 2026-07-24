@@ -9,13 +9,17 @@ import java.io.IOException;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 class InteractionArchitectureTest {
     private static final Path ENGINE_MAIN = Path.of("src/main/java");
     private static final Path GAME_MAIN = Path.of("../game/src/main/java");
+    private static final Pattern DIRECT_SET_BLOCK_CALL =
+            Pattern.compile("\\.\\s*setBlock\\s*\\(");
 
     @Test
     void engineContractsDoNotDependOnGameGraphicsOrGlfw() throws IOException {
@@ -59,8 +63,7 @@ class InteractionArchitectureTest {
                             .filter(
                                     source -> {
                                         String text = read(source);
-                                        return text.contains("com.overlord.voxel.World")
-                                                && text.contains(".setBlock(");
+                                        return DIRECT_SET_BLOCK_CALL.matcher(text).find();
                                     })
                             .toList();
         }
@@ -70,26 +73,37 @@ class InteractionArchitectureTest {
     }
 
     @Test
+    void directWorldWritePatternRecognizesSetBlockCalls() {
+        assertTrue(DIRECT_SET_BLOCK_CALL.matcher("world.setBlock(x, y, z)").find());
+        assertTrue(DIRECT_SET_BLOCK_CALL.matcher("world.setBlock (x, y, z)").find());
+        assertFalse(DIRECT_SET_BLOCK_CALL.matcher("setBlock is forbidden").find());
+    }
+
+    @Test
     void standardMutationServiceDoesNotUseQueuedEventBus() throws IOException {
         String source =
                 Files.readString(
                         ENGINE_MAIN.resolve(
                                 "com/overlord/interaction/DefaultWorldMutationService.java"));
-        assertFalse(source.contains("EventBus"));
-        assertFalse(source.contains("ServiceLocator"));
+        assertFalse(
+                source.contains("EventBus"),
+                "DefaultWorldMutationService must not queue completion through EventBus");
+        assertFalse(
+                source.contains("ServiceLocator"),
+                "DefaultWorldMutationService must use explicit dependencies");
     }
 
     private static Stream<Path> javaSources(Path... roots) throws IOException {
-        Stream<Path> combined = Stream.empty();
+        List<Path> sources = new ArrayList<>();
         for (Path root : roots) {
-            combined =
-                    Stream.concat(
-                            combined,
-                            Files.walk(root)
-                                    .filter(Files::isRegularFile)
-                                    .filter(path -> path.toString().endsWith(".java")));
+            try (Stream<Path> walked = Files.walk(root)) {
+                sources.addAll(
+                        walked.filter(Files::isRegularFile)
+                                .filter(path -> path.toString().endsWith(".java"))
+                                .toList());
+            }
         }
-        return combined;
+        return List.copyOf(sources).stream();
     }
 
     private static String read(Path source) {
