@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-public final class ChunkMeshBuilder {
+public final class ChunkMeshBuilder implements ChunkMesher {
     private static final BlockFace[] FACES = {
         BlockFace.NORTH,
         BlockFace.SOUTH,
@@ -26,6 +26,77 @@ public final class ChunkMeshBuilder {
                         renderResolver, "renderResolver");
     }
 
+    @Override
+    public ChunkMeshData build(ChunkMeshInput input) {
+        Objects.requireNonNull(input, "input");
+        List<Float> vertices = new ArrayList<>();
+
+        for (int x = 0; x < GameConfig.Chunk.SIZE; x++) {
+            for (int y = 0;
+                    y < input.center().worldHeight();
+                    y++) {
+                for (int z = 0;
+                        z < GameConfig.Chunk.SIZE;
+                        z++) {
+                    byte block = input.center().getBlock(x, y, z);
+                    if (block == 0) {
+                        continue;
+                    }
+
+                    BlockRenderInfo renderInfo =
+                            renderResolver.resolve(
+                                    Byte.toUnsignedInt(block));
+                    if (!renderInfo.renderable()) {
+                        continue;
+                    }
+
+                    if (!isBlockSolid(
+                            input.getBlock(x, y, z - 1))) {
+                        addFace(
+                                vertices, x, y, z, 0,
+                                renderInfo.region(FACES[0]));
+                    }
+                    if (!isBlockSolid(
+                            input.getBlock(x, y, z + 1))) {
+                        addFace(
+                                vertices, x, y, z, 1,
+                                renderInfo.region(FACES[1]));
+                    }
+                    if (!isBlockSolid(
+                            input.getBlock(x, y + 1, z))) {
+                        addFace(
+                                vertices, x, y, z, 2,
+                                renderInfo.region(FACES[2]));
+                    }
+                    if (!isBlockSolid(
+                            input.getBlock(x, y - 1, z))) {
+                        addFace(
+                                vertices, x, y, z, 3,
+                                renderInfo.region(FACES[3]));
+                    }
+                    if (!isBlockSolid(
+                            input.getBlock(x - 1, y, z))) {
+                        addFace(
+                                vertices, x, y, z, 4,
+                                renderInfo.region(FACES[4]));
+                    }
+                    if (!isBlockSolid(
+                            input.getBlock(x + 1, y, z))) {
+                        addFace(
+                                vertices, x, y, z, 5,
+                                renderInfo.region(FACES[5]));
+                    }
+                }
+            }
+        }
+
+        return new ChunkMeshData(
+                input.center().key(),
+                input.center().revision(),
+                toArray(vertices));
+    }
+
+    @Deprecated
     public float[] buildChunkMeshData(
             Chunk chunk, int chunkX, int chunkZ, World world) {
         List<Float> vertices = new ArrayList<>();
@@ -41,9 +112,9 @@ public final class ChunkMeshBuilder {
             
             int baseY = sectionIndex * GameConfig.Chunk.SUBCHUNK_HEIGHT;
             
-            for (int x = 0; x < GameConfig.Chunk.SUBCHUNK_HEIGHT; x++) {
+            for (int x = 0; x < GameConfig.Chunk.SIZE; x++) {
                 for (int y = 0; y < GameConfig.Chunk.SUBCHUNK_HEIGHT; y++) {
-                    for (int z = 0; z < GameConfig.Chunk.SUBCHUNK_HEIGHT; z++) {
+                    for (int z = 0; z < GameConfig.Chunk.SIZE; z++) {
                         byte block = subChunk.getBlock(x, y, z);
                         if (block == 0) continue;
 
@@ -97,16 +168,14 @@ public final class ChunkMeshBuilder {
             }
         }
         
-        if (vertices.isEmpty()) {
-            return new float[0];
-        }
-        
-        float[] vertexArray = new float[vertices.size()];
-        for (int i = 0; i < vertices.size(); i++) {
-            vertexArray[i] = vertices.get(i);
-        }
-        
-        return vertexArray;
+        return toArray(vertices);
+    }
+
+    private boolean isBlockSolid(byte block) {
+        return block != 0
+                && renderResolver
+                        .resolve(Byte.toUnsignedInt(block))
+                        .renderable();
     }
     
     private boolean isBlockSolid(World world, int x, int y, int z) {
@@ -116,6 +185,14 @@ public final class ChunkMeshBuilder {
                 && renderResolver
                         .resolve(Byte.toUnsignedInt(neighbor))
                         .renderable();
+    }
+
+    private static float[] toArray(List<Float> vertices) {
+        float[] vertexArray = new float[vertices.size()];
+        for (int i = 0; i < vertices.size(); i++) {
+            vertexArray[i] = vertices.get(i);
+        }
+        return vertexArray;
     }
     
     private static void addFace(
