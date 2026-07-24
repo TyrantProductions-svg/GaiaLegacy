@@ -37,6 +37,7 @@ public final class ChunkMeshManager implements AutoCloseable {
             new HashMap<>();
     private final Object lifecycleLock = new Object();
     private volatile boolean closed;
+    private Throwable closeFailure;
 
     public ChunkMeshManager(
             ChunkRepository repository,
@@ -68,6 +69,9 @@ public final class ChunkMeshManager implements AutoCloseable {
         }
         int scheduled = 0;
         for (ChunkKey key : repository.meshingCandidates()) {
+            if (closed) {
+                break;
+            }
             Optional<ChunkMeshInput> claimed =
                     repository.claimMeshing(key);
             if (claimed.isEmpty()) {
@@ -78,10 +82,11 @@ public final class ChunkMeshManager implements AutoCloseable {
                 meshExecutor.execute(() -> buildMesh(input));
                 scheduled++;
             } catch (RuntimeException | Error failure) {
-                if (repository.markMeshingFailureIfCurrent(
-                        input.center().key(),
-                        input.center().revision(),
-                        failure)) {
+                if (!closed
+                        && repository.markMeshingFailureIfCurrent(
+                                input.center().key(),
+                                input.center().revision(),
+                                failure)) {
                     reportedFailures.add(failure);
                 }
             }
@@ -215,6 +220,7 @@ public final class ChunkMeshManager implements AutoCloseable {
         installedRenderObjects.clear();
 
         if (firstFailure != null) {
+            closeFailure = firstFailure;
             rethrow(firstFailure);
         }
     }
@@ -297,10 +303,14 @@ public final class ChunkMeshManager implements AutoCloseable {
                             renderBackend.upload(data),
                             "render backend upload result");
         } catch (RuntimeException | Error failure) {
-            if (!closed) {
-                failedUploads.put(data.key(), data);
-                reportedFailures.add(failure);
+            if (closed) {
+                if (failure == closeFailure) {
+                    rethrow(failure);
+                }
+                return;
             }
+            failedUploads.put(data.key(), data);
+            reportedFailures.add(failure);
             return;
         }
 
@@ -355,7 +365,9 @@ public final class ChunkMeshManager implements AutoCloseable {
             if (firstFailure == null) {
                 return failure;
             }
-            firstFailure.addSuppressed(failure);
+            if (failure != firstFailure) {
+                firstFailure.addSuppressed(failure);
+            }
         }
         return firstFailure;
     }

@@ -286,6 +286,142 @@ class ChunkMeshManagerTest {
     }
 
     @Test
+    void executorReentrantCloseThenRejectionStopsSchedulingAndReporting() {
+        ChunkRepository repository = new ChunkRepository();
+        List<ChunkKey> keys =
+                List.of(KEY, new ChunkKey(2, 0), new ChunkKey(4, 0));
+        for (ChunkKey key : keys) {
+            repository.generate(
+                    key,
+                    chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
+        }
+        AtomicReference<ChunkMeshManager> managerReference =
+                new AtomicReference<>();
+        AtomicInteger executeCalls = new AtomicInteger();
+        IllegalStateException rejection =
+                new IllegalStateException("rejected after close");
+        Executor executor =
+                command -> {
+                    executeCalls.incrementAndGet();
+                    managerReference.get().close();
+                    throw rejection;
+                };
+        ChunkMeshManager manager =
+                new ChunkMeshManager(
+                        repository,
+                        ChunkMeshManagerTest::meshFor,
+                        executor,
+                        failOnBackendCall(new AtomicInteger()),
+                        MainThreadGuard.captureCurrentThread(),
+                        2);
+        managerReference.set(manager);
+
+        assertEquals(0, manager.scheduleEligible());
+
+        assertEquals(1, executeCalls.get());
+        assertEquals(
+                1,
+                keys.stream()
+                        .filter(
+                                key ->
+                                        repository.state(key)
+                                                == ChunkState.MESHING)
+                        .count());
+        assertEquals(
+                2,
+                keys.stream()
+                        .filter(
+                                key ->
+                                        repository.state(key)
+                                                == ChunkState.GENERATED)
+                        .count());
+        assertTrue(manager.pollFailure().isEmpty());
+        assertEquals(0, manager.drainCompletedCpuWork());
+        assertEquals(0, manager.scheduleEligible());
+    }
+
+    @Test
+    void executorReentrantCloseThenDirectRunStopsSchedulingAndCompletion() {
+        ChunkRepository repository = new ChunkRepository();
+        List<ChunkKey> keys =
+                List.of(KEY, new ChunkKey(2, 0), new ChunkKey(4, 0));
+        for (ChunkKey key : keys) {
+            repository.generate(
+                    key,
+                    chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
+        }
+        AtomicReference<ChunkMeshManager> managerReference =
+                new AtomicReference<>();
+        AtomicInteger executeCalls = new AtomicInteger();
+        AtomicInteger meshCalls = new AtomicInteger();
+        Executor executor =
+                command -> {
+                    executeCalls.incrementAndGet();
+                    managerReference.get().close();
+                    command.run();
+                };
+        ChunkMeshManager manager =
+                new ChunkMeshManager(
+                        repository,
+                        input -> {
+                            meshCalls.incrementAndGet();
+                            return meshFor(input);
+                        },
+                        executor,
+                        failOnBackendCall(new AtomicInteger()),
+                        MainThreadGuard.captureCurrentThread(),
+                        2);
+        managerReference.set(manager);
+
+        assertEquals(1, manager.scheduleEligible());
+
+        assertEquals(1, executeCalls.get());
+        assertEquals(1, meshCalls.get());
+        assertEquals(
+                1,
+                keys.stream()
+                        .filter(
+                                key ->
+                                        repository.state(key)
+                                                == ChunkState.MESHING)
+                        .count());
+        assertEquals(
+                2,
+                keys.stream()
+                        .filter(
+                                key ->
+                                        repository.state(key)
+                                                == ChunkState.GENERATED)
+                        .count());
+        assertEquals(0, manager.drainCompletedCpuWork());
+        assertTrue(manager.pollFailure().isEmpty());
+        assertEquals(0, manager.scheduleEligible());
+    }
+
+    @Test
+    void executorRejectionWhileOpenStillReportsAndFailsCurrentClaim() {
+        ChunkRepository repository = generatedRepository();
+        IllegalStateException expected =
+                new IllegalStateException("executor rejected");
+        ChunkMeshManager manager =
+                new ChunkMeshManager(
+                        repository,
+                        ChunkMeshManagerTest::meshFor,
+                        command -> {
+                            throw expected;
+                        },
+                        failOnBackendCall(new AtomicInteger()),
+                        MainThreadGuard.captureCurrentThread(),
+                        2);
+
+        assertEquals(0, manager.scheduleEligible());
+
+        assertEquals(ChunkState.DIRTY, repository.state(KEY));
+        assertSame(expected, manager.pollFailure().orElseThrow());
+        assertEquals(0, manager.scheduleEligible());
+    }
+
+    @Test
     void allRenderableReflectsRepositoryStateAndEmptySetsAreComplete() {
         Fixture fixture = generatedFixture();
 
@@ -641,6 +777,14 @@ class ChunkMeshManagerTest {
     }
 
     @Test
+    void closeSkipsSelfSuppressionAndStillReleasesEveryObject() {
+        assertRepeatedCloseFailureIsAggregated(
+                new IllegalStateException("repeated runtime failure"));
+        assertRepeatedCloseFailureIsAggregated(
+                new AssertionError("repeated error"));
+    }
+
+    @Test
     void closeClearsReadyUploadsAndRejectsLaterRetry() {
         UploadFixture fixture = readyFixture(1, 1);
 
@@ -667,6 +811,34 @@ class ChunkMeshManagerTest {
                 fixture.repository.state(returned.key()));
         fixture.manager.close();
         assertEquals(List.of(returned), fixture.backend.released);
+    }
+
+    @Test
+    void closeReleaseFailureDuringUploadIsSurfacedAndLeavesNoReplacement() {
+        UploadFixture fixture = uploadedFixture();
+        ChunkRenderObject installed =
+                fixture.manager.renderObjects().iterator().next();
+        dirtyBuild(fixture, KEY);
+        IllegalStateException expected =
+                new IllegalStateException("close release failed during upload");
+        fixture.backend.beforeUpload = fixture.manager::close;
+        fixture.backend.releaseFailures.add(expected);
+
+        IllegalStateException actual =
+                assertThrows(
+                        IllegalStateException.class,
+                        fixture.manager::processMainThreadWork);
+
+        assertSame(expected, actual);
+        assertEquals(List.of(installed), fixture.backend.released);
+        assertEquals(1, fixture.backend.uploaded.size());
+        assertTrue(fixture.manager.renderObjects().isEmpty());
+        assertEquals(
+                ChunkState.READY_FOR_UPLOAD,
+                fixture.repository.state(KEY));
+        fixture.manager.close();
+        assertEquals(List.of(installed), fixture.backend.released);
+        assertEquals(0, fixture.manager.processMainThreadWork());
     }
 
     @Test
@@ -881,6 +1053,30 @@ class ChunkMeshManagerTest {
         assertEquals(1, fixture.manager.processMainThreadWork());
     }
 
+    private static void assertRepeatedCloseFailureIsAggregated(
+            Throwable repeatedFailure) {
+        UploadFixture fixture = readyFixture(3, 3);
+        fixture.manager.processMainThreadWork();
+        Set<ChunkRenderObject> installed =
+                Set.copyOf(fixture.manager.renderObjects());
+        fixture.backend.releaseFailures.add(repeatedFailure);
+        fixture.backend.releaseFailures.add(repeatedFailure);
+        fixture.backend.releaseFailures.add(repeatedFailure);
+
+        Throwable actual =
+                assertThrows(
+                        repeatedFailure.getClass(),
+                        fixture.manager::close);
+
+        assertSame(repeatedFailure, actual);
+        assertEquals(0, actual.getSuppressed().length);
+        assertEquals(3, fixture.backend.released.size());
+        assertEquals(installed, Set.copyOf(fixture.backend.released));
+        assertTrue(fixture.manager.renderObjects().isEmpty());
+        fixture.manager.close();
+        assertEquals(3, fixture.backend.released.size());
+    }
+
     private static void assertWorkerRejected(Runnable action)
             throws Exception {
         AtomicReference<Throwable> failure = new AtomicReference<>();
@@ -920,7 +1116,7 @@ class ChunkMeshManagerTest {
                 new ArrayList<>();
         private final List<ChunkRenderObject> released =
                 new ArrayList<>();
-        private final Queue<RuntimeException> releaseFailures =
+        private final Queue<Throwable> releaseFailures =
                 new ArrayDeque<>();
         private RuntimeException nextUploadFailure;
         private Runnable beforeUpload;
@@ -958,9 +1154,12 @@ class ChunkMeshManagerTest {
                 beforeRelease = null;
                 action.run();
             }
-            RuntimeException failure = releaseFailures.poll();
-            if (failure != null) {
-                throw failure;
+            Throwable failure = releaseFailures.poll();
+            if (failure instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            if (failure instanceof Error error) {
+                throw error;
             }
         }
     }
