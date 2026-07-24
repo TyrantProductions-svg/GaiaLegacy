@@ -2,6 +2,7 @@
 
 Status: approved design for Phase 7
 Date: 2026-07-24
+Final review reconciliation: 2026-07-25
 Branch: `feat/interaction-api-contracts`
 
 ## Purpose and scope
@@ -118,7 +119,10 @@ Context records defensively validate all references and numeric fields.
 - non-negative hit distance.
 
 The face normal has exactly one component equal to `-1` or `1`; the other
-components are zero. All floating-point fields must be finite.
+components are zero. Validation compares against the six exact axis-face
+patterns rather than using overflow-prone integer magnitude arithmetic. All
+hit-point components and the hit distance must be finite, and distance must
+be non-negative.
 
 ```java
 public interface BlockRaycastService {
@@ -132,7 +136,8 @@ public interface BlockRaycastService {
 The service is read-only. A later Gaia adapter delegates to the Phase 6
 `BlockRaycast` implementation and maps its stored byte ID through
 `BlockRegistry`; Phase 7 does not duplicate the DDA or collision-shape
-algorithm.
+algorithm. Phase 7 does not implement that adapter, so this interface makes
+no claim that `origin` or `direction` vectors are validated here.
 
 ## Block mutation contract
 
@@ -190,9 +195,12 @@ must not introduce a second block store.
 
 `World.setBlock` remains a low-level engine method for world generation and
 storage. Gameplay code must use `WorldMutationService`. An architecture test
-allows only sources under `game/src/main/java/com/gaia/world` to call
-`setBlock` directly and rejects matching calls everywhere else under
-`game/src/main/java`.
+normalizes source paths and allows direct `setBlock` call patterns only in
+`game/src/main/java/com/gaia/world/WorldLoader.java` and
+`game/src/main/java/com/gaia/world/GaiaWorldGenerator.java`. Every other game
+production source, including future files in the same package, remains
+guarded. This raw-source regular expression can match comments or strings and
+cannot detect a write hidden behind another method or abstraction.
 
 ## Events and transaction order
 
@@ -230,25 +238,29 @@ through its constructor. A successful call has this exact order:
 3. Read the current block and compare it with the expected block.
 4. Publish `BeforeBlockChangedEvent`.
 5. Stop with `CANCELLED` if the publisher vetoes the request.
-6. Perform one world write. The underlying repository marks actual loaded
+6. Re-read the current block and compare it with the request's expected block.
+   If a synchronous subscriber changed the target, return `CONFLICT` with the
+   newly observed block.
+7. Perform one world write. The underlying repository marks actual loaded
    chunks dirty.
-7. Compute the invalidation set with `ChunkDirtyTracker`; it contains the
+8. Compute the invalidation set with `ChunkDirtyTracker`; it contains the
    target chunk and horizontal neighbors when the block lies on an edge.
-8. Publish `BlockChangedEvent`.
-9. Publish one `ChunkDirtyEvent` containing the complete invalidation set.
-10. Return `APPLIED`.
+9. Publish `BlockChangedEvent`.
+10. Publish one `ChunkDirtyEvent` containing the complete invalidation set.
+11. Return `APPLIED`.
 
 Rejected requests do not write the world and do not publish success events.
 
 If before-change dispatch throws, the write is not attempted and the
 coordinator throws `BlockChangeDispatchException` with
-`mutationApplied() == false`. If the world write reports that it did not
-change the block, the coordinator returns `CONFLICT` without publishing
-success events. After a successful write, the coordinator attempts both
-post-change publications even if the first one fails. It then throws
-`BlockChangeDispatchException` with `mutationApplied() == true`, preserving
-the first cause and suppressing any additional failure. Callers must not
-blindly retry such a request.
+`mutationApplied() == false`. If the post-before re-read no longer matches the
+expected block, or if the world write reports that it did not change the
+block, the coordinator returns `CONFLICT` without an outer write in the first
+case and without publishing outer success events in either case. After a
+successful write, the coordinator attempts both post-change publications even
+if the first one fails. It then throws `BlockChangeDispatchException` with
+`mutationApplied() == true`, preserving the first cause and suppressing any
+additional failure. Callers must not blindly retry such a request.
 
 ## Thread rules
 
@@ -308,7 +320,7 @@ artificial empty item.
 
 ```java
 public interface InventoryService {
-    InventoryView snapshot(EntityRef owner);
+    Optional<InventoryView> snapshot(EntityRef owner);
 
     InventoryChangeResult replaceSlot(
             InventoryChangeRequest request);
@@ -317,7 +329,17 @@ public interface InventoryService {
 
 `InventoryChangeRequest` contains owner, slot, expected revision, and an
 optional replacement `ItemStackView`. `InventoryChangeResult` contains a
-status and the resulting or currently observed `InventoryView`. Its statuses
+status and an `Optional<InventoryView>` containing the resulting or currently
+observed inventory when the owner is known:
+
+```java
+public record InventoryChangeResult(
+        Status status, Optional<InventoryView> inventory) {}
+```
+
+The status and `Optional` reference are non-null. `UNKNOWN_OWNER` requires
+`Optional.empty()`. `APPLIED`, `CONFLICT`, and `INVALID_STACK` require a
+present view, and any present view has a non-negative revision. The statuses
 are `APPLIED`, `CONFLICT`, `INVALID_STACK`, and `UNKNOWN_OWNER`.
 
 `replaceSlot` is a minimal atomic primitive, not a stacking or transfer
@@ -367,20 +389,25 @@ No fixture is placed on the production runtime classpath.
 
 Focused tests cover:
 
-- value validation for entity IDs, ticks, timestamps, vectors, distances,
-  item counts, optionals, and resource identities;
+- value validation for entity IDs, ticks, timestamps, finite hit points,
+  non-negative finite hit distances, the six exact face normals, held-stack
+  item identities and counts, `Optional` containers, and block resource
+  identities;
 - exactly three stable body slots;
 - raycast hits and misses through the service stub;
 - immutable inventory snapshots and revision conflicts;
 - absence of mutation methods from the UI ViewModel;
-- successful before/write/changed/dirty ordering;
+- successful before/revalidate/write/changed/dirty ordering;
+- post-before expected-block revalidation when a synchronous subscriber
+  changes the target;
 - cancellation, conflict, no-change, out-of-bounds, and unknown-block
   rejection without a write;
 - current-chunk and edge-neighbor dirty propagation;
 - worker-thread rejection through `MainThreadGuard`;
 - post-write dispatch failure reporting that the mutation was applied;
 - game tests compiling against the shared engine fixtures;
-- an architecture guard against new gameplay calls to `World.setBlock`.
+- an architecture guard that exempts exactly `WorldLoader.java` and
+  `GaiaWorldGenerator.java` from direct-write detection.
 
 Before handoff, run:
 
@@ -411,11 +438,15 @@ not run unless it is actually executed on macOS.
 Later phases must not:
 
 - bypass `WorldMutationService` for gameplay block writes;
+- expand the exact direct-write whitelist beyond `WorldLoader.java` and
+  `GaiaWorldGenerator.java`;
 - make the UI depend on `InventoryService`;
 - replace `ResourceLocation` with Gaia-specific constants at the API
   boundary;
 - expose mutable ECS `Entity` or mutable item stacks through these contracts;
-- reorder the before/write/changed/dirty transaction;
+- reorder the before/revalidate/write/changed/dirty transaction;
+- remove the expected-block revalidation between before-change dispatch and
+  the outer write;
 - move world or inventory mutation to worker threads;
 - route the cancellable before event through the queued `EventBus`;
 - make test fixtures part of the production runtime.

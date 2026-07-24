@@ -4,11 +4,10 @@
 
 This document describes the Phase 7 architecture on
 `feat/interaction-api-contracts`, based on `origin/main` at commit `ed707ec`.
-The reviewed Phase 7 implementation and architecture-guard fixes end at
-commit `efd743f` before the handoff documentation commit. Phase 7 preserves
-the Phase 3 chunk mesh lifecycle and Phase 6 fixed-step physics foundation
-while defining game-neutral block-interaction and three-slot body-inventory
-contracts.
+The original reviewed implementation and handoff end at `0f73604`; the final
+review code fixes end at `7415cf6`. Phase 7 preserves the Phase 3 chunk mesh
+lifecycle and Phase 6 fixed-step physics foundation while defining
+game-neutral block-interaction and three-slot body-inventory contracts.
 
 The repository is a two-module Gradle build:
 
@@ -191,12 +190,27 @@ All future renderer work must remain compatible with OpenGL 4.1 / GLSL 410 and m
 ### Interaction and inventory contracts
 
 - Gameplay block writes use the synchronous `WorldMutationService` contract;
-  the standard implementation validates the main thread and emits
-  before-change, changed, and chunk-dirty events in the documented order.
+  the standard implementation validates the main thread, publishes
+  before-change, revalidates the expected block immediately before the outer
+  write, and emits changed and chunk-dirty events in the documented order.
+  A synchronous subscriber that changes the target causes the outer
+  transaction to return `CONFLICT` with the newly observed block and publish
+  no outer success events.
 - `BlockRaycastService` exposes data-driven `ResourceLocation` hits while
   preserving the Phase 6 raycast as the algorithmic implementation to adapt.
+  `BlockHitResult` validates finite hit data and only the six exact axis-face
+  normal patterns; no Gaia adapter or interface-level origin/direction
+  validation is implemented in Phase 7.
 - `InventoryView`, `ItemStackView`, and `BodyInventoryViewModel` are
-  read-only snapshots; mutations are isolated behind `InventoryService`.
+  read-only snapshots; `InventoryService.snapshot` and
+  `InventoryChangeResult.inventory` use `Optional<InventoryView>` so an
+  unknown owner is represented without inventing a snapshot. `UNKNOWN_OWNER`
+  requires empty, while every other result status requires a present,
+  non-negative-revision view.
+- Direct game production calls matching `.setBlock(...)` are allowlisted only
+  in `WorldLoader.java` and `GaiaWorldGenerator.java`. The raw-source guard can
+  false-positive on comments or strings and false-negative through
+  indirection.
 - Body inventory slots are `LEFT_HAND`, `RIGHT_HAND`, and `MOUTH`.
 - Phase 7 does not wire or implement gameplay, inventory rules, or UI.
 

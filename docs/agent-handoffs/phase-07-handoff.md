@@ -3,15 +3,18 @@
 ## Completed work
 
 - Built Phase 7 on `feat/interaction-api-contracts` from `origin/main` at
-  `ed707ec`; the reviewed implementation and architecture-guard commits end
-  at `efd743f` before this handoff documentation commit.
+  `ed707ec`; the original reviewed handoff ends at `0f73604`, and the final
+  review production/test fixes are committed at `7415cf6`.
 - Added game-neutral interaction values and contracts for entity references,
   gameplay actions and contexts, immutable `ResourceLocation` block hits,
   read-only block raycasts, and synchronous gameplay world mutation.
 - Added `DefaultWorldMutationService` with explicit constructor dependencies,
   main-thread validation, optimistic conflict detection, synchronous
-  cancellation, one world write, dirty-chunk calculation, and ordered
-  post-change publication.
+  cancellation, an immediate post-before precondition revalidation, one outer
+  world write, dirty-chunk calculation, and ordered post-change publication.
+  If a synchronous before-change subscriber changes the target, the outer
+  transaction returns `CONFLICT` with the newly observed block, performs no
+  outer write, and publishes no outer success events.
 - Added immutable before-change, changed, and chunk-dirty events. A failure
   before the write reports `mutationApplied() == false`; post-write dispatch
   attempts both events and reports `mutationApplied() == true`, preserving
@@ -19,14 +22,17 @@
 - Added read-only body inventory contracts with the stable `LEFT_HAND`,
   `RIGHT_HAND`, and `MOUTH` slot order. Snapshot reads are separated from the
   `InventoryService` mutation boundary, and the UI ViewModel cannot expose
-  that service.
+  that service. Unknown owners are representable through
+  `Optional<InventoryView>` snapshots and results with status-dependent
+  presence and revision invariants.
 - Enabled Gradle `java-test-fixtures` in `engine`, made the fixtures available
   to game tests, and added configurable interaction/inventory fakes and stubs.
   The fixtures are absent from the production runtime classpath.
 - Added contract, transaction, dirty-propagation, fixture-consumption, and
-  architecture tests. The architecture guard rejects direct `setBlock` call
-  patterns in game production sources outside
-  `game/src/main/java/com/gaia/world`.
+  architecture tests. Value coverage includes extreme normals, non-finite hit
+  data, Optional containers, timestamps, held stacks, and resource identities.
+  The architecture guard allows direct `setBlock` patterns only in
+  `WorldLoader.java` and `GaiaWorldGenerator.java`.
 - Reconciled the approved architecture document with the final public names
   and behavior and updated the current architecture baseline for Phase 7.
 
@@ -52,9 +58,9 @@
   it rather than introduce another block store.
 - A successful mutation preserves this synchronous order on the main
   fixed-update thread: assert ownership, validate the request, read and
-  compare the current block, publish before-change, write once, calculate
-  dirty chunks, publish changed, publish one complete chunk-dirty event, then
-  return `APPLIED`.
+  compare the current block, publish before-change, re-read and compare the
+  current block, write once, calculate dirty chunks, publish changed, publish
+  one complete chunk-dirty event, then return `APPLIED`.
 - The cancellable before-change event uses an injected synchronous
   `BlockChangeEventPublisher`, not the queued singleton `EventBus`. Rejected
   requests publish no success events and perform no write.
@@ -65,10 +71,14 @@
 - `BlockRaycastService` is a read-only, data-driven boundary whose hits expose
   `ResourceLocation`. A future Gaia adapter must reuse the Phase 6
   shape-aware `BlockRaycast` algorithm and translate stored byte IDs with
-  `BlockRegistry`.
+  `BlockRegistry`. Phase 7 validates hit values but makes no
+  interface-level origin/direction validation claim without that adapter.
 - `InventoryView`, `ItemStackView`, and `BodyInventoryViewModel` expose
-  read-only snapshots. Inventory mutation remains behind `InventoryService`,
-  and UI code emits intent rather than receiving a mutable service.
+  read-only snapshots. `InventoryService.snapshot` and change-result views
+  use `Optional<InventoryView>`; `UNKNOWN_OWNER` is empty, while all other
+  statuses require a present non-negative-revision view. Inventory mutation
+  remains behind `InventoryService`, and UI code emits intent rather than
+  receiving a mutable service.
 - Interaction and inventory APIs remain engine-owned and game-neutral.
   Future adapters are game-owned. Shared Gradle and documentation changes
   remain shared boundaries requiring both owners' awareness.
@@ -222,11 +232,39 @@ git status --short --branch
 - Final post-commit status and branch diff evidence are recorded in the local
   Task 7 report.
 
+Final review fix-wave Windows verification on 2026-07-25:
+
+```powershell
+.\gradlew.bat :engine:test --tests com.overlord.interaction.DefaultWorldMutationServiceTest
+.\gradlew.bat :engine:test --tests com.overlord.inventory.api.InventoryContractTest
+.\gradlew.bat :engine:test --tests com.overlord.interaction.api.InteractionContractTest
+.\gradlew.bat :engine:test --tests com.overlord.interaction.api.BlockMutationContractTest
+.\gradlew.bat :engine:test --tests com.overlord.interaction.InteractionArchitectureTest
+.\gradlew.bat :game:test --tests com.gaia.contracts.EngineContractFixtureSmokeTest
+.\gradlew.bat test
+.\gradlew.bat clean test build
+```
+
+- Each focused command exited `0`. The changed engine suites contain,
+  respectively, 15, 6, 8, 6, and 6 tests; the game fixture consumer also
+  passed.
+- The full non-clean `test` command exited `0`: `BUILD SUCCESSFUL in 5s`;
+  `10 actionable tasks: 4 executed, 6 up-to-date`.
+- The final clean build exited `0`: `BUILD SUCCESSFUL in 8s`;
+  `18 actionable tasks: 18 executed`. It compiled, tested, packaged, produced
+  distributions, and ran `:game:verifyPackagedResources`.
+- Engine JUnit XML: 46 suites, 399 tests, 0 failures, 0 errors, 0 skipped.
+- Game JUnit XML: 11 suites, 103 tests, 0 failures, 0 errors, 0 skipped.
+- Total JUnit XML: 57 suites, 502 tests, 0 failures, 0 errors, 0 skipped.
+- The final review wave did not relaunch `.\gradlew.bat :game`; the qualified
+  earlier Windows observation and unrun macOS status above remain unchanged.
+
 ## Known risks
 
 - The architecture guard scans raw Java source with a `.setBlock` regular
-  expression. It can match comments and string literals, and it cannot detect
-  indirect writes through another method or abstraction.
+  expression and exempts exactly `WorldLoader.java` and
+  `GaiaWorldGenerator.java`. It can match comments and string literals, and it
+  cannot detect indirect writes through another method or abstraction.
 - No Gaia `BlockWorldAccess` or `BlockRaycastService` adapter wiring exists,
   so the new contracts are not exercised by actual gameplay.
 - No production inventory implementation, inventory rules, gameplay,
@@ -257,8 +295,9 @@ git status --short --branch
   `UNKNOWN_BLOCK`.
 - Preserve the exact successful transaction order:
   main-thread assertion, validation, current-block comparison,
-  `BeforeBlockChangedEvent`, one write, dirty-set calculation,
-  `BlockChangedEvent`, one complete `ChunkDirtyEvent`, then `APPLIED`.
+  `BeforeBlockChangedEvent`, a second current-block comparison, one write,
+  dirty-set calculation, `BlockChangedEvent`, one complete `ChunkDirtyEvent`,
+  then `APPLIED`.
 - Preserve before-write cancellation and dispatch-failure behavior, both
   post-write publication attempts, and
   `BlockChangeDispatchException.mutationApplied()` retry semantics.
@@ -269,15 +308,19 @@ git status --short --branch
 - Preserve `BlockWorldAccess` as the narrow future Gaia storage adapter.
   Delegate to the existing `World.setBlock`; do not create a second block
   store or bypass Phase 3 dirty/revision/mesh lifecycle behavior.
-- Preserve the architecture guard outside
-  `game/src/main/java/com/gaia/world`; do not add gameplay exceptions to the
-  generation whitelist.
+- Preserve the exact direct-write whitelist:
+  `game/src/main/java/com/gaia/world/WorldLoader.java` and
+  `game/src/main/java/com/gaia/world/GaiaWorldGenerator.java`. A future file
+  in that package is not implicitly exempt.
 - Preserve exactly three body slots in presentation order:
   `LEFT_HAND`, `RIGHT_HAND`, `MOUTH`.
 - Preserve `ItemStackView`, `InventoryView`, and
   `BodyInventoryViewModel` as read-only snapshots, and keep mutation behind
-  `InventoryService.replaceSlot(InventoryChangeRequest)`. UI code must not
-  receive or expose `InventoryService`.
+  `InventoryService.replaceSlot(InventoryChangeRequest)`. Preserve
+  `Optional<InventoryView>` on `InventoryService.snapshot` and
+  `InventoryChangeResult.inventory`, including the status-dependent presence
+  and revision invariants. UI code must not receive or expose
+  `InventoryService`.
 - Preserve the `java-test-fixtures` boundary and keep fixtures off production
   runtime classpaths.
 - Preserve main/fixed-update ownership for world and inventory mutations,
@@ -290,7 +333,7 @@ git status --short --branch
 The final Phase 7 branch diff relative to `origin/main` is:
 
 ```text
-43 files changed, 4733 insertions(+), 7 deletions(-)
+43 files changed, 5425 insertions(+), 7 deletions(-)
 ```
 
 ## Suggested commit message
@@ -305,6 +348,13 @@ Suggested Task 7 documentation commit:
 
 ```text
 docs: complete phase 7 interaction handoff
+```
+
+Final review fix commits:
+
+```text
+fix(api): harden interaction and inventory contracts
+docs: reconcile phase 7 final review
 ```
 
 ## Suggested pull request
@@ -323,18 +373,20 @@ Description:
 - define game-neutral interaction, raycast, synchronous block-mutation, and
   three-slot body-inventory contracts
 - implement ordered main-thread world mutation with optimistic conflict
-  detection, cancellation, dirty propagation, and explicit dispatch-failure
-  semantics
+  detection before and after cancellable dispatch, dirty propagation, and
+  explicit dispatch-failure semantics
+- represent unknown inventory owners with optional snapshots/results and
+  enforce status-dependent result invariants
 - share configurable engine test fixtures with game tests while keeping them
   off production runtime classpaths
-- enforce engine/game ownership, read-only UI, synchronous event, and direct
-  gameplay-write boundaries with automated tests
+- enforce engine/game ownership, read-only UI, synchronous event, and an
+  exact two-file world-generation direct-write whitelist with automated tests
 
 **Verification**
 
 - `.\gradlew.bat clean test build`
   - BUILD SUCCESSFUL; 18/18 actionable tasks executed
-  - 490 tests in 57 suites; 0 failures, 0 errors, 0 skipped
+  - 502 tests in 57 suites; 0 failures, 0 errors, 0 skipped
   - LWJGL selected `natives-windows`
 - `git diff --check`
 - tracked generated-file query returned no matches

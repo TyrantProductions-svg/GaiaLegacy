@@ -7,12 +7,21 @@ contracts without implementing gameplay, inventory rules, or UI rendering.
 
 **Architecture:** Pure contracts live in `engine` under separate interaction
 and inventory API packages. A constructor-injected
-`DefaultWorldMutationService` owns the synchronous before/write/changed/dirty
-transaction while a narrow `BlockWorldAccess` SPI keeps Gaia block-ID
-translation out of the engine. Reusable fakes live in Gradle test fixtures so
-engine and game developers can compile against identical contracts.
+`DefaultWorldMutationService` owns the synchronous
+before/revalidate/write/changed/dirty transaction while a narrow
+`BlockWorldAccess` SPI keeps Gaia block-ID translation out of the engine.
+Reusable fakes live in Gradle test fixtures so engine and game developers can
+compile against identical contracts.
 
 **Tech Stack:** Java 17, Gradle 8.5 Wrapper, JUnit Jupiter 6.1.1, JOML 1.10.5.
+
+**Final review amendments:** The implementation revalidates the expected
+block immediately after synchronous before-change dispatch; inventory
+snapshots and change-result views use `Optional<InventoryView>` with
+status-dependent presence invariants; `BlockHitResult` accepts only the six
+exact axis-face normal patterns; and the direct-write guard allows only
+`WorldLoader.java` and `GaiaWorldGenerator.java`. These final shapes govern
+where an earlier task transcript below shows the pre-review form.
 
 ## Global Constraints
 
@@ -61,7 +70,8 @@ engine and game developers can compile against identical contracts.
 - Produces: `BodySlot.LEFT_HAND`, `RIGHT_HAND`, and `MOUTH`.
 - Produces: read-only `ItemStackView`, `InventoryView`, and
   `BodyInventoryViewModel`.
-- Produces: `InventoryService.snapshot(EntityRef)` and
+- Produces: `InventoryService.snapshot(EntityRef)` returning
+  `Optional<InventoryView>` and
   `replaceSlot(InventoryChangeRequest)`.
 
 - [ ] **Step 1: Enable engine test fixtures and write the failing inventory contract test**
@@ -264,15 +274,28 @@ public record InventoryChangeRequest(
 package com.overlord.inventory.api;
 
 import java.util.Objects;
+import java.util.Optional;
 
 public record InventoryChangeResult(
-        Status status, InventoryView inventory) {
+        Status status, Optional<InventoryView> inventory) {
     public InventoryChangeResult {
         status = Objects.requireNonNull(status, "status");
         inventory = Objects.requireNonNull(inventory, "inventory");
-        if (inventory.revision() < 0) {
-            throw new IllegalArgumentException(
-                    "inventory revision must be non-negative");
+        if (status == Status.UNKNOWN_OWNER) {
+            if (inventory.isPresent()) {
+                throw new IllegalArgumentException(
+                        "UNKNOWN_OWNER must not include an inventory");
+            }
+        } else {
+            if (inventory.isEmpty()) {
+                throw new IllegalArgumentException(
+                        status + " requires an inventory");
+            }
+            InventoryView view = inventory.orElseThrow();
+            if (view.revision() < 0) {
+                throw new IllegalArgumentException(
+                        "inventory revision must be non-negative");
+            }
         }
     }
 
@@ -290,9 +313,10 @@ public record InventoryChangeResult(
 package com.overlord.inventory.api;
 
 import com.overlord.interaction.api.EntityRef;
+import java.util.Optional;
 
 public interface InventoryService {
-    InventoryView snapshot(EntityRef owner);
+    Optional<InventoryView> snapshot(EntityRef owner);
 
     InventoryChangeResult replaceSlot(
             InventoryChangeRequest request);
@@ -505,14 +529,19 @@ public record BlockHitResult(
         float distance) {
     public BlockHitResult {
         block = Objects.requireNonNull(block, "block");
-        int axisMagnitude =
-                Math.abs(normalX)
-                        + Math.abs(normalY)
-                        + Math.abs(normalZ);
-        if (axisMagnitude != 1
-                || Math.abs(normalX) > 1
-                || Math.abs(normalY) > 1
-                || Math.abs(normalZ) > 1) {
+        boolean xFace =
+                (normalX == 1 || normalX == -1)
+                        && normalY == 0
+                        && normalZ == 0;
+        boolean yFace =
+                normalX == 0
+                        && (normalY == 1 || normalY == -1)
+                        && normalZ == 0;
+        boolean zFace =
+                normalX == 0
+                        && normalY == 0
+                        && (normalZ == 1 || normalZ == -1);
+        if (!(xFace || yFace || zFace)) {
             throw new IllegalArgumentException(
                     "normal must identify one axis-aligned face");
         }
@@ -1262,6 +1291,21 @@ public final class DefaultWorldMutationService
                     Optional.of(current));
         }
 
+        ResourceLocation revalidatedCurrent =
+                Objects.requireNonNull(
+                        world.blockAt(
+                                request.x(),
+                                request.y(),
+                                request.z()),
+                        "world block");
+        if (!revalidatedCurrent.equals(
+                request.expectedBlock())) {
+            return rejected(
+                    request,
+                    BlockChangeResult.Status.CONFLICT,
+                    Optional.of(revalidatedCurrent));
+        }
+
         if (!world.setBlock(
                 request.x(),
                 request.y(),
@@ -1659,15 +1703,16 @@ import com.overlord.inventory.api.InventoryChangeResult;
 import com.overlord.inventory.api.InventoryService;
 import com.overlord.inventory.api.InventoryView;
 import java.util.Objects;
+import java.util.Optional;
 
 public final class StubInventoryService
         implements InventoryService {
-    private InventoryView snapshot;
+    private Optional<InventoryView> snapshot;
     private InventoryChangeResult replacementResult;
     private InventoryChangeRequest lastRequest;
 
     public StubInventoryService(
-            InventoryView snapshot,
+            Optional<InventoryView> snapshot,
             InventoryChangeResult replacementResult) {
         this.snapshot = Objects.requireNonNull(snapshot, "snapshot");
         this.replacementResult =
@@ -1676,7 +1721,7 @@ public final class StubInventoryService
     }
 
     @Override
-    public InventoryView snapshot(EntityRef owner) {
+    public Optional<InventoryView> snapshot(EntityRef owner) {
         Objects.requireNonNull(owner, "owner");
         return snapshot;
     }
@@ -1913,14 +1958,28 @@ import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 class InteractionArchitectureTest {
+    private static final Path REPOSITORY_ROOT =
+            Path.of("..").toAbsolutePath().normalize();
     private static final Path ENGINE_MAIN =
-            Path.of("src/main/java");
+            Path.of("src/main/java").toAbsolutePath().normalize();
     private static final Path GAME_MAIN =
-            Path.of("../game/src/main/java");
+            REPOSITORY_ROOT.resolve("game/src/main/java");
+    private static final Set<Path> DIRECT_WORLD_WRITE_ALLOWLIST =
+            Set.of(
+                    GAME_MAIN.resolve(
+                                    "com/gaia/world/WorldLoader.java")
+                            .normalize(),
+                    GAME_MAIN.resolve(
+                                    "com/gaia/world/GaiaWorldGenerator.java")
+                            .normalize());
+    private static final Pattern DIRECT_SET_BLOCK_CALL =
+            Pattern.compile("\\.\\s*setBlock\\s*\\(");
 
     @Test
     void engineContractsDoNotDependOnGameGraphicsOrGlfw()
@@ -1967,22 +2026,36 @@ class InteractionArchitectureTest {
             offenders =
                     sources.filter(
                                     source ->
-                                            !source.startsWith(
-                                                    GAME_MAIN.resolve(
-                                                            "com/gaia/world")))
+                                            !isDirectWorldWriteAllowlisted(
+                                                    source))
                             .filter(
                                     source -> {
                                         String text = read(source);
-                                        return text.contains(
-                                                        "com.overlord.voxel.World")
-                                                && text.contains(
-                                                        ".setBlock(");
+                                        return DIRECT_SET_BLOCK_CALL
+                                                .matcher(text)
+                                                .find();
                                     })
                             .toList();
         }
         assertTrue(
                 offenders.isEmpty(),
                 "Gameplay bypasses WorldMutationService: " + offenders);
+    }
+
+    @Test
+    void directWorldWriteWhitelistAllowsOnlyExactGenerationFiles() {
+        assertTrue(
+                isDirectWorldWriteAllowlisted(
+                        GAME_MAIN.resolve(
+                                "com/gaia/world/WorldLoader.java")));
+        assertTrue(
+                isDirectWorldWriteAllowlisted(
+                        GAME_MAIN.resolve(
+                                "com/gaia/world/GaiaWorldGenerator.java")));
+        assertFalse(
+                isDirectWorldWriteAllowlisted(
+                        GAME_MAIN.resolve(
+                                "com/gaia/world/FutureGameplayWriter.java")));
     }
 
     @Test
@@ -2015,6 +2088,12 @@ class InteractionArchitectureTest {
         return combined;
     }
 
+    private static boolean isDirectWorldWriteAllowlisted(
+            Path source) {
+        return DIRECT_WORLD_WRITE_ALLOWLIST.contains(
+                source.toAbsolutePath().normalize());
+    }
+
     private static String read(Path source) {
         try {
             return Files.readString(source);
@@ -2035,8 +2114,11 @@ Run:
 ```
 
 Expected: `BUILD SUCCESSFUL`. If a rule fails, inspect the exact offender and
-fix the production dependency or narrow only the documented
-`game/com/gaia/world` generation whitelist; do not add a gameplay exception.
+fix the production dependency. The only direct-write exceptions are
+`game/src/main/java/com/gaia/world/WorldLoader.java` and
+`game/src/main/java/com/gaia/world/GaiaWorldGenerator.java`; do not add a
+package-wide or gameplay exception. The raw-source regex can false-positive
+on comments or strings and false-negative through indirection.
 
 - [ ] **Step 3: Run all engine and game tests**
 
@@ -2088,11 +2170,14 @@ Add a Phase 7 section to `docs/architecture/current-baseline.md` stating:
 
 - Gameplay block writes use the synchronous `WorldMutationService` contract;
   the standard implementation validates the main thread and emits
-  before-change, changed, and chunk-dirty events in the documented order.
+  before-change, revalidates the expected block, and emits changed and
+  chunk-dirty events in the documented order.
 - `BlockRaycastService` exposes data-driven `ResourceLocation` hits while
   preserving the Phase 6 raycast as the algorithmic implementation to adapt.
 - `InventoryView`, `ItemStackView`, and `BodyInventoryViewModel` are
-  read-only snapshots; mutations are isolated behind `InventoryService`.
+  read-only snapshots; `InventoryService.snapshot` and change-result views
+  use `Optional<InventoryView>` so unknown owners are representable, and
+  mutations remain isolated behind `InventoryService`.
 - Body inventory slots are `LEFT_HAND`, `RIGHT_HAND`, and `MOUTH`.
 - Phase 7 does not wire or implement gameplay, inventory rules, or UI.
 ```
@@ -2192,3 +2277,24 @@ git commit -m "docs: complete phase 7 interaction handoff"
 ```
 
 Do not merge or push unless the user separately requests it.
+
+## Final review reconciliation
+
+The user-approved final review wave was implemented on 2026-07-25. The
+production and test fixes are committed at `7415cf6`.
+
+- Strict RED to GREEN evidence was captured for post-before precondition
+  revalidation, the Optional inventory API/result invariants, and extreme
+  integer face normals.
+- The five changed engine focused suites passed individually with 15, 6, 8,
+  6, and 6 tests. The game fixture consumer also passed.
+- `.\gradlew.bat test` passed, followed by a clean
+  `.\gradlew.bat clean test build` with 18 of 18 tasks executed.
+- Final clean-build XML contains 57 suites and 502 tests: engine 46/399 and
+  game 11/103, with zero failures, errors, or skipped tests.
+- The final branch diff relative to `origin/main` is 43 files changed,
+  5,425 insertions, and 7 deletions.
+- The interactive game was not relaunched for the final review wave. The
+  earlier Windows launch remains qualified because no Gradle exit code or
+  independent visual confirmation was captured; macOS remains unrun.
+- No push or merge was performed.
