@@ -1,6 +1,7 @@
 package com.overlord.voxel;
 
 import com.overlord.config.GameConfig;
+import java.util.HashSet;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -170,8 +171,158 @@ public final class ChunkRepository {
         }
     }
 
+    public Set<ChunkKey> meshingCandidates() {
+        Set<ChunkKey> candidates = new HashSet<>();
+        for (var entryByKey : entries.entrySet()) {
+            ChunkKey key = entryByKey.getKey();
+            Entry entry = entryByKey.getValue();
+            synchronized (entry) {
+                if (entries.get(key) == entry
+                        && isMeshingCandidate(entry)) {
+                    candidates.add(key);
+                }
+            }
+        }
+        return Set.copyOf(candidates);
+    }
+
+    public Optional<ChunkMeshInput> claimMeshing(ChunkKey key) {
+        Objects.requireNonNull(key, "key");
+        Entry entry = entries.get(key);
+        if (entry == null) {
+            return Optional.empty();
+        }
+
+        long claimedRevision;
+        synchronized (entry) {
+            if (entries.get(key) != entry
+                    || !isMeshingCandidate(entry)) {
+                return Optional.empty();
+            }
+            claimedRevision = entry.revision;
+            entry.state = ChunkState.MESHING;
+        }
+
+        Optional<ChunkSnapshot> center = snapshot(key);
+        ChunkSnapshot north =
+                snapshot(key.north())
+                        .orElseGet(
+                                () ->
+                                        ChunkSnapshot.empty(
+                                                key.north(),
+                                                0,
+                                                worldHeight));
+        ChunkSnapshot south =
+                snapshot(key.south())
+                        .orElseGet(
+                                () ->
+                                        ChunkSnapshot.empty(
+                                                key.south(),
+                                                0,
+                                                worldHeight));
+        ChunkSnapshot west =
+                snapshot(key.west())
+                        .orElseGet(
+                                () ->
+                                        ChunkSnapshot.empty(
+                                                key.west(),
+                                                0,
+                                                worldHeight));
+        ChunkSnapshot east =
+                snapshot(key.east())
+                        .orElseGet(
+                                () ->
+                                        ChunkSnapshot.empty(
+                                                key.east(),
+                                                0,
+                                                worldHeight));
+
+        synchronized (entry) {
+            if (entries.get(key) != entry) {
+                return Optional.empty();
+            }
+            if (entry.state != ChunkState.MESHING
+                    || entry.revision != claimedRevision
+                    || center.isEmpty()
+                    || center.orElseThrow().revision()
+                            != claimedRevision) {
+                if (entry.state != ChunkState.UNLOADING) {
+                    entry.state = ChunkState.DIRTY;
+                }
+                return Optional.empty();
+            }
+            return Optional.of(
+                    new ChunkMeshInput(
+                            center.orElseThrow(),
+                            north,
+                            south,
+                            west,
+                            east));
+        }
+    }
+
+    public boolean markReadyForUpload(
+            ChunkKey key, long revision) {
+        Objects.requireNonNull(key, "key");
+        Entry entry = entries.get(key);
+        if (entry == null) {
+            return false;
+        }
+        synchronized (entry) {
+            if (entries.get(key) != entry) {
+                return false;
+            }
+            if (entry.state != ChunkState.MESHING
+                    || entry.revision != revision) {
+                return false;
+            }
+            entry.state = ChunkState.READY_FOR_UPLOAD;
+            return true;
+        }
+    }
+
+    public void markMeshingFailure(
+            ChunkKey key, long revision, Throwable failure) {
+        Objects.requireNonNull(key, "key");
+        Objects.requireNonNull(failure, "failure");
+        Entry entry = entries.get(key);
+        if (entry == null) {
+            return;
+        }
+        synchronized (entry) {
+            if (entries.get(key) != entry) {
+                return;
+            }
+            if (entry.state == ChunkState.MESHING
+                    && entry.revision == revision) {
+                entry.failure = failure;
+                entry.state = ChunkState.DIRTY;
+            }
+        }
+    }
+
+    public void retry(ChunkKey key) {
+        Objects.requireNonNull(key, "key");
+        Entry entry = entries.get(key);
+        if (entry == null) {
+            return;
+        }
+        synchronized (entry) {
+            if (entries.get(key) == entry
+                    && entry.state == ChunkState.DIRTY) {
+                entry.failure = null;
+            }
+        }
+    }
+
     public boolean isRenderable(ChunkKey key) {
         return state(key) == ChunkState.RENDERABLE;
+    }
+
+    private static boolean isMeshingCandidate(Entry entry) {
+        return entry.state == ChunkState.GENERATED
+                || (entry.state == ChunkState.DIRTY
+                        && entry.failure == null);
     }
 
     private void dirtyIfPresent(ChunkKey key) {

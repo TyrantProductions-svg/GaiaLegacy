@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.config.GameConfig;
 import java.lang.reflect.Field;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -596,6 +597,94 @@ class ChunkRepositoryTest {
         assertFalse(repository.isRenderable(key));
         repository.generate(key, chunk -> {});
         assertFalse(repository.isRenderable(key));
+    }
+
+    @Test
+    void claimMeshingAtomicallyCapturesCenterAndCardinalSnapshots() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey center = new ChunkKey(0, 0);
+        ChunkKey east = center.east();
+        repository.generate(
+                center, chunk -> chunk.setBlock(1, 2, 3, (byte) 4));
+        repository.generate(
+                east, chunk -> chunk.setBlock(0, 2, 3, (byte) 5));
+
+        Optional<ChunkMeshInput> claimed = repository.claimMeshing(center);
+
+        ChunkMeshInput input = claimed.orElseThrow();
+        assertEquals(ChunkState.MESHING, repository.state(center));
+        assertEquals(4, Byte.toUnsignedInt(input.center().getBlock(1, 2, 3)));
+        assertEquals(5, Byte.toUnsignedInt(input.east().getBlock(0, 2, 3)));
+        assertEquals(0, input.north().revision());
+        assertEquals(0, input.south().revision());
+        assertEquals(0, input.west().revision());
+        assertTrue(repository.claimMeshing(center).isEmpty());
+    }
+
+    @Test
+    void staleReadyResultLeavesMutatedTargetDirty() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey key = new ChunkKey(0, 0);
+        repository.generate(key, chunk -> {});
+        long claimedRevision =
+                repository.claimMeshing(key).orElseThrow().center().revision();
+
+        repository.setBlock(1, 1, 1, (byte) 1);
+
+        assertFalse(repository.markReadyForUpload(key, claimedRevision));
+        assertEquals(ChunkState.DIRTY, repository.state(key));
+    }
+
+    @Test
+    void currentReadyResultTransitionsClaimToReadyForUpload() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey key = new ChunkKey(0, 0);
+        repository.generate(key, chunk -> {});
+        long claimedRevision =
+                repository.claimMeshing(key).orElseThrow().center().revision();
+
+        assertTrue(repository.markReadyForUpload(key, claimedRevision));
+
+        assertEquals(ChunkState.READY_FOR_UPLOAD, repository.state(key));
+    }
+
+    @Test
+    void failedClaimRequiresExplicitRetryBeforeItCanBeClaimedAgain() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey key = new ChunkKey(0, 0);
+        repository.generate(key, chunk -> {});
+        long claimedRevision =
+                repository.claimMeshing(key).orElseThrow().center().revision();
+        IllegalStateException failure =
+                new IllegalStateException("meshing failed");
+
+        repository.markMeshingFailure(key, claimedRevision, failure);
+
+        assertEquals(ChunkState.DIRTY, repository.state(key));
+        assertFalse(repository.meshingCandidates().contains(key));
+        assertTrue(repository.claimMeshing(key).isEmpty());
+
+        repository.retry(key);
+
+        assertTrue(repository.meshingCandidates().contains(key));
+        assertTrue(repository.claimMeshing(key).isPresent());
+    }
+
+    @Test
+    void laterMutationClearsMeshingFailureAndMakesEntryEligible() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey key = new ChunkKey(0, 0);
+        repository.generate(key, chunk -> {});
+        long claimedRevision =
+                repository.claimMeshing(key).orElseThrow().center().revision();
+        repository.markMeshingFailure(
+                key,
+                claimedRevision,
+                new IllegalStateException("meshing failed"));
+
+        repository.setBlock(1, 1, 1, (byte) 1);
+
+        assertTrue(repository.meshingCandidates().contains(key));
     }
 
     private static ChunkRepository generatedPairEastWest() {
