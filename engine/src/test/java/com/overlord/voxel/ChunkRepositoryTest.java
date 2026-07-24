@@ -7,7 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.config.GameConfig;
+import java.lang.reflect.Field;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -175,6 +177,37 @@ class ChunkRepositoryTest {
     }
 
     @Test
+    @SuppressWarnings("deprecation")
+    void boundaryPropagationLeavesCompatibilityCreatedNeighborEmpty() {
+        ChunkRepository repository = new ChunkRepository();
+        World world = new World(repository);
+        ChunkKey center = new ChunkKey(0, 0);
+        ChunkKey east = center.east();
+        Chunk compatibilityChunk = world.getChunk(east.x(), east.z());
+
+        repository.generate(
+                center, chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
+        assertEquals(ChunkState.EMPTY, repository.state(east));
+        assertEquals(0L, repository.revision(east));
+        long centerRevision = repository.revision(center);
+
+        assertTrue(
+                repository.setBlock(
+                        GameConfig.Chunk.SIZE - 1,
+                        4,
+                        2,
+                        (byte) 1));
+
+        assertEquals(ChunkState.DIRTY, repository.state(center));
+        assertEquals(centerRevision + 1, repository.revision(center));
+        assertEquals(ChunkState.EMPTY, repository.state(east));
+        assertEquals(0L, repository.revision(east));
+        assertSame(
+                compatibilityChunk,
+                world.getChunk(east.x(), east.z()));
+    }
+
+    @Test
     void unchangedBoundaryWriteDoesNotDirtyTargetOrNeighbor() {
         ChunkRepository repository = generatedPairEastWest();
         ChunkKey center = new ChunkKey(0, 0);
@@ -195,25 +228,30 @@ class ChunkRepositoryTest {
     }
 
     @Test
-    void negativeWorldCornerDirtiesNegativeCardinalNeighbors() {
-        ChunkKey target = new ChunkKey(-1, -1);
-        ChunkKey west = target.west();
-        ChunkKey north = target.north();
-        ChunkRepository repository = generatedChunks(target, west, north);
+    void nonMultipleNegativeWorldCornerUsesFloorBasedDirtyPropagation() {
+        int worldX = -1;
+        int worldZ = -GameConfig.Chunk.SIZE - 1;
+        ChunkKey target = new ChunkKey(-1, -2);
+        ChunkKey east = new ChunkKey(0, -2);
+        ChunkKey south = new ChunkKey(-1, -1);
+        ChunkKey diagonal = new ChunkKey(0, -1);
+        ChunkRepository repository =
+                generatedChunks(target, east, south, diagonal);
         long targetRevision = repository.revision(target);
-        long westRevision = repository.revision(west);
-        long northRevision = repository.revision(north);
+        long eastRevision = repository.revision(east);
+        long southRevision = repository.revision(south);
+        long diagonalRevision = repository.revision(diagonal);
 
-        repository.setBlock(
-                target.worldOriginX(),
-                4,
-                target.worldOriginZ(),
-                (byte) 1);
+        repository.setBlock(worldX, 4, worldZ, (byte) 1);
 
         assertEquals(targetRevision + 1, repository.revision(target));
-        assertEquals(westRevision + 1, repository.revision(west));
-        assertEquals(northRevision + 1, repository.revision(north));
-        assertFalse(repository.contains(new ChunkKey(-2, -2)));
+        assertEquals(eastRevision + 1, repository.revision(east));
+        assertEquals(southRevision + 1, repository.revision(south));
+        assertEquals(diagonalRevision, repository.revision(diagonal));
+        assertEquals(
+                1,
+                Byte.toUnsignedInt(
+                        repository.getBlock(worldX, 4, worldZ)));
     }
 
     @Test
@@ -320,6 +358,37 @@ class ChunkRepositoryTest {
     }
 
     @Test
+    void failedGenerationDoesNotDirtyExistingCardinalNeighbor() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey target = new ChunkKey(0, 0);
+        ChunkKey east = target.east();
+        repository.generate(
+                east, chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
+        long eastRevision = repository.revision(east);
+        ChunkState eastState = repository.state(east);
+        IllegalStateException expected =
+                new IllegalStateException("generation failed");
+
+        IllegalStateException actual =
+                assertThrows(
+                        IllegalStateException.class,
+                        () ->
+                                repository.generate(
+                                        target,
+                                        chunk -> {
+                                            chunk.setBlock(1, 1, 1, (byte) 2);
+                                            throw expected;
+                                        }));
+
+        assertSame(expected, actual);
+        assertFalse(repository.contains(target));
+        assertEquals(ChunkState.EMPTY, repository.state(target));
+        assertEquals(0L, repository.revision(target));
+        assertEquals(eastState, repository.state(east));
+        assertEquals(eastRevision, repository.revision(east));
+    }
+
+    @Test
     void mutationRetriesWhenGenerationFailureRemovesCapturedEntry()
             throws Exception {
         ChunkRepository repository = new ChunkRepository();
@@ -399,6 +468,112 @@ class ChunkRepositoryTest {
     }
 
     @Test
+    void boundaryPropagationDoesNotMutateRemovedNeighborEntry()
+            throws Exception {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey target = new ChunkKey(0, 0);
+        ChunkKey east = target.east();
+        repository.generate(
+                target, chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
+        long targetRevision = repository.revision(target);
+        CountDownLatch generationStarted = new CountDownLatch(1);
+        CountDownLatch failGeneration = new CountDownLatch(1);
+        CountDownLatch mutationStarted = new CountDownLatch(1);
+        AtomicReference<Thread> mutationThread = new AtomicReference<>();
+        IllegalStateException generationFailure =
+                new IllegalStateException("generation failed");
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        try {
+            Future<?> generation =
+                    executor.submit(
+                            () ->
+                                    repository.generate(
+                                            east,
+                                            chunk -> {
+                                                generationStarted.countDown();
+                                                try {
+                                                    if (!failGeneration.await(
+                                                            5,
+                                                            TimeUnit.SECONDS)) {
+                                                        throw new AssertionError(
+                                                                "generation release timed out");
+                                                    }
+                                                } catch (InterruptedException failure) {
+                                                    Thread.currentThread().interrupt();
+                                                    throw new AssertionError(failure);
+                                                }
+                                                throw generationFailure;
+                                            }));
+            assertTrue(
+                    generationStarted.await(5, TimeUnit.SECONDS),
+                    "neighbor generation did not acquire its entry monitor");
+            Object capturedNeighborEntry =
+                    capturedEntry(repository, east);
+            assertTrue(
+                    capturedNeighborEntry != null,
+                    "neighbor entry was not present during generation");
+
+            Future<Boolean> mutation =
+                    executor.submit(
+                            () -> {
+                                mutationThread.set(Thread.currentThread());
+                                mutationStarted.countDown();
+                                return repository.setBlock(
+                                        GameConfig.Chunk.SIZE - 1,
+                                        2,
+                                        3,
+                                        (byte) 7);
+                            });
+            assertTrue(
+                    mutationStarted.await(5, TimeUnit.SECONDS),
+                    "boundary mutation task did not start");
+
+            long blockedDeadline =
+                    System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (mutationThread.get().getState() != Thread.State.BLOCKED
+                    && System.nanoTime() < blockedDeadline) {
+                Thread.onSpinWait();
+            }
+            assertEquals(
+                    Thread.State.BLOCKED,
+                    mutationThread.get().getState(),
+                    "boundary mutation did not block on the neighbor entry monitor");
+
+            failGeneration.countDown();
+
+            ExecutionException actualFailure =
+                    assertThrows(
+                            ExecutionException.class,
+                            () -> generation.get(5, TimeUnit.SECONDS));
+            assertSame(generationFailure, actualFailure.getCause());
+            assertTrue(mutation.get(5, TimeUnit.SECONDS));
+            assertEquals(ChunkState.DIRTY, repository.state(target));
+            assertEquals(
+                    targetRevision + 1,
+                    repository.revision(target));
+            assertEquals(
+                    7,
+                    Byte.toUnsignedInt(
+                            repository.getBlock(
+                                    GameConfig.Chunk.SIZE - 1,
+                                    2,
+                                    3)));
+            assertFalse(repository.contains(east));
+            assertEquals(ChunkState.EMPTY, repository.state(east));
+            assertEquals(0L, repository.revision(east));
+            assertTrue(repository.snapshot(east).isEmpty());
+            assertEquals(Set.of(target), repository.keys());
+            assertRemovedEntryWasNotDirtied(
+                    capturedNeighborEntry, generationFailure);
+        } finally {
+            failGeneration.countDown();
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
     void keysAreImmutableAndDetachedFromLaterRepositoryChanges() {
         ChunkRepository repository = new ChunkRepository();
         ChunkKey first = new ChunkKey(0, 0);
@@ -469,5 +644,38 @@ class ChunkRepositoryTest {
         assertEquals(firstRevision + 1, repository.revision(firstNeighbor));
         assertEquals(secondRevision + 1, repository.revision(secondNeighbor));
         assertEquals(diagonalRevision, repository.revision(diagonal));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Object capturedEntry(
+            ChunkRepository repository, ChunkKey key) {
+        try {
+            Field entriesField =
+                    ChunkRepository.class.getDeclaredField("entries");
+            entriesField.setAccessible(true);
+            ConcurrentHashMap<ChunkKey, ?> entries =
+                    (ConcurrentHashMap<ChunkKey, ?>)
+                            entriesField.get(repository);
+            return entries.get(key);
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError(failure);
+        }
+    }
+
+    private static void assertRemovedEntryWasNotDirtied(
+            Object entry, Throwable generationFailure) {
+        try {
+            Field revisionField =
+                    entry.getClass().getDeclaredField("revision");
+            Field failureField =
+                    entry.getClass().getDeclaredField("failure");
+            revisionField.setAccessible(true);
+            failureField.setAccessible(true);
+
+            assertEquals(0L, revisionField.getLong(entry));
+            assertSame(generationFailure, failureField.get(entry));
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError(failure);
+        }
     }
 }
