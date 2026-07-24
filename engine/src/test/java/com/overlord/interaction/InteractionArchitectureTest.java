@@ -179,6 +179,119 @@ class InteractionArchitectureTest {
         }
     }
 
+    @Test
+    void phaseSevenDocumentsProtectPromptSuiteV21Decisions()
+            throws IOException {
+        Path contract =
+                REPOSITORY_ROOT.resolve(
+                        "docs/architecture/interaction-inventory-contract.md");
+        Path handoff =
+                REPOSITORY_ROOT.resolve(
+                        "docs/agent-handoffs/phase-07-handoff.md");
+
+        assertPromptSuiteV21Decisions(read(contract), contract);
+        assertPromptSuiteV21Decisions(read(handoff), handoff);
+    }
+
+    private static void assertPromptSuiteV21Decisions(
+            String document, Path source) {
+        assertContainsAll(
+                document,
+                source,
+                "canonical stack and command/view distinction",
+                "canonical immutable `ItemStack`",
+                "`ResourceLocation`",
+                "positive count",
+                "`ItemStackView`",
+                "read-only snapshot/projection",
+                "not a second domain stack",
+                "no second item registry",
+                "Phase 8 must not define another `ItemStack`");
+        assertContainsAll(
+                document,
+                source,
+                "inventory reservation semantics",
+                "`InventoryReservation`",
+                "`reserve`",
+                "`commit`",
+                "`rollback`",
+                "idempotent",
+                "ordinary inventory state changes",
+                "`INSERT`",
+                "`EXTRACT`",
+                "remainder",
+                "explicit failure");
+        assertContainsAll(
+                document,
+                source,
+                "world-item source of truth",
+                "unique `WorldItemService`",
+                "`WorldItemSpawnRequest`",
+                "`WorldItemSpawnResult`",
+                "`WorldItemReservation`",
+                "`WorldItemSnapshot`",
+                "stable `WorldItemId`",
+                "Q drop",
+                "block drops",
+                "Phase 11 physics drops",
+                "share the service");
+        assertContainsAll(
+                document,
+                source,
+                "repository-owned dirty outcomes",
+                "`ChunkRepository` owns dirty propagation and revision outcomes",
+                "`ChunkMutationOutcome`",
+                "`BlockWorldMutationOutcome`",
+                "`ChunkDirtyEvent` is post-commit observation only",
+                "missing boundary neighbors are not reported as dirtied",
+                "Phase 3 stale-result and mesh lifecycle remain authoritative");
+        assertContainsAll(
+                document,
+                source,
+                "read-only interaction projection",
+                "read-only `InteractionViewModel`",
+                "target",
+                "face",
+                "progress",
+                "mode",
+                "active item",
+                "failure reason");
+        assertContainsAll(
+                document,
+                source,
+                "mutation dispatch failure policy",
+                "Before-event mutation reentrancy is prohibited",
+                "post-write subscriber failure does not roll back",
+                "not automatically retried",
+                "`mutationApplied() == true` forbids blind caller retry");
+        assertContainsAll(
+                document,
+                source,
+                "v2.1 implementation non-goals",
+                "no Phase 8 gameplay",
+                "formal inventory",
+                "production world entity",
+                "physics drop",
+                "renderer",
+                "controller",
+                "mesh-manager",
+                "UI implementation was added");
+    }
+
+    private static void assertContainsAll(
+            String document,
+            Path source,
+            String decision,
+            String... requiredTerms) {
+        List<String> missing =
+                Stream.of(requiredTerms)
+                        .filter(term -> !document.contains(term))
+                        .toList();
+        assertTrue(
+                missing.isEmpty(),
+                source + " is missing " + decision + ": " + missing);
+    }
+
     private static Stream<Path> javaSources(Path... roots) throws IOException {
         List<Path> sources = new ArrayList<>();
         for (Path root : roots) {

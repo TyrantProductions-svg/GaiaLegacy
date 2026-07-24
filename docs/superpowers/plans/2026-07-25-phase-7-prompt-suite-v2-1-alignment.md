@@ -42,7 +42,7 @@
 - Changes command-side stack fields from `ItemStackView` to `ItemStack`
 - Preserves read-only `ItemStackView.itemId()` and `ItemStackView.count()`
 
-- [ ] **Step 1: Write failing canonical value tests**
+- [x] **Step 1: Write failing canonical value tests**
 
 Add tests equivalent to:
 
@@ -62,7 +62,7 @@ Add reflection assertions that `InventoryChangeRequest.replacement()` and
 `InventoryView.stack()` and `InteractionViewModel.activeItem()` remain view
 surfaces.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -73,7 +73,7 @@ Run:
 Expected: compilation fails because `ItemStack` does not exist or the command
 types still use `ItemStackView`.
 
-- [ ] **Step 3: Implement the minimal canonical value**
+- [x] **Step 3: Implement the minimal canonical value**
 
 Implement:
 
@@ -92,7 +92,7 @@ public record ItemStack(ResourceLocation itemId, int count)
 Use `Optional<ItemStack>` in command values. Keep `ItemStackView` documented
 as a snapshot/projection and do not introduce any item registry.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run the focused command from Step 2 and then:
 
@@ -102,7 +102,7 @@ Run the focused command from Step 2 and then:
 
 Expected: all affected tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add engine/src/main engine/src/test engine/src/testFixtures game/src/test docs/superpowers/plans/2026-07-25-phase-7-prompt-suite-v2-1-alignment.md
@@ -134,7 +134,7 @@ InventoryReservationResult commit(InventoryReservationId reservationId);
 InventoryReservationResult rollback(InventoryReservationId reservationId);
 ```
 
-- [ ] **Step 1: Write failing reservation value and service tests**
+- [x] **Step 1: Write failing reservation value and service tests**
 
 Cover:
 
@@ -203,7 +203,7 @@ Require `INSERT` and `EXTRACT`, positive stable IDs, a positive reserved stack,
 an optional positive same-item remainder, explicit failure statuses, and
 unknown-reservation results.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -213,7 +213,7 @@ Run:
 
 Expected: compilation fails because reservation contracts do not exist.
 
-- [ ] **Step 3: Implement minimal contracts and fake**
+- [x] **Step 3: Implement minimal contracts and fake**
 
 Use these status families:
 
@@ -235,7 +235,7 @@ decision depends only on the reservation ledger, not the current inventory
 revision. It does not implement stacking, capacity, or production storage
 rules.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run the focused command and:
 
@@ -246,7 +246,7 @@ Run the focused command and:
 
 Expected: all focused tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add engine/src/main/java/com/overlord/inventory engine/src/test/java/com/overlord/inventory engine/src/testFixtures/java/com/overlord/inventory game/src/test
@@ -280,7 +280,7 @@ WorldItemReservationResult commit(WorldItemReservationId reservationId);
 WorldItemReservationResult rollback(WorldItemReservationId reservationId);
 ```
 
-- [ ] **Step 1: Write failing world-item contract tests**
+- [x] **Step 1: Write failing world-item contract tests**
 
 Cover:
 
@@ -351,7 +351,7 @@ void rollbackRestoresAvailabilityAndIsIdempotent() {
 Also use reflection/source architecture assertions to ensure the API has no
 dependency on ECS, physics, rendering, LWJGL, OpenGL, or `game`.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -361,7 +361,7 @@ Run:
 
 Expected: compilation fails because the world-item API does not exist.
 
-- [ ] **Step 3: Implement minimal contracts and stateful fake**
+- [x] **Step 3: Implement minimal contracts and stateful fake**
 
 `WorldItemSpawnRequest` and `WorldItemSnapshot` contain primitive finite
 position and velocity components, a canonical `ItemStack`, a non-negative
@@ -371,7 +371,7 @@ item/reservation IDs and models only spawn, reservation availability,
 commit, rollback, partial remainder, and terminal idempotency. It creates no
 production entity or `PhysicsBody`.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run the focused command and:
 
@@ -381,7 +381,7 @@ Run the focused command and:
 
 Expected: all focused tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add engine/src/main/java/com/overlord/worlditem engine/src/test/java/com/overlord/worlditem engine/src/testFixtures/java/com/overlord/worlditem game/src/test
@@ -411,7 +411,7 @@ ChunkMutationOutcome compareAndSetBlock(
 `OUT_OF_BOUNDS`, the observed byte block, and the exact immutable ordered
 list of `DirtyChunkRevision` values advanced by that committed mutation.
 
-- [ ] **Step 1: Write failing authoritative-outcome tests**
+- [x] **Step 1: Write failing authoritative-outcome tests**
 
 Cover:
 
@@ -461,7 +461,7 @@ void staleExpectedBlockDoesNotAdvanceRevisionOrAcceptStaleMesh() {
 }
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -472,7 +472,7 @@ Run:
 Expected: compilation fails because `compareAndSetBlock` and outcome values do
 not exist.
 
-- [ ] **Step 3: Implement atomic outcome collection**
+- [x] **Step 3: Implement atomic outcome collection**
 
 Perform expected-value comparison and target mutation under the target entry
 monitor. Record the target's newly issued repository revision, then call a
@@ -481,7 +481,7 @@ advanced. Never create missing neighbors. Keep `setBlock` behavior by
 delegating to the same internal mutation path without an expected-value
 precondition.
 
-- [ ] **Step 4: Verify GREEN and stale lifecycle**
+- [x] **Step 4: Verify GREEN and stale lifecycle**
 
 Run the focused command and:
 
@@ -491,7 +491,7 @@ Run the focused command and:
 
 Expected: repository, world, stale-result, and mesh lifecycle tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add engine/src/main/java/com/overlord/voxel engine/src/test/java/com/overlord/voxel
@@ -517,7 +517,7 @@ git commit -m "refactor(voxel): expose committed mutation outcome"
 - Removes: `ChunkDirtyTracker` constructor dependency from `DefaultWorldMutationService`
 - Produces exact post-commit dirty revision observations
 
-- [ ] **Step 1: Write failing service migration tests**
+- [x] **Step 1: Write failing service migration tests**
 
 Cover:
 
@@ -577,7 +577,7 @@ Add architecture assertions that `DefaultWorldMutationService` neither imports
 nor constructs `ChunkDirtyTracker`, and that `ChunkDirtyEvent` is published
 only after an `APPLIED` outcome.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -588,7 +588,7 @@ Run:
 Expected: compilation or behavioral failures because the service still
 recalculates dirty chunks and allows Before-event reentrancy.
 
-- [ ] **Step 3: Implement minimal migration**
+- [x] **Step 3: Implement minimal migration**
 
 Replace `BlockWorldAccess.setBlock` with a compare-and-set outcome boundary.
 Use the outcome's actual dirty revisions in both `BlockChangeResult` and
@@ -598,7 +598,7 @@ revisions. Guard only the synchronous Before dispatch against nested
 post-Before target revalidation. Preserve post-write failure aggregation and
 `mutationApplied=true`.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run the focused command and:
 
@@ -608,7 +608,7 @@ Run the focused command and:
 
 Expected: all engine tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add engine/src/main/java/com/overlord/interaction engine/src/test/java/com/overlord/interaction engine/src/testFixtures/java/com/overlord/interaction
@@ -639,14 +639,14 @@ Optional<ItemStackView> activeItem();
 Optional<InteractionFailureReason> failureReason();
 ```
 
-- [ ] **Step 1: Write failing view-model tests**
+- [x] **Step 1: Write failing view-model tests**
 
 Test the exact method set, six `BlockFace` values and normal conversion,
 `NONE/BREAKING/PLACING/USING` modes, finite inclusive `[0, 1]` progress,
 target/face presence consistency in the fixture, and the absence of mutable
 service return types.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -656,18 +656,18 @@ Run:
 
 Expected: compilation fails because the view-model contracts do not exist.
 
-- [ ] **Step 3: Implement minimal read-only contracts and fixture**
+- [x] **Step 3: Implement minimal read-only contracts and fixture**
 
 `InteractionFailureReason` wraps a non-null `ResourceLocation` code and no
 display text. `StubInteractionViewModel` defensively validates progress and
 target/face presence but performs no raycast, gameplay, inventory mutation,
 or UI work.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run the focused command and the game fixture smoke test.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add engine/src/main/java/com/overlord/interaction/api engine/src/test/java/com/overlord/interaction engine/src/testFixtures/java/com/overlord/interaction game/src/test
@@ -687,32 +687,32 @@ git commit -m "feat(api): add read-only interaction view model"
 - Records Before reentrancy prohibition, post-write no-rollback/no-retry
   semantics, and repository-owned dirty/revision outcomes
 
-- [ ] **Step 1: Add documentation architecture tests or source assertions first**
+- [x] **Step 1: Add documentation architecture tests or source assertions first**
 
 Extend architecture tests to require documentation terms for canonical
 `ItemStack`, both reservation services, world-item source-of-truth use,
 repository-owned dirty revisions, Before-event reentrancy prohibition,
 post-write no rollback/no automatic retry, and `mutationApplied=true`.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run the affected architecture tests and confirm failure on missing v2.1
 documentation.
 
-- [ ] **Step 3: Update architecture and handoff documents**
+- [x] **Step 3: Update architecture and handoff documents**
 
 Record completed and unfinished work, architecture decisions, modified files,
 test evidence, known risks, and next-phase protected interfaces. Explicitly
 state that no Phase 8 gameplay, production inventory, world entity, physics
 drop, renderer, controller, mesh-manager, or UI implementation was added.
 
-- [ ] **Step 4: Run branch-wide owner review**
+- [ ] **Step 4: Run branch-wide owner review (pending controller dispatch)**
 
 Review all `origin/main..HEAD` engine, game, shared build, fixture, and
 documentation changes for Critical, Important, and Minor findings. Resolve
 all Critical and Important findings with focused failing tests before fixes.
 
-- [ ] **Step 5: Run final verification**
+- [x] **Step 5: Run final verification**
 
 ```powershell
 .\gradlew.bat clean test build --console=plain --no-daemon
@@ -727,14 +727,14 @@ Count JUnit XML tests, failures, errors, and skipped tests. Verify no tracked
 generated files and no prohibited production dependencies or direct gameplay
 world writes.
 
-- [ ] **Step 6: Commit documentation**
+- [x] **Step 6: Commit documentation**
 
 ```powershell
 git add docs engine/src/test game/src/test
 git commit -m "docs: align phase 7 contracts with prompt suite v2.1"
 ```
 
-- [ ] **Step 7: Report without publishing**
+- [x] **Step 7: Report without publishing**
 
 Report final HEAD, exact test count, build and packaged-resource results,
 `git diff --stat`, owner-review verdict, known risks, and unfinished items.

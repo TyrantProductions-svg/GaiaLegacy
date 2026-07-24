@@ -1,413 +1,385 @@
 # Phase 07 Handoff
 
+Branch: `feat/interaction-api-contracts`
+Base: `origin/main` at `ed707ec821b47b21232d44f79a5faf048c4f77e6`
+Prompt Suite v2.1 scope-alignment supplement: 2026-07-25
+
 ## Completed work
 
-- Built Phase 7 on `feat/interaction-api-contracts` from `origin/main` at
-  `ed707ec`; the original reviewed handoff ends at `0f73604`, the primary
-  final-review fixes are at `7415cf6`, and the boundary-adjacency hardening is
-  at `64f1743`.
-- Added game-neutral interaction values and contracts for entity references,
-  gameplay actions and contexts, immutable `ResourceLocation` block hits,
-  read-only block raycasts, and synchronous gameplay world mutation.
-- Added `DefaultWorldMutationService` with explicit constructor dependencies,
-  main-thread validation, optimistic conflict detection, synchronous
-  cancellation, an immediate post-before precondition revalidation, one outer
-  world write, dirty-chunk calculation, and ordered post-change publication.
-  If a synchronous before-change subscriber changes the target, the outer
-  transaction returns `CONFLICT` with the newly observed block, performs no
-  outer write, and publishes no outer success events.
-- Added immutable before-change, changed, and chunk-dirty events. A failure
-  before the write reports `mutationApplied() == false`; post-write dispatch
-  attempts both events and reports `mutationApplied() == true`, preserving
-  the first cause and suppressing a distinct second failure.
-- Added read-only body inventory contracts with the stable `LEFT_HAND`,
-  `RIGHT_HAND`, and `MOUTH` slot order. Snapshot reads are separated from the
-  `InventoryService` mutation boundary, and the UI ViewModel cannot expose
-  that service. Unknown owners are representable through
-  `Optional<InventoryView>` snapshots and results with status-dependent
-  presence and revision invariants.
-- Enabled Gradle `java-test-fixtures` in `engine`, made the fixtures available
-  to game tests, and added configurable interaction/inventory fakes and stubs.
-  The fixtures are absent from the production runtime classpath.
-- Added contract, transaction, dirty-propagation, fixture-consumption, and
-  architecture tests. Value coverage includes extreme normals, non-finite hit
-  data, overflow-only adjacent coordinates, Optional containers, timestamps,
-  held stacks, and resource identities. The architecture guard allows direct
-  `setBlock` patterns only in
-  `WorldLoader.java` and `GaiaWorldGenerator.java`.
-- Reconciled the approved architecture document with the final public names
-  and behavior and updated the current architecture baseline for Phase 7.
+The original Phase 7 work established game-neutral raycast, block-mutation,
+body-inventory, fixture, and architecture boundaries. The dated Prompt Suite
+v2.1 scope-alignment supplement completed Tasks 1-6 as follows:
+
+- introduced canonical item commands and clarified snapshot projections;
+- added inventory reservation contracts and a stateful test-fixture fake;
+- added a unique world-item source-of-truth contract and fake;
+- moved authoritative dirty/revision outcomes into `ChunkRepository`;
+- migrated `DefaultWorldMutationService` to repository-issued outcomes and
+  prohibited Before-event reentrancy;
+- added the read-only interaction presentation contract and fixture;
+- reconciled the normative architecture document and current baseline;
+- added a focused documentation contract test using a verified RED/GREEN
+  cycle.
+
+Scope verification confirms that no Phase 8 gameplay, formal inventory,
+production world entity, physics drop, renderer, controller, mesh-manager, or
+UI implementation was added.
 
 ## Unfinished work
 
-- No Gaia `BlockWorldAccess` or `BlockRaycastService` adapter is implemented
-  or wired into `GameBootstrap` or `GameContext`.
-- Breaking, placement, item use, pickup, dropping, inventory storage and
-  rules, persistence, controller behavior, and inventory UI remain
-  unimplemented.
-- Windows visual and behavioral smoke-test results remain unverified. A game
-  session was launched and its process exited after manual window closure,
-  but the controller captured neither the Gradle console exit code nor an
-  independent visual check.
-- Native macOS `./gradlew clean test build` and interactive
-  `./gradlew :game` were not run because no macOS environment was used.
+- Final branch-wide engine-owner and game-owner reviews remain pending. The
+  controller will dispatch them after the Task 7 documentation commit; this
+  task does not claim either review complete.
+- Gaia `BlockRaycastService` and resource-ID `BlockWorldAccess` adapters are
+  not implemented or wired.
+- Production inventory storage/rules, a production world-item adapter,
+  breaking, placement, pickup, Q drop, block drops, Phase 11 physics drops,
+  persistence, controller behavior, and UI remain unimplemented.
+- Windows interactive `.\gradlew.bat :game` was not rerun for this v2.1
+  supplement. The earlier qualified launch observation did not capture an
+  independent visual verdict or Gradle exit code.
+- Native macOS clean-build and interactive verification were not run.
+- No push, pull request, merge, or modification of `main` was performed.
 
 ## Core architecture decisions
 
-- `WorldMutationService.changeBlock` is the only gameplay block-write
-  boundary. `World.setBlock` remains available for low-level storage and world
-  generation, and a future Gaia `BlockWorldAccess` adapter must delegate to
-  it rather than introduce another block store.
-- A successful mutation preserves this synchronous order on the main
-  fixed-update thread: assert ownership, validate the request, read and
-  compare the current block, publish before-change, re-read and compare the
-  current block, write once, calculate dirty chunks, publish changed, publish
-  one complete chunk-dirty event, then return `APPLIED`.
-- The cancellable before-change event uses an injected synchronous
-  `BlockChangeEventPublisher`, not the queued singleton `EventBus`. Rejected
-  requests publish no success events and perform no write.
-- `BlockChangeRequest.expectedBlock` provides optimistic conflict detection.
-  Expected domain rejections are returned as statuses; invalid references,
-  wrong-thread calls, and dispatch failures remain explicit programming or
-  delivery errors.
-- `BlockRaycastService` is a read-only, data-driven boundary whose hits expose
-  `ResourceLocation`. A future Gaia adapter must reuse the Phase 6
-  shape-aware `BlockRaycast` algorithm and translate stored byte IDs with
-  `BlockRegistry`. Phase 7 validates hit values but makes no
-  interface-level origin/direction validation claim without that adapter.
-- `InventoryView`, `ItemStackView`, and `BodyInventoryViewModel` expose
-  read-only snapshots. `InventoryService.snapshot` and change-result views
-  use `Optional<InventoryView>`; `UNKNOWN_OWNER` is empty, while all other
-  statuses require a present non-negative-revision view. Inventory mutation
-  remains behind `InventoryService`, and UI code emits intent rather than
-  receiving a mutable service.
-- Interaction and inventory APIs remain engine-owned and game-neutral.
-  Future adapters are game-owned. Shared Gradle and documentation changes
-  remain shared boundaries requiring both owners' awareness.
-- Phase 7 is contract infrastructure only. It deliberately does not add
-  gameplay behavior, inventory rules, UI rendering, OpenGL calls, GPU
-  resources, or new `ServiceLocator` use.
+### Canonical stack and inventory reservations
 
-## Modified files
+- `ItemStack(ResourceLocation itemId, int count)` is the canonical immutable `ItemStack`.
+  Its `ResourceLocation` is non-null and its count is a positive count.
+- `ItemStackView` is a read-only snapshot/projection, not a second domain stack.
+  It is for views; commands and results use `ItemStack`.
+- There is no second item registry, and Phase 8 must not define another `ItemStack`
+  or alternate item identity.
+- `InventoryReservation` and `InventoryReservationId` support `reserve`,
+  `commit`, and `rollback` for `INSERT` and `EXTRACT`.
+- Full and partial success, remainder, and explicit failure shapes are
+  validated. A successful reservation is protected from ordinary inventory state changes.
+- `commit` and `rollback` are terminal and idempotent for repeat calls;
+  opposite terminal calls return a conflict.
+- `FakeInventoryReservationService` is test-fixture-only and does not imply
+  production capacity, stacking, storage, or concurrency behavior.
 
-The final Phase 7 branch changes these exact 43 tracked paths relative to
-`origin/main`:
+### Unique world-item service
 
-**Architecture, plan, and handoff**
+- The unique `WorldItemService` owns all instance identities and transaction
+  holds. Its values include `WorldItemSpawnRequest`, `WorldItemSpawnResult`,
+  `WorldItemReservation`, `WorldItemSnapshot`, stable `WorldItemId`, and
+  stable reservation IDs.
+- Spawn and reservation results make full/partial remainders and explicit
+  failures observable. Commit removes only the reserved amount; rollback
+  restores availability; repeated terminal calls are idempotent.
+- Q drop, block drops, and Phase 11 physics drops share the service. Pickup
+  coordinates world-item and inventory reservations; no second entity store
+  or ID namespace may be introduced.
+- `FakeWorldItemService` is test-fixture-only. It creates no production ECS
+  entity, physics body, renderer object, or gameplay loop.
 
-- `docs/agent-handoffs/phase-07-handoff.md`
-- `docs/architecture/current-baseline.md`
-- `docs/architecture/interaction-inventory-contract.md`
-- `docs/superpowers/plans/2026-07-24-phase-7-interaction-inventory-contracts.md`
+### Repository outcome and mutation events
 
-**Build configuration**
+- `ChunkRepository` owns dirty propagation and revision outcomes through
+  `ChunkMutationOutcome`. `World` delegates to it, and
+  `BlockWorldMutationOutcome` maps the same authoritative facts into
+  resource identities.
+- The applied outcome contains exact `DirtyChunkRevision` entries; missing boundary neighbors are not reported as dirtied.
+- Phase 3 stale-result and mesh lifecycle remain authoritative. This
+  supplement does not modify `ChunkMeshManager`.
+- `DefaultWorldMutationService` has exactly `MainThreadGuard`,
+  `BlockWorldAccess`, and `BlockChangeEventPublisher` constructor
+  dependencies. It has no `ChunkDirtyTracker` and computes no theoretical
+  invalidation candidates.
+- `ChunkDirtyEvent` is post-commit observation only and carries exact
+  repository-issued revisions.
+- Before-event mutation reentrancy is prohibited for all targets. There is no
+  supported nesting depth, the guard resets in `finally`, and post-Before
+  target revalidation remains required.
+- A post-write subscriber failure does not roll back and is not automatically retried.
+  Both post events are attempted. `mutationApplied() == true` forbids blind caller retry.
 
-- `engine/build.gradle`
-- `game/build.gradle`
+### Read-only interaction projection
 
-**Engine production interaction API and implementation**
+- The read-only `InteractionViewModel` exposes optional target and face,
+  finite inclusive progress, mode, active item, and failure reason.
+- `BlockFace` is exactly the six axis faces. `InteractionMode` is `NONE`,
+  `BREAKING`, `PLACING`, or `USING`; failure reasons are non-null
+  `ResourceLocation` codes without display text.
+- `StubInteractionViewModel` is fixture-only. It performs no raycast,
+  mutation, controller, scheduling, or UI work.
 
-- `engine/src/main/java/com/overlord/interaction/BlockWorldAccess.java`
-- `engine/src/main/java/com/overlord/interaction/DefaultWorldMutationService.java`
-- `engine/src/main/java/com/overlord/interaction/api/BeforeBlockChangedEvent.java`
-- `engine/src/main/java/com/overlord/interaction/api/BlockChangeDecision.java`
-- `engine/src/main/java/com/overlord/interaction/api/BlockChangeDispatchException.java`
-- `engine/src/main/java/com/overlord/interaction/api/BlockChangeEventPublisher.java`
-- `engine/src/main/java/com/overlord/interaction/api/BlockChangeRequest.java`
-- `engine/src/main/java/com/overlord/interaction/api/BlockChangeResult.java`
-- `engine/src/main/java/com/overlord/interaction/api/BlockChangedEvent.java`
-- `engine/src/main/java/com/overlord/interaction/api/BlockHitResult.java`
-- `engine/src/main/java/com/overlord/interaction/api/BlockRaycastService.java`
-- `engine/src/main/java/com/overlord/interaction/api/ChunkDirtyEvent.java`
-- `engine/src/main/java/com/overlord/interaction/api/EntityRef.java`
-- `engine/src/main/java/com/overlord/interaction/api/InteractionAction.java`
-- `engine/src/main/java/com/overlord/interaction/api/InteractionContext.java`
-- `engine/src/main/java/com/overlord/interaction/api/ItemUseContext.java`
-- `engine/src/main/java/com/overlord/interaction/api/WorldMutationService.java`
+### Ownership
 
-**Engine production inventory API**
+- Engine contracts and fixtures remain under engine-developer ownership.
+  Future Gaia adapters and gameplay remain game-developer owned.
+- Shared build and documentation changes require both owners' awareness.
+- World/inventory/world-item mutations remain fixed-update main-thread work.
+  Every OpenGL/GLFW/GPU lifecycle operation remains on the context-owning
+  main thread.
 
-- `engine/src/main/java/com/overlord/inventory/api/BodyInventoryViewModel.java`
-- `engine/src/main/java/com/overlord/inventory/api/BodySlot.java`
-- `engine/src/main/java/com/overlord/inventory/api/InventoryChangeRequest.java`
-- `engine/src/main/java/com/overlord/inventory/api/InventoryChangeResult.java`
-- `engine/src/main/java/com/overlord/inventory/api/InventoryService.java`
-- `engine/src/main/java/com/overlord/inventory/api/InventoryView.java`
-- `engine/src/main/java/com/overlord/inventory/api/ItemStackView.java`
+## Exact modified files relative to `origin/main`
 
-**Engine tests**
+The branch changes these exact 76 tracked paths relative to `origin/main`:
 
-- `engine/src/test/java/com/overlord/interaction/DefaultWorldMutationServiceTest.java`
-- `engine/src/test/java/com/overlord/interaction/InteractionArchitectureTest.java`
-- `engine/src/test/java/com/overlord/interaction/api/BlockMutationContractTest.java`
-- `engine/src/test/java/com/overlord/interaction/api/InteractionContractTest.java`
-- `engine/src/test/java/com/overlord/inventory/api/InventoryContractTest.java`
-
-**Shared engine test fixtures**
-
-- `engine/src/testFixtures/java/com/overlord/interaction/testing/FakeBlockWorldAccess.java`
-- `engine/src/testFixtures/java/com/overlord/interaction/testing/RecordingBlockChangeEventPublisher.java`
-- `engine/src/testFixtures/java/com/overlord/interaction/testing/StubBlockRaycastService.java`
-- `engine/src/testFixtures/java/com/overlord/inventory/testing/StubBodyInventoryViewModel.java`
-- `engine/src/testFixtures/java/com/overlord/inventory/testing/StubInventoryService.java`
-- `engine/src/testFixtures/java/com/overlord/inventory/testing/TestInventoryView.java`
-- `engine/src/testFixtures/java/com/overlord/inventory/testing/TestItemStackView.java`
-
-**Game fixture-consumption test**
-
-- `game/src/test/java/com/gaia/contracts/EngineContractFixtureSmokeTest.java`
-
-Ignored `.superpowers/sdd` briefs and reports are local coordination records
-and are not part of the tracked branch diff.
-
-## Test commands and results
-
-Earlier Phase 7 evidence:
-
-- Pre-change Windows `.\gradlew.bat clean test build`: passed with
-  16 actionable tasks.
-- Task 4 focused transaction verification: 14/14 tests passed.
-- Task 4 full engine verification: 382/382 tests passed.
-- Task 5 Windows `.\gradlew.bat clean test build`: passed with
-  18 actionable tasks; the production runtime classpath excluded test
-  fixtures.
-- Task 6 focused architecture and full test commands passed.
-
-Fresh Task 7 Windows automated verification on 2026-07-24:
-
-```powershell
-git diff --check
-git ls-files | Select-String -Pattern '(^|/)(bin/|build/)|\.class$'
-.\gradlew.bat clean test build
+```text
+docs/agent-handoffs/phase-07-handoff.md
+docs/architecture/current-baseline.md
+docs/architecture/interaction-inventory-contract.md
+docs/superpowers/plans/2026-07-24-phase-7-interaction-inventory-contracts.md
+docs/superpowers/plans/2026-07-25-phase-7-prompt-suite-v2-1-alignment.md
+engine/build.gradle
+engine/src/main/java/com/overlord/interaction/BlockWorldAccess.java
+engine/src/main/java/com/overlord/interaction/BlockWorldMutationOutcome.java
+engine/src/main/java/com/overlord/interaction/DefaultWorldMutationService.java
+engine/src/main/java/com/overlord/interaction/api/BeforeBlockChangedEvent.java
+engine/src/main/java/com/overlord/interaction/api/BlockChangeDecision.java
+engine/src/main/java/com/overlord/interaction/api/BlockChangeDispatchException.java
+engine/src/main/java/com/overlord/interaction/api/BlockChangeEventPublisher.java
+engine/src/main/java/com/overlord/interaction/api/BlockChangeRequest.java
+engine/src/main/java/com/overlord/interaction/api/BlockChangeResult.java
+engine/src/main/java/com/overlord/interaction/api/BlockChangedEvent.java
+engine/src/main/java/com/overlord/interaction/api/BlockFace.java
+engine/src/main/java/com/overlord/interaction/api/BlockHitResult.java
+engine/src/main/java/com/overlord/interaction/api/BlockMutationReentrancyException.java
+engine/src/main/java/com/overlord/interaction/api/BlockRaycastService.java
+engine/src/main/java/com/overlord/interaction/api/ChunkDirtyEvent.java
+engine/src/main/java/com/overlord/interaction/api/EntityRef.java
+engine/src/main/java/com/overlord/interaction/api/InteractionAction.java
+engine/src/main/java/com/overlord/interaction/api/InteractionContext.java
+engine/src/main/java/com/overlord/interaction/api/InteractionFailureReason.java
+engine/src/main/java/com/overlord/interaction/api/InteractionMode.java
+engine/src/main/java/com/overlord/interaction/api/InteractionViewModel.java
+engine/src/main/java/com/overlord/interaction/api/ItemUseContext.java
+engine/src/main/java/com/overlord/interaction/api/WorldMutationService.java
+engine/src/main/java/com/overlord/inventory/api/BodyInventoryViewModel.java
+engine/src/main/java/com/overlord/inventory/api/BodySlot.java
+engine/src/main/java/com/overlord/inventory/api/InventoryChangeRequest.java
+engine/src/main/java/com/overlord/inventory/api/InventoryChangeResult.java
+engine/src/main/java/com/overlord/inventory/api/InventoryReservation.java
+engine/src/main/java/com/overlord/inventory/api/InventoryReservationId.java
+engine/src/main/java/com/overlord/inventory/api/InventoryReservationOperation.java
+engine/src/main/java/com/overlord/inventory/api/InventoryReservationRequest.java
+engine/src/main/java/com/overlord/inventory/api/InventoryReservationResult.java
+engine/src/main/java/com/overlord/inventory/api/InventoryReserveResult.java
+engine/src/main/java/com/overlord/inventory/api/InventoryService.java
+engine/src/main/java/com/overlord/inventory/api/InventoryView.java
+engine/src/main/java/com/overlord/inventory/api/ItemStack.java
+engine/src/main/java/com/overlord/inventory/api/ItemStackView.java
+engine/src/main/java/com/overlord/voxel/ChunkMutationOutcome.java
+engine/src/main/java/com/overlord/voxel/ChunkRepository.java
+engine/src/main/java/com/overlord/voxel/DirtyChunkRevision.java
+engine/src/main/java/com/overlord/voxel/World.java
+engine/src/main/java/com/overlord/worlditem/api/WorldItemId.java
+engine/src/main/java/com/overlord/worlditem/api/WorldItemReservation.java
+engine/src/main/java/com/overlord/worlditem/api/WorldItemReservationId.java
+engine/src/main/java/com/overlord/worlditem/api/WorldItemReservationResult.java
+engine/src/main/java/com/overlord/worlditem/api/WorldItemService.java
+engine/src/main/java/com/overlord/worlditem/api/WorldItemSnapshot.java
+engine/src/main/java/com/overlord/worlditem/api/WorldItemSpawnRequest.java
+engine/src/main/java/com/overlord/worlditem/api/WorldItemSpawnResult.java
+engine/src/test/java/com/overlord/interaction/DefaultWorldMutationServiceTest.java
+engine/src/test/java/com/overlord/interaction/InteractionArchitectureTest.java
+engine/src/test/java/com/overlord/interaction/api/BlockMutationContractTest.java
+engine/src/test/java/com/overlord/interaction/api/InteractionContractTest.java
+engine/src/test/java/com/overlord/inventory/api/InventoryContractTest.java
+engine/src/test/java/com/overlord/inventory/api/InventoryReservationContractTest.java
+engine/src/test/java/com/overlord/voxel/ChunkRepositoryTest.java
+engine/src/test/java/com/overlord/voxel/WorldTest.java
+engine/src/test/java/com/overlord/worlditem/api/WorldItemContractTest.java
+engine/src/testFixtures/java/com/overlord/interaction/testing/FakeBlockWorldAccess.java
+engine/src/testFixtures/java/com/overlord/interaction/testing/RecordingBlockChangeEventPublisher.java
+engine/src/testFixtures/java/com/overlord/interaction/testing/StubBlockRaycastService.java
+engine/src/testFixtures/java/com/overlord/interaction/testing/StubInteractionViewModel.java
+engine/src/testFixtures/java/com/overlord/inventory/testing/FakeInventoryReservationService.java
+engine/src/testFixtures/java/com/overlord/inventory/testing/StubBodyInventoryViewModel.java
+engine/src/testFixtures/java/com/overlord/inventory/testing/StubInventoryService.java
+engine/src/testFixtures/java/com/overlord/inventory/testing/TestInventoryView.java
+engine/src/testFixtures/java/com/overlord/inventory/testing/TestItemStackView.java
+engine/src/testFixtures/java/com/overlord/worlditem/testing/FakeWorldItemService.java
+game/build.gradle
+game/src/test/java/com/gaia/contracts/EngineContractFixtureSmokeTest.java
 ```
 
-- `git diff --check`: exit `0`, no whitespace errors. Git emitted only
-  line-ending conversion warnings for the two edited Markdown files.
-- The tracked generated-file query returned no matches.
-- The initial restricted Gradle invocation could not download the Gradle 8.5
-  distribution and failed with
-  `java.net.SocketException: Permission denied: getsockopt`; this was an
-  environment access failure, not a product test result.
-- The identical approved rerun exited `0`: `BUILD SUCCESSFUL in 9s`;
-  `18 actionable tasks: 18 executed`.
-- Gradle selected `natives-windows`.
-- Engine JUnit XML: 46 suites, 387 tests, 0 failures, 0 errors, 0 skipped.
-- Game JUnit XML: 11 suites, 103 tests, 0 failures, 0 errors, 0 skipped.
-- Total JUnit XML: 57 suites, 490 tests, 0 failures, 0 errors, 0 skipped.
-- The build compiled, tested, packaged, produced distributions, and ran
-  `:game:verifyPackagedResources`.
+Ignored `.superpowers/sdd` coordination briefs and reports are not tracked
+branch changes.
 
-Windows interactive verification:
+## TDD and verification evidence
+
+Documentation-contract RED on 2026-07-25:
 
 ```powershell
-.\gradlew.bat :game
-```
-
-- A visible game session was launched before Task 7, and its process exited
-  after manual window closure.
-- The controller did not capture the Gradle console exit code and did not
-  independently verify visuals or behavior. This is a qualified launch/exit
-  observation, not an unconditional pass.
-- Task 7 did not launch another interactive game window.
-
-Platform status:
-
-- macOS `./gradlew clean test build`: **NOT RUN**.
-- macOS `./gradlew :game`: **NOT RUN**.
-
-Final Task 7 documentation and clean-build gate:
-
-```powershell
-git diff --check
-git ls-files | Select-String -Pattern '(^|/)(bin/|build/)|\.class$'
-.\gradlew.bat clean test build
-git status --short --branch
-```
-
-- `git diff --check`: exit `0`, no whitespace errors.
-- The tracked generated-file query and unfinished-marker scan returned
-  no matches.
-- The final clean build exited `0` and reported `BUILD SUCCESSFUL`;
-  `18 actionable tasks: 18 executed`.
-- The branch remained `feat/interaction-api-contracts`; before staging, its
-  only worktree entries were the three Task 7 documentation paths.
-- Final post-commit status and branch diff evidence are recorded in the local
-  Task 7 report.
-
-Final review fix-wave Windows verification on 2026-07-25:
-
-```powershell
-.\gradlew.bat :engine:test --tests com.overlord.interaction.DefaultWorldMutationServiceTest
-.\gradlew.bat :engine:test --tests com.overlord.inventory.api.InventoryContractTest
-.\gradlew.bat :engine:test --tests com.overlord.interaction.api.InteractionContractTest
-.\gradlew.bat :engine:test --tests com.overlord.interaction.api.BlockMutationContractTest
 .\gradlew.bat :engine:test --tests com.overlord.interaction.InteractionArchitectureTest
-.\gradlew.bat :game:test --tests com.gaia.contracts.EngineContractFixtureSmokeTest
-.\gradlew.bat test
-.\gradlew.bat clean test build
 ```
 
-- Each focused command exited `0`. The changed engine suites contain,
-  respectively, 15, 6, 9, 6, and 6 tests; the game fixture consumer also
-  passed.
-- The full non-clean `test` command exited `0`: `BUILD SUCCESSFUL in 5s`;
-  `10 actionable tasks: 2 executed, 8 up-to-date`.
-- The final clean build exited `0`: `BUILD SUCCESSFUL in 7s`;
-  `18 actionable tasks: 18 executed`. It compiled, tested, packaged, produced
-  distributions, and ran `:game:verifyPackagedResources`.
-- Engine JUnit XML: 46 suites, 400 tests, 0 failures, 0 errors, 0 skipped.
-- Game JUnit XML: 11 suites, 103 tests, 0 failures, 0 errors, 0 skipped.
-- Total JUnit XML: 57 suites, 503 tests, 0 failures, 0 errors, 0 skipped.
-- The final review wave did not relaunch `.\gradlew.bat :game`; the qualified
-  earlier Windows observation and unrun macOS status above remain unchanged.
+- Expected failure: 9 tests completed, 1 failed.
+- `phaseSevenDocumentsProtectPromptSuiteV21Decisions` reported that the old
+  normative document lacked the canonical-stack and command/view decisions.
+- The first restricted invocation could not download Gradle 8.5 because
+  network access was denied; the approved identical rerun produced the
+  expected product-test failure above.
+
+Documentation-contract GREEN:
+
+```powershell
+.\gradlew.bat :engine:test --tests com.overlord.interaction.InteractionArchitectureTest
+```
+
+- Passed: `BUILD SUCCESSFUL in 1s`; 6 actionable tasks, 1 executed and 5
+  up-to-date; all 9 architecture tests passed.
+
+Full Windows build:
+
+```powershell
+.\gradlew.bat clean test build --console=plain --no-daemon
+```
+
+- Passed: `BUILD SUCCESSFUL in 18s`; 18 actionable tasks, all 18 executed.
+- Gradle selected `natives-windows`.
+- Engine JUnit XML: 48 suites, 479 tests, 0 failures, 0 errors, 0 skipped.
+- Game JUnit XML: 11 suites, 107 tests, 0 failures, 0 errors, 0 skipped.
+- Exact total: 59 suites, 586 tests, 0 failures, 0 errors, 0 skipped.
+
+Packaged-resource verification:
+
+```powershell
+.\gradlew.bat :game:verifyPackagedResources --rerun-tasks --console=plain --no-daemon
+```
+
+- Passed: `BUILD SUCCESSFUL in 9s`; 5 actionable tasks, all 5 executed.
+
+Hygiene and scope checks:
+
+- `git diff --check`: passed after removing Task 7 trailing spaces.
+- `git diff --check origin/main..HEAD`: passed for the committed pre-Task 7
+  range; it is rerun after the Task 7 commit.
+- Tracked `build/`, `bin/`, `.class`, crash-dump, and replay-dump scan:
+  no matches.
+- Prohibited renderer/player/controller/mesh-manager production path changes
+  in `0569ffc..HEAD`: no matches.
+- `DefaultWorldMutationService` scan for `ChunkDirtyTracker`,
+  `affectedByBlock`, `ChunkKey.fromWorld`, and `localCoordinate`: no matches.
+- Production leakage of `FakeWorldItemService` or
+  `FakeInventoryReservationService` outside test fixtures: no matches.
+- Direct game production `.setBlock` calls outside the exact loader/generator
+  allowlist: no matches.
+- Task 7 changes exactly four documentation files and one engine test; it
+  changes no production Java.
+
+Final HEAD at the documentation commit:
+
+```text
+This handoff is part of the Task 7 documentation commit. Its resolved commit
+hash is recorded in the ignored Task 7 report after commit because a commit
+cannot contain its own content-derived hash.
+```
+
+Interactive/platform truth:
+
+- Windows interactive game smoke for v2.1: **NOT RUN**.
+- Native macOS clean build: **NOT RUN**.
+- Native macOS interactive smoke: **NOT RUN**.
 
 ## Known risks
 
-- The architecture guard scans raw Java source with a `.setBlock` regular
-  expression and exempts exactly `WorldLoader.java` and
-  `GaiaWorldGenerator.java`. It can match comments and string literals, and it
-  cannot detect indirect writes through another method or abstraction.
-- `BlockHitResult` stores coordinates as `int`. An outward-facing hit at an
-  integer boundary has no representable adjacent coordinate and is rejected
-  by widened arithmetic rather than wrapped into the opposite boundary.
-- No Gaia `BlockWorldAccess` or `BlockRaycastService` adapter wiring exists,
-  so the new contracts are not exercised by actual gameplay.
-- No production inventory implementation, inventory rules, gameplay,
-  controller, persistence, or UI exists. The Phase 7 inventory types and
-  fixtures establish boundaries only.
-- The qualified Windows game launch did not independently establish correct
-  rendering, movement, input, resize/focus behavior, or a clean Gradle exit
-  code. Native macOS behavior remains untested.
-- `BlockWorldAccess.setBlock` can report a failed write after the optimistic
-  read; the standard service maps that race or rejection to `CONFLICT`.
-  Future adapters must retain that outcome and must not publish success
-  events for it.
-- A post-write subscriber failure means the mutation is already applied.
-  Callers must inspect `BlockChangeDispatchException.mutationApplied()` and
-  must not blindly retry.
+- Final engine-owner and game-owner reviews are pending controller dispatch.
+- Production adapters do not exist, so cross-service transaction sketches
+  are contract obligations, not exercised gameplay paths.
+- Reservation fakes intentionally omit production capacity, persistence,
+  concurrency, ECS, and physics behavior. Implementers must not infer those
+  policies from fixture internals.
+- The raw-source direct-world-write guard may match comments/strings and
+  cannot detect an indirect write hidden behind a new abstraction.
+- Post-write event failure leaves committed world state and exact revisions;
+  recovery needs explicit reconciliation, not blind retry.
+- Windows interactive rendering/input and native macOS behavior remain
+  unverified by this supplement.
 
-## Interfaces the next phase must not break
+## Protected interfaces Phase 8 and Phase 11 must not break
 
-- Preserve `EntityRef` as a non-negative immutable ID rather than exposing
-  mutable ECS `Entity`.
-- Preserve `InteractionAction`, `InteractionContext`, `ItemUseContext`,
-  `BlockHitResult`, and `BlockRaycastService` as game-neutral, immutable or
-  read-only boundaries using `ResourceLocation` block and item identities.
-- Preserve `WorldMutationService.changeBlock(BlockChangeRequest)` as the
-  synchronous gameplay write boundary and preserve the complete
-  `BlockChangeResult.Status` set:
-  `APPLIED`, `NO_CHANGE`, `CANCELLED`, `CONFLICT`, `OUT_OF_BOUNDS`, and
-  `UNKNOWN_BLOCK`.
-- Preserve the exact successful transaction order:
-  main-thread assertion, validation, current-block comparison,
-  `BeforeBlockChangedEvent`, a second current-block comparison, one write,
-  dirty-set calculation, `BlockChangedEvent`, one complete `ChunkDirtyEvent`,
-  then `APPLIED`.
-- Preserve before-write cancellation and dispatch-failure behavior, both
-  post-write publication attempts, and
-  `BlockChangeDispatchException.mutationApplied()` retry semantics.
-- Preserve explicit constructor injection of `MainThreadGuard`,
-  `BlockWorldAccess`, `BlockChangeEventPublisher`, and `ChunkDirtyTracker`.
-  Do not route cancellation through queued `EventBus` or expand
-  `ServiceLocator`.
-- Preserve `BlockWorldAccess` as the narrow future Gaia storage adapter.
-  Delegate to the existing `World.setBlock`; do not create a second block
-  store or bypass Phase 3 dirty/revision/mesh lifecycle behavior.
-- Preserve the exact direct-write whitelist:
-  `game/src/main/java/com/gaia/world/WorldLoader.java` and
-  `game/src/main/java/com/gaia/world/GaiaWorldGenerator.java`. A future file
-  in that package is not implicitly exempt.
-- Preserve exactly three body slots in presentation order:
-  `LEFT_HAND`, `RIGHT_HAND`, `MOUTH`.
-- Preserve `ItemStackView`, `InventoryView`, and
-  `BodyInventoryViewModel` as read-only snapshots, and keep mutation behind
-  `InventoryService.replaceSlot(InventoryChangeRequest)`. Preserve
-  `Optional<InventoryView>` on `InventoryService.snapshot` and
-  `InventoryChangeResult.inventory`, including the status-dependent presence
-  and revision invariants. UI code must not receive or expose
-  `InventoryService`.
-- Preserve the `java-test-fixtures` boundary and keep fixtures off production
-  runtime classpaths.
-- Preserve main/fixed-update ownership for world and inventory mutations,
-  Java 17 compatibility, the checked-in Gradle Wrapper, OpenGL 4.1 /
-  GLSL 410 compatibility, and main/context-thread ownership of every OpenGL
-  and GPU-resource operation.
+- Canonical `ItemStack`, positive-count and `ResourceLocation` identity
+  invariants, plus `ItemStackView` read-only projection semantics.
+- `InventoryService.snapshot`, `replaceSlot`, `reserve`, `commit`, and
+  `rollback`; request/result status shapes, remainder accounting,
+  reservation protection, and terminal idempotency.
+- The unique `WorldItemService`, stable `WorldItemId` and reservation IDs,
+  `WorldItemSpawnRequest`, `WorldItemSpawnResult`, `WorldItemReservation`,
+  `WorldItemSnapshot`, explicit failures, partial counts, and transaction
+  semantics shared by pickup and every drop source.
+- `ChunkRepository.compareAndSetBlock`, `ChunkMutationOutcome`,
+  `DirtyChunkRevision`, missing-neighbor behavior, and Phase 3 stale mesh
+  rejection.
+- `BlockWorldAccess.compareAndSetBlock` and `BlockWorldMutationOutcome`
+  mapping without a second block store.
+- `DefaultWorldMutationService(MainThreadGuard, BlockWorldAccess,
+  BlockChangeEventPublisher)`, synchronous order, Before-event reentrancy
+  prohibition, post-Before revalidation, both post-write event attempts, and
+  `mutationApplied()` retry meaning.
+- `BlockChangeResult` and `ChunkDirtyEvent` exact dirty-revision payloads;
+  dirty events remain observers, not commands.
+- `EntityRef`, `InteractionAction`, `InteractionContext`, canonical held stack
+  in `ItemUseContext`, `BlockHitResult`, and read-only
+  `BlockRaycastService`.
+- `BlockFace`, `InteractionMode`, `InteractionFailureReason`, and the exact
+  read-only `InteractionViewModel` method set and invariants.
+- Exactly three `BodySlot` values in presentation order and read-only
+  `InventoryView`/`BodyInventoryViewModel`.
+- The `java-test-fixtures` production boundary, direct-write allowlist,
+  engine/game module separation, Java 17 compatibility, checked-in Gradle
+  Wrapper, OpenGL 4.1/GLSL 410 limit, and main/context-thread GPU ownership.
 
 ## Git diff stat
 
-The final Phase 7 branch diff relative to `origin/main` is:
+Final `git diff --stat origin/main..HEAD`:
 
 ```text
-43 files changed, 5476 insertions(+), 7 deletions(-)
+76 files changed, 9617 insertions(+), 20 deletions(-)
 ```
 
-## Suggested commit message
+## Suggested overall commit and pull request
 
-Suggested overall Phase 7 commit:
+Suggested overall commit message:
 
 ```text
-feat(api): define block interaction and body inventory contracts
+feat(api): align interaction, inventory, and world-item contracts
 ```
 
-Suggested Task 7 documentation commit:
+Task 7 documentation commit:
 
 ```text
-docs: complete phase 7 interaction handoff
+docs: align phase 7 contracts with prompt suite v2.1
 ```
 
-Final review fix commits:
+Suggested pull request title:
 
 ```text
-fix(api): harden interaction and inventory contracts
-fix(api): reject wrapped block hit adjacency
-docs: reconcile phase 7 final review
-docs: record block hit overflow hardening
+Phase 7: align interaction contracts with Prompt Suite v2.1
 ```
 
-## Suggested pull request
-
-Title:
-
-```text
-Phase 7: define interaction and body inventory API contracts
-```
-
-Description:
+Suggested pull request description:
 
 ```markdown
-**Summary**
+## Summary
 
-- define game-neutral interaction, raycast, synchronous block-mutation, and
-  three-slot body-inventory contracts
-- implement ordered main-thread world mutation with optimistic conflict
-  detection before and after cancellable dispatch, dirty propagation, and
-  explicit dispatch-failure semantics
-- represent unknown inventory owners with optional snapshots/results and
-  enforce status-dependent result invariants
-- share configurable engine test fixtures with game tests while keeping them
-  off production runtime classpaths
-- enforce engine/game ownership, read-only UI, synchronous event, and an
-  exact two-file world-generation direct-write whitelist with automated tests
+- establish one canonical item stack plus inventory reservation boundaries
+- establish one stable world-item source of truth for pickup and all drops
+- publish repository-owned dirty revisions through the mutation service
+- prohibit Before-event mutation reentrancy and preserve post-write failure
+  semantics
+- expose a read-only interaction presentation contract
+- reconcile normative architecture, baseline, tests, and Phase 7 handoff
 
-**Verification**
+## Verification
 
-- `.\gradlew.bat clean test build`
-  - BUILD SUCCESSFUL; 18/18 actionable tasks executed
-  - 503 tests in 57 suites; 0 failures, 0 errors, 0 skipped
-  - LWJGL selected `natives-windows`
-- `git diff --check`
-- tracked generated-file query returned no matches
+- targeted documentation architecture test: RED against old docs, GREEN after
+  reconciliation
+- Windows `.\gradlew.bat clean test build --console=plain --no-daemon`
+- explicit `:game:verifyPackagedResources --rerun-tasks`
+- JUnit XML totals and hygiene scans recorded in the Phase 7 handoff
 
-**Interactive and platform status**
+## Remaining
 
-- Windows `.\gradlew.bat :game` launched visibly and the process exited after
-  manual closure, but no Gradle console exit code or independent visual check
-  was captured; this is not an unconditional pass
-- macOS clean build and interactive smoke were not run
-
-**Scope**
-
-- no Gaia world/raycast adapter wiring, gameplay, inventory rules,
-  persistence, controller, or UI
-- no OpenGL/GPU changes, copied third-party code or assets, push, or merge
+- final engine-owner and game-owner reviews are pending controller dispatch
+- production gameplay/adapters, formal inventory, world entities, physics
+  drops, renderer/controller/mesh-manager work, and UI remain out of scope
+- Windows interactive and native macOS verification were not run for v2.1
 ```
+
+No push, pull request, merge, or change to `main` was performed.
