@@ -26,6 +26,16 @@ public final class World {
         return chunks.setBlock(x, y, z, blockId);
     }
 
+    public ChunkMutationOutcome compareAndSetBlock(
+            int x,
+            int y,
+            int z,
+            byte expectedBlockId,
+            byte replacementBlockId) {
+        return chunks.compareAndSetBlock(
+                x, y, z, expectedBlockId, replacementBlockId);
+    }
+
     public void generate(
             ChunkKey key, Consumer<Chunk> generator) {
         chunks.generate(key, generator);
