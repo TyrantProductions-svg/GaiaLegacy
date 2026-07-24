@@ -1,9 +1,12 @@
 package com.overlord.physics;
 
+import com.overlord.config.GameConfig;
 import com.overlord.voxel.World;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import org.joml.Vector3f;
 import org.joml.Vector3fc;
 
 public final class CollisionWorld {
@@ -102,6 +105,247 @@ public final class CollisionWorld {
                         best.blockY(),
                         best.blockZ(),
                         best.blockShape()));
+    }
+
+    public MotionResult moveAndSlide(
+            Aabb localCollider,
+            Vector3fc position,
+            Vector3fc displacement,
+            int maxIterations) {
+        Objects.requireNonNull(localCollider, "localCollider");
+        Objects.requireNonNull(position, "position");
+        Objects.requireNonNull(displacement, "displacement");
+        validateFinite(position, "position");
+        validateFinite(displacement, "displacement");
+        validateIterationCount(maxIterations);
+
+        Vector3f start = new Vector3f(position);
+        Vector3f current = new Vector3f(position);
+        Vector3f remaining = new Vector3f(displacement);
+        List<SweepResult> contacts = new ArrayList<>();
+        float tolerance = GameConfig.Physics.COLLISION_TOLERANCE;
+        float toleranceSquared = tolerance * tolerance;
+
+        for (int iteration = 0;
+                iteration < maxIterations
+                        && remaining.lengthSquared() >= toleranceSquared;
+                iteration++) {
+            Optional<SweepResult> possibleHit =
+                    sweep(localCollider, current, remaining);
+            if (possibleHit.isEmpty()) {
+                current.add(remaining);
+                remaining.zero();
+                break;
+            }
+
+            SweepResult hit = possibleHit.orElseThrow();
+            contacts.add(hit);
+            float skinFraction = tolerance / remaining.length();
+            float advanceFraction =
+                    Math.max(0, hit.fraction() - skinFraction);
+            current.fma(advanceFraction, remaining);
+            remaining.mul(1 - advanceFraction);
+
+            float inward =
+                    remaining.x * hit.normalX()
+                            + remaining.y * hit.normalY()
+                            + remaining.z * hit.normalZ();
+            if (inward < 0) {
+                remaining.sub(
+                        hit.normalX() * inward,
+                        hit.normalY() * inward,
+                        hit.normalZ() * inward);
+            }
+        }
+
+        return new MotionResult(
+                current.x,
+                current.y,
+                current.z,
+                current.x - start.x,
+                current.y - start.y,
+                current.z - start.z,
+                contacts);
+    }
+
+    public boolean overlapsSolid(Aabb worldBounds) {
+        Objects.requireNonNull(worldBounds, "worldBounds");
+        int minBlockX = floorBlockCoordinate(worldBounds.minX());
+        int minBlockY = floorBlockCoordinate(worldBounds.minY());
+        int minBlockZ = floorBlockCoordinate(worldBounds.minZ());
+        int maxBlockX = floorBlockCoordinate(worldBounds.maxX());
+        int maxBlockY = floorBlockCoordinate(worldBounds.maxY());
+        int maxBlockZ = floorBlockCoordinate(worldBounds.maxZ());
+
+        for (long blockX = minBlockX; blockX <= maxBlockX; blockX++) {
+            for (long blockY = minBlockY; blockY <= maxBlockY; blockY++) {
+                for (long blockZ = minBlockZ; blockZ <= maxBlockZ; blockZ++) {
+                    int x = (int) blockX;
+                    int y = (int) blockY;
+                    int z = (int) blockZ;
+                    BlockCollisionShape shape = resolveShape(x, y, z);
+                    for (Aabb localShape : shape.boxes()) {
+                        if (worldBounds.intersects(
+                                translate(localShape, x, y, z))) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    public Optional<Vector3f> depenetrate(
+            Aabb localCollider,
+            Vector3fc position,
+            int maxIterations) {
+        Objects.requireNonNull(localCollider, "localCollider");
+        Objects.requireNonNull(position, "position");
+        validateFinite(position, "position");
+        validateIterationCount(maxIterations);
+
+        Vector3f recovered = new Vector3f(position);
+        for (int iteration = 0; iteration < maxIterations; iteration++) {
+            PenetrationTranslation translation =
+                    findSmallestTranslation(
+                            localCollider.translated(recovered));
+            if (translation == null) {
+                return Optional.of(recovered);
+            }
+            recovered.add(
+                    translation.x(),
+                    translation.y(),
+                    translation.z());
+        }
+
+        return overlapsSolid(localCollider.translated(recovered))
+                ? Optional.empty()
+                : Optional.of(recovered);
+    }
+
+    private PenetrationTranslation findSmallestTranslation(Aabb moving) {
+        int minBlockX = floorBlockCoordinate(moving.minX());
+        int minBlockY = floorBlockCoordinate(moving.minY());
+        int minBlockZ = floorBlockCoordinate(moving.minZ());
+        int maxBlockX = floorBlockCoordinate(moving.maxX());
+        int maxBlockY = floorBlockCoordinate(moving.maxY());
+        int maxBlockZ = floorBlockCoordinate(moving.maxZ());
+
+        PenetrationTranslation best = null;
+        for (long blockX = minBlockX; blockX <= maxBlockX; blockX++) {
+            for (long blockY = minBlockY; blockY <= maxBlockY; blockY++) {
+                for (long blockZ = minBlockZ; blockZ <= maxBlockZ; blockZ++) {
+                    int x = (int) blockX;
+                    int y = (int) blockY;
+                    int z = (int) blockZ;
+                    List<Aabb> boxes = resolveShape(x, y, z).boxes();
+                    for (int subShapeIndex = 0;
+                            subShapeIndex < boxes.size();
+                            subShapeIndex++) {
+                        Aabb target =
+                                translate(
+                                        boxes.get(subShapeIndex), x, y, z);
+                        if (!moving.intersects(target)) {
+                            continue;
+                        }
+                        best =
+                                selectBetter(
+                                        best,
+                                        new PenetrationTranslation(
+                                                0,
+                                                target.maxY()
+                                                        - moving.minY(),
+                                                0,
+                                                0,
+                                                x,
+                                                y,
+                                                z,
+                                                subShapeIndex));
+                        best =
+                                selectBetter(
+                                        best,
+                                        new PenetrationTranslation(
+                                                0,
+                                                target.minY()
+                                                        - moving.maxY(),
+                                                0,
+                                                1,
+                                                x,
+                                                y,
+                                                z,
+                                                subShapeIndex));
+                        best =
+                                selectBetter(
+                                        best,
+                                        new PenetrationTranslation(
+                                                target.maxX()
+                                                        - moving.minX(),
+                                                0,
+                                                0,
+                                                2,
+                                                x,
+                                                y,
+                                                z,
+                                                subShapeIndex));
+                        best =
+                                selectBetter(
+                                        best,
+                                        new PenetrationTranslation(
+                                                target.minX()
+                                                        - moving.maxX(),
+                                                0,
+                                                0,
+                                                3,
+                                                x,
+                                                y,
+                                                z,
+                                                subShapeIndex));
+                        best =
+                                selectBetter(
+                                        best,
+                                        new PenetrationTranslation(
+                                                0,
+                                                0,
+                                                target.maxZ()
+                                                        - moving.minZ(),
+                                                4,
+                                                x,
+                                                y,
+                                                z,
+                                                subShapeIndex));
+                        best =
+                                selectBetter(
+                                        best,
+                                        new PenetrationTranslation(
+                                                0,
+                                                0,
+                                                target.minZ()
+                                                        - moving.maxZ(),
+                                                5,
+                                                x,
+                                                y,
+                                                z,
+                                                subShapeIndex));
+                    }
+                }
+            }
+        }
+        return best;
+    }
+
+    private BlockCollisionShape resolveShape(int x, int y, int z) {
+        return Objects.requireNonNull(
+                shapeResolver.shapeFor(world.getBlock(x, y, z)),
+                "shapeResolver result");
+    }
+
+    private static PenetrationTranslation selectBetter(
+            PenetrationTranslation current,
+            PenetrationTranslation candidate) {
+        return current == null || candidate.isBetterThan(current)
+                ? candidate
+                : current;
     }
 
     private static Candidate sweepAgainst(
@@ -241,6 +485,13 @@ public final class CollisionWorld {
         }
     }
 
+    private static void validateIterationCount(int maxIterations) {
+        if (maxIterations < 0) {
+            throw new IllegalArgumentException(
+                    "maxIterations must not be negative");
+        }
+    }
+
     private record AxisSweep(
             float entry,
             float exit,
@@ -268,6 +519,40 @@ public final class CollisionWorld {
             }
             if (axisPriority != other.axisPriority) {
                 return axisPriority < other.axisPriority;
+            }
+            if (blockX != other.blockX) {
+                return blockX < other.blockX;
+            }
+            if (blockY != other.blockY) {
+                return blockY < other.blockY;
+            }
+            if (blockZ != other.blockZ) {
+                return blockZ < other.blockZ;
+            }
+            return subShapeIndex < other.subShapeIndex;
+        }
+    }
+
+    private record PenetrationTranslation(
+            float x,
+            float y,
+            float z,
+            int directionPriority,
+            int blockX,
+            int blockY,
+            int blockZ,
+            int subShapeIndex) {
+        private float depth() {
+            return Math.abs(x) + Math.abs(y) + Math.abs(z);
+        }
+
+        private boolean isBetterThan(PenetrationTranslation other) {
+            int depthComparison = Float.compare(depth(), other.depth());
+            if (depthComparison != 0) {
+                return depthComparison < 0;
+            }
+            if (directionPriority != other.directionPriority) {
+                return directionPriority < other.directionPriority;
             }
             if (blockX != other.blockX) {
                 return blockX < other.blockX;
