@@ -28,6 +28,7 @@ application {
 dependencies {
     implementation project(':engine')
     implementation 'com.google.code.gson:gson:2.10.1'
+    testImplementation(testFixtures(project(':engine')))
     testImplementation "org.junit.jupiter:junit-jupiter:6.1.1"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher"
 }
