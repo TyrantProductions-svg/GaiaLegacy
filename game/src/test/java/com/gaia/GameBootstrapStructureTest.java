@@ -32,19 +32,22 @@ class GameBootstrapStructureTest {
                                 + "meshExecutor,"
                                 + "engine.getRenderer(),"
                                 + "mainThreadGuard,2)"));
+        assertTrue(compact.contains("newShutdownBarrier("));
+        assertTrue(
+                compact.contains(
+                        "shutdownBarrier.registerChunkMeshes("));
 
         int engineConstruction = compact.indexOf("newEngine(");
         int engineRegistration =
                 compact.indexOf(
-                        "register(\"engine\",engine::shutdown)");
+                        "register(\"engine\","
+                                + "()->shutdownBarrier.closeEngine("
+                                + "engine::shutdown))");
         int managerConstruction =
                 compact.indexOf("newChunkMeshManager(");
-        int managerRegistration =
+        int meshLifecycleRegistration =
                 compact.indexOf(
-                        "register(\"chunk-meshes\",chunkMeshes::close)");
-        int meshExecutorRegistration =
-                compact.indexOf(
-                        "register(\"mesh-executor\"");
+                        "shutdownBarrier.registerChunkMeshes(");
         int worldExecutorRegistration =
                 compact.indexOf(
                         "register(\"world-executor\"");
@@ -54,11 +57,19 @@ class GameBootstrapStructureTest {
 
         assertTrue(engineConstruction >= 0);
         assertTrue(engineConstruction < engineRegistration);
-        assertTrue(engineRegistration < managerConstruction);
-        assertTrue(managerConstruction < managerRegistration);
-        assertTrue(managerRegistration < meshExecutorRegistration);
-        assertTrue(meshExecutorRegistration < worldExecutorRegistration);
+        assertTrue(engineRegistration < meshLifecycleRegistration);
+        assertTrue(meshLifecycleRegistration < managerConstruction);
+        assertTrue(
+                managerConstruction < worldExecutorRegistration);
         assertTrue(worldExecutorRegistration < worldLoadRegistration);
+        assertTrue(
+                compact.contains(
+                        "register(\"chunk-meshes\","
+                                + "()->closeManager("));
+        assertTrue(
+                compact.contains(
+                        "register(\"mesh-executor\","
+                                + "()->stopMeshExecutor("));
     }
 
     @Test

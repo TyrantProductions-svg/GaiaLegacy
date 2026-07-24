@@ -21,10 +21,13 @@ import com.overlord.core.time.FrameClock;
 import com.overlord.physics.PhysicsManager;
 import com.overlord.voxel.ChunkMeshBuilder;
 import com.overlord.voxel.ChunkMeshManager;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 public final class GameBootstrap {
     private static final double FIXED_STEP_SECONDS = 1.0 / 60.0;
@@ -34,6 +37,8 @@ public final class GameBootstrap {
     public void run() {
         MainThreadGuard mainThreadGuard = MainThreadGuard.captureCurrentThread();
         ShutdownCoordinator shutdownCoordinator = new ShutdownCoordinator();
+        ShutdownBarrier shutdownBarrier =
+                new ShutdownBarrier(5, TimeUnit.SECONDS);
         Throwable primaryFailure = null;
         try {
             ClassLoader classLoader =
@@ -49,7 +54,9 @@ public final class GameBootstrap {
                             mainThreadGuard,
                             catalog.renderAssets());
             engine.init();
-            shutdownCoordinator.register("engine", engine::shutdown);
+            shutdownCoordinator.register(
+                    "engine",
+                    () -> shutdownBarrier.closeEngine(engine::shutdown));
 
             InputManager inputManager = new InputManager(mainThreadGuard);
             inputManager.install(engine.getWindow().getWindow());
@@ -74,18 +81,18 @@ public final class GameBootstrap {
                             2,
                             namedThreadFactory("Gaia-Chunk-Mesher"));
             ChunkMeshManager chunkMeshes =
-                    new ChunkMeshManager(
-                            engine.getWorld().chunks(),
-                            new ChunkMeshBuilder(blocks),
+                    shutdownBarrier.registerChunkMeshes(
+                            shutdownCoordinator,
                             meshExecutor,
-                            engine.getRenderer(),
-                            mainThreadGuard,
-                            2);
-            shutdownCoordinator.register(
-                    "chunk-meshes", chunkMeshes::close);
-            shutdownCoordinator.register(
-                    "mesh-executor",
-                    () -> shutdownExecutor(meshExecutor));
+                            () ->
+                                    new ChunkMeshManager(
+                                            engine.getWorld().chunks(),
+                                            new ChunkMeshBuilder(blocks),
+                                            meshExecutor,
+                                            engine.getRenderer(),
+                                            mainThreadGuard,
+                                            2),
+                            ChunkMeshManager::close);
 
             byte fallbackGroundId =
                     blocks.requireStoredId(
@@ -104,7 +111,13 @@ public final class GameBootstrap {
                                 return thread;
                             });
             shutdownCoordinator.register(
-                    "world-executor", () -> shutdownExecutor(worldExecutor));
+                    "world-executor",
+                    () ->
+                            shutdownExecutor(
+                                    worldExecutor,
+                                    "World loader executor",
+                                    5,
+                                    TimeUnit.SECONDS));
 
             CompletableFuture<WorldLoadResult> worldLoad =
                     CompletableFuture.supplyAsync(
@@ -172,18 +185,63 @@ public final class GameBootstrap {
         }
     }
 
-    private static void shutdownExecutor(ExecutorService executor) {
-        executor.shutdownNow();
-        try {
-            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
-                throw new IllegalStateException(
-                        "World loader did not terminate within five seconds");
-            }
-        } catch (InterruptedException failure) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException(
-                    "Interrupted while stopping world loader", failure);
+    private static void shutdownExecutor(
+            ExecutorService executor,
+            String component,
+            long timeout,
+            TimeUnit unit) {
+        Objects.requireNonNull(executor, "executor");
+        Objects.requireNonNull(component, "component");
+        Objects.requireNonNull(unit, "unit");
+        if (timeout < 0) {
+            throw new IllegalArgumentException(
+                    "timeout must not be negative");
         }
+
+        long timeoutNanos = unit.toNanos(timeout);
+        long deadline = System.nanoTime() + timeoutNanos;
+        boolean interrupted = Thread.interrupted();
+        InterruptedException firstInterruption = null;
+        try {
+            executor.shutdownNow();
+            while (!executor.isTerminated()) {
+                executor.shutdownNow();
+                long remainingNanos =
+                        deadline - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    throw terminationFailure(
+                            component, firstInterruption);
+                }
+                try {
+                    executor.awaitTermination(
+                            remainingNanos,
+                            TimeUnit.NANOSECONDS);
+                } catch (InterruptedException failure) {
+                    interrupted = true;
+                    if (firstInterruption == null) {
+                        firstInterruption = failure;
+                    }
+                    Thread.interrupted();
+                }
+            }
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private static IllegalStateException terminationFailure(
+            String component,
+            InterruptedException firstInterruption) {
+        String message =
+                component
+                        + " did not terminate within the shutdown deadline";
+        if (firstInterruption == null) {
+            return new IllegalStateException(message);
+        }
+        return new IllegalStateException(
+                message, firstInterruption);
     }
 
     private static java.util.concurrent.ThreadFactory namedThreadFactory(
@@ -193,5 +251,107 @@ public final class GameBootstrap {
             thread.setDaemon(true);
             return thread;
         };
+    }
+
+    static final class ShutdownBarrier {
+        private final long timeout;
+        private final TimeUnit timeoutUnit;
+        private boolean managerCleanupRequired;
+        private boolean meshExecutorStopped;
+        private boolean managerCleanupAttempted;
+
+        ShutdownBarrier(long timeout, TimeUnit unit) {
+            if (timeout < 0) {
+                throw new IllegalArgumentException(
+                        "timeout must not be negative");
+            }
+            this.timeout = timeout;
+            timeoutUnit =
+                    Objects.requireNonNull(unit, "unit");
+        }
+
+        <T> T registerChunkMeshes(
+                ShutdownCoordinator shutdownCoordinator,
+                ExecutorService meshExecutor,
+                Supplier<T> managerFactory,
+                Consumer<T> managerCleanup) {
+            Objects.requireNonNull(
+                    shutdownCoordinator, "shutdownCoordinator");
+            Objects.requireNonNull(
+                    meshExecutor, "meshExecutor");
+            Objects.requireNonNull(
+                    managerFactory, "managerFactory");
+            Objects.requireNonNull(
+                    managerCleanup, "managerCleanup");
+
+            boolean meshCleanupRegistered = false;
+            try {
+                T manager =
+                        Objects.requireNonNull(
+                                managerFactory.get(),
+                                "chunk mesh manager");
+                shutdownCoordinator.register(
+                        "chunk-meshes",
+                        () ->
+                                closeManager(
+                                        () ->
+                                                managerCleanup.accept(
+                                                        manager)));
+                managerCleanupRequired = true;
+                shutdownCoordinator.register(
+                        "mesh-executor",
+                        () -> stopMeshExecutor(meshExecutor));
+                meshCleanupRegistered = true;
+                return manager;
+            } catch (RuntimeException | Error failure) {
+                if (!meshCleanupRegistered) {
+                    try {
+                        stopMeshExecutor(meshExecutor);
+                    } catch (RuntimeException | Error cleanupFailure) {
+                        if (cleanupFailure != failure) {
+                            failure.addSuppressed(cleanupFailure);
+                        }
+                    }
+                }
+                throw failure;
+            }
+        }
+
+        void stopMeshExecutor(ExecutorService meshExecutor) {
+            shutdownExecutor(
+                    meshExecutor,
+                    "Chunk mesh executor",
+                    timeout,
+                    timeoutUnit);
+            if (!meshExecutor.isTerminated()) {
+                throw new IllegalStateException(
+                        "Chunk mesh executor termination was not confirmed");
+            }
+            meshExecutorStopped = true;
+        }
+
+        void closeManager(Runnable managerCleanup) {
+            Objects.requireNonNull(
+                    managerCleanup, "managerCleanup");
+            if (!meshExecutorStopped) {
+                throw new IllegalStateException(
+                        "Chunk mesh manager cleanup was skipped because "
+                                + "mesh executor termination was not confirmed");
+            }
+            managerCleanupAttempted = true;
+            managerCleanup.run();
+        }
+
+        void closeEngine(Runnable engineCleanup) {
+            Objects.requireNonNull(
+                    engineCleanup, "engineCleanup");
+            if (managerCleanupRequired
+                    && !managerCleanupAttempted) {
+                throw new IllegalStateException(
+                        "Engine cleanup was skipped because chunk mesh "
+                                + "manager cleanup could not safely run");
+            }
+            engineCleanup.run();
+        }
     }
 }

@@ -1,6 +1,7 @@
 package com.gaia;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -15,10 +16,206 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.lang.reflect.RecordComponent;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.AbstractExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class GameBootstrapTest {
+    @Test
+    void interruptedMeshShutdownWaitsUntilTerminatedAndRestoresInterrupt() {
+        List<String> cleanupOrder = new ArrayList<>();
+        ScriptedExecutor meshExecutor =
+                ScriptedExecutor.terminatesAfterAwaits(
+                        2, 1, cleanupOrder, "mesh");
+        GameBootstrap.ShutdownBarrier barrier =
+                new GameBootstrap.ShutdownBarrier(
+                        1, TimeUnit.SECONDS);
+        ShutdownCoordinator coordinator = new ShutdownCoordinator();
+        coordinator.register(
+                "engine",
+                () ->
+                        barrier.closeEngine(
+                                () -> cleanupOrder.add("engine")));
+        barrier.registerChunkMeshes(
+                coordinator,
+                meshExecutor,
+                Object::new,
+                manager -> cleanupOrder.add("manager"));
+
+        Thread.currentThread().interrupt();
+        try {
+            coordinator.close();
+
+            assertTrue(Thread.currentThread().isInterrupted());
+            assertEquals(2, meshExecutor.awaitCalls());
+            assertTrue(meshExecutor.shutdownNowCalls() >= 3);
+            assertEquals(
+                    List.of("mesh", "manager", "engine"),
+                    cleanupOrder);
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    @Test
+    void timeoutSkipsManagerAndEngineCleanupAndSurfacesAllFailures() {
+        ScriptedExecutor meshExecutor =
+                ScriptedExecutor.neverTerminates();
+        GameBootstrap.ShutdownBarrier barrier =
+                new GameBootstrap.ShutdownBarrier(
+                        0, TimeUnit.NANOSECONDS);
+        ShutdownCoordinator coordinator = new ShutdownCoordinator();
+        AtomicInteger managerCleanup = new AtomicInteger();
+        AtomicInteger engineCleanup = new AtomicInteger();
+        coordinator.register(
+                "engine",
+                () ->
+                        barrier.closeEngine(
+                                engineCleanup::incrementAndGet));
+        barrier.registerChunkMeshes(
+                coordinator,
+                meshExecutor,
+                Object::new,
+                manager -> managerCleanup.incrementAndGet());
+
+        IllegalStateException failure =
+                assertThrows(
+                        IllegalStateException.class,
+                        coordinator::close);
+
+        assertTrue(
+                failure.getMessage()
+                        .contains("Chunk mesh executor"));
+        assertEquals(2, failure.getSuppressed().length);
+        assertEquals(0, managerCleanup.get());
+        assertEquals(0, engineCleanup.get());
+        assertFalse(meshExecutor.isTerminated());
+    }
+
+    @Test
+    void normalShutdownStopsMeshThenClosesManagerAndEngineExactlyOnce() {
+        List<String> cleanupOrder = new ArrayList<>();
+        ScriptedExecutor meshExecutor =
+                ScriptedExecutor.terminatesAfterAwaits(
+                        1, 0, cleanupOrder, "mesh");
+        GameBootstrap.ShutdownBarrier barrier =
+                new GameBootstrap.ShutdownBarrier(
+                        1, TimeUnit.SECONDS);
+        ShutdownCoordinator coordinator = new ShutdownCoordinator();
+        coordinator.register(
+                "engine",
+                () ->
+                        barrier.closeEngine(
+                                () -> cleanupOrder.add("engine")));
+        barrier.registerChunkMeshes(
+                coordinator,
+                meshExecutor,
+                Object::new,
+                manager -> cleanupOrder.add("manager"));
+
+        coordinator.close();
+
+        assertEquals(
+                List.of("mesh", "manager", "engine"),
+                cleanupOrder);
+        assertEquals(1, Collections.frequency(cleanupOrder, "mesh"));
+        assertEquals(1, Collections.frequency(cleanupOrder, "manager"));
+        assertEquals(1, Collections.frequency(cleanupOrder, "engine"));
+    }
+
+    @Test
+    void engineCleanupMayRunAfterManagerCleanupWasAttemptedAndFailed() {
+        List<String> cleanupOrder = new ArrayList<>();
+        ScriptedExecutor meshExecutor =
+                ScriptedExecutor.terminatesAfterAwaits(
+                        1, 0, cleanupOrder, "mesh");
+        GameBootstrap.ShutdownBarrier barrier =
+                new GameBootstrap.ShutdownBarrier(
+                        1, TimeUnit.SECONDS);
+        ShutdownCoordinator coordinator = new ShutdownCoordinator();
+        RuntimeException managerFailure =
+                new RuntimeException("manager cleanup failed");
+        coordinator.register(
+                "engine",
+                () ->
+                        barrier.closeEngine(
+                                () -> cleanupOrder.add("engine")));
+        barrier.registerChunkMeshes(
+                coordinator,
+                meshExecutor,
+                Object::new,
+                manager -> {
+                    cleanupOrder.add("manager");
+                    throw managerFailure;
+                });
+
+        RuntimeException thrown =
+                assertThrows(
+                        RuntimeException.class,
+                        coordinator::close);
+
+        assertSame(managerFailure, thrown);
+        assertEquals(
+                List.of("mesh", "manager", "engine"),
+                cleanupOrder);
+    }
+
+    @Test
+    void managerConstructionFailureStopsUnregisteredMeshExecutor() {
+        ScriptedExecutor meshExecutor =
+                ScriptedExecutor.terminatesAfterAwaits(
+                        1, 0, new ArrayList<>(), null);
+        GameBootstrap.ShutdownBarrier barrier =
+                new GameBootstrap.ShutdownBarrier(
+                        1, TimeUnit.SECONDS);
+        RuntimeException constructionFailure =
+                new RuntimeException("manager construction failed");
+
+        RuntimeException thrown =
+                assertThrows(
+                        RuntimeException.class,
+                        () ->
+                                barrier.registerChunkMeshes(
+                                        new ShutdownCoordinator(),
+                                        meshExecutor,
+                                        () -> {
+                                            throw constructionFailure;
+                                        },
+                                        manager -> {}));
+
+        assertSame(constructionFailure, thrown);
+        assertTrue(meshExecutor.isTerminated());
+    }
+
+    @Test
+    void managerRegistrationFailureStopsUnregisteredMeshExecutor() {
+        ScriptedExecutor meshExecutor =
+                ScriptedExecutor.terminatesAfterAwaits(
+                        1, 0, new ArrayList<>(), null);
+        GameBootstrap.ShutdownBarrier barrier =
+                new GameBootstrap.ShutdownBarrier(
+                        1, TimeUnit.SECONDS);
+        ShutdownCoordinator closedCoordinator =
+                new ShutdownCoordinator();
+        closedCoordinator.close();
+
+        assertThrows(
+                IllegalStateException.class,
+                () ->
+                        barrier.registerChunkMeshes(
+                                closedCoordinator,
+                                meshExecutor,
+                                Object::new,
+                                manager -> {}));
+
+        assertTrue(meshExecutor.isTerminated());
+    }
+
     @Test
     void gameContextCarriesTheIndependentChunkMeshManager() {
         RecordComponent chunkMeshes =
@@ -101,5 +298,103 @@ class GameBootstrapTest {
                 logged.contains(
                         "Block face references missing region"));
         assertTrue(logged.contains("gaia:missing"));
+    }
+
+    private static final class ScriptedExecutor
+            extends AbstractExecutorService {
+        private final int terminateAfterAwaitCalls;
+        private final List<String> events;
+        private final String terminationEvent;
+        private int interruptionsRemaining;
+        private int shutdownNowCalls;
+        private int awaitCalls;
+        private boolean shutdown;
+        private boolean terminated;
+
+        private ScriptedExecutor(
+                int terminateAfterAwaitCalls,
+                int interruptionsRemaining,
+                List<String> events,
+                String terminationEvent) {
+            this.terminateAfterAwaitCalls = terminateAfterAwaitCalls;
+            this.interruptionsRemaining = interruptionsRemaining;
+            this.events = events;
+            this.terminationEvent = terminationEvent;
+        }
+
+        static ScriptedExecutor terminatesAfterAwaits(
+                int awaitCalls,
+                int interruptions,
+                List<String> events,
+                String terminationEvent) {
+            return new ScriptedExecutor(
+                    awaitCalls,
+                    interruptions,
+                    events,
+                    terminationEvent);
+        }
+
+        static ScriptedExecutor neverTerminates() {
+            return new ScriptedExecutor(
+                    Integer.MAX_VALUE,
+                    0,
+                    new ArrayList<>(),
+                    null);
+        }
+
+        int shutdownNowCalls() {
+            return shutdownNowCalls;
+        }
+
+        int awaitCalls() {
+            return awaitCalls;
+        }
+
+        @Override
+        public void shutdown() {
+            shutdown = true;
+        }
+
+        @Override
+        public List<Runnable> shutdownNow() {
+            shutdown = true;
+            shutdownNowCalls++;
+            return List.of();
+        }
+
+        @Override
+        public boolean isShutdown() {
+            return shutdown;
+        }
+
+        @Override
+        public boolean isTerminated() {
+            return terminated;
+        }
+
+        @Override
+        public boolean awaitTermination(
+                long timeout, TimeUnit unit)
+                throws InterruptedException {
+            awaitCalls++;
+            if (interruptionsRemaining > 0) {
+                interruptionsRemaining--;
+                throw new InterruptedException(
+                        "scripted interruption");
+            }
+            if (awaitCalls >= terminateAfterAwaitCalls) {
+                terminated = true;
+                if (terminationEvent != null) {
+                    events.add(terminationEvent);
+                }
+            }
+            return terminated;
+        }
+
+        @Override
+        public void execute(Runnable command) {
+            throw new UnsupportedOperationException(
+                    "Scripted executor does not execute tasks");
+        }
     }
 }
