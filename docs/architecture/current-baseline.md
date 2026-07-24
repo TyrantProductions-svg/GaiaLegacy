@@ -74,7 +74,12 @@ Later phases should preserve queued, explicit-pump delivery unless an architectu
 
 The current implementation does not honor the requested `targetCore`: every dispatcher competes for the same global queue and submits whichever task it takes to that dispatcher's executor. Equal-priority tasks also have no explicit sequence tie-breaker. Submission returns no completion handle, failure channel, or backpressure signal.
 
-`Engine.submitToCore(...)` is already used by `GaiaMain` for world generation and player updates, so it is an existing call surface. Phase 1 may repair its semantics, but should add deterministic tests and avoid scheduling any OpenGL/GLFW or GPU-resource work onto worker executors.
+`Engine.submitToCore(...)` remains a public legacy scheduling surface, but the
+Gaia application no longer uses it for world generation or per-frame player
+updates. `GameBootstrap` owns dedicated world-loading and chunk-meshing
+executors, while the fixed-step player and physics updates run synchronously in
+`GameLoop` on the main thread. No OpenGL/GLFW or GPU-resource work may be
+scheduled through `TaskScheduler` or either dedicated worker pool.
 
 ## World
 
