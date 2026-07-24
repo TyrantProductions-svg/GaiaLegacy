@@ -77,4 +77,15 @@ public class Chunk {
     public int getNumSubChunks() {
         return numSubChunks;
     }
+
+    void copyBlocksTo(byte[] target) {
+        for (Map.Entry<Integer, SubChunk> entry : subChunks.entrySet()) {
+            entry.getValue()
+                    .copyBlocksTo(
+                            target,
+                            entry.getKey()
+                                    * GameConfig.Chunk.SUBCHUNK_HEIGHT,
+                            worldHeight);
+        }
+    }
 }
