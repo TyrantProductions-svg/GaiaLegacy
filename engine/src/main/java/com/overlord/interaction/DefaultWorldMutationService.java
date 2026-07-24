@@ -136,7 +136,7 @@ public final class DefaultWorldMutationService
         } catch (RuntimeException failure) {
             if (deliveryFailure == null) {
                 deliveryFailure = failure;
-            } else {
+            } else if (failure != deliveryFailure) {
                 deliveryFailure.addSuppressed(failure);
             }
         }

@@ -384,6 +384,32 @@ class DefaultWorldMutationServiceTest {
     }
 
     @Test
+    void sharedPostChangeFailureIsNotSelfSuppressed() {
+        List<String> order = new ArrayList<>();
+        RecordingAccess access = new RecordingAccess(order, STONE);
+        RecordingPublisher events = new RecordingPublisher(order);
+        RuntimeException sharedFailure =
+                new IllegalStateException("shared listener failure");
+        events.changedFailure = sharedFailure;
+        events.dirtyFailure = sharedFailure;
+
+        BlockChangeDispatchException failure =
+                assertThrows(
+                        BlockChangeDispatchException.class,
+                        () ->
+                                service(access, events)
+                                        .changeBlock(request(2, 4, 3)));
+
+        assertTrue(failure.mutationApplied());
+        assertSame(sharedFailure, failure.getCause());
+        assertEquals(0, failure.getCause().getSuppressed().length);
+        assertEquals(1, access.successfulWrites);
+        assertEquals(
+                List.of("before", "write", "changed", "dirty"),
+                order);
+    }
+
+    @Test
     void workerThreadGuardRunsBeforeAnyWorldOrEventBoundary() throws Exception {
         List<String> order = new ArrayList<>();
         RecordingAccess access = new RecordingAccess(order, STONE);
