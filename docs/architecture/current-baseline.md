@@ -2,12 +2,13 @@
 
 ## Snapshot
 
-This document describes the final Phase 3 architecture on
-`refactor/chunk-mesh-lifecycle`, based on `origin/main` at commit `11cc981`
-(`feat(assets): add data-driven block and material resource system (#7)`).
-The Phase 3 implementation was verified at commit `66dca43` before its handoff
-documentation commit. This includes the whitespace-only cleanup at `fcccf86`
-and the final stale-revision hardening at `66dca43`.
+This document describes the final Phase 6 architecture on
+`refactor/physics-foundation`, based on `origin/main` at commit `ad02717`.
+The Phase 6 implementation and review fixes were verified at commit `95d78d0`
+before its handoff documentation commit. Phase 6 preserves the Phase 3 chunk
+mesh lifecycle while replacing the former Camera-owned physics path with
+fixed-step collision, player-controller, raycast, and minimal rigid-body
+foundations.
 
 The repository is a two-module Gradle build:
 
@@ -26,10 +27,18 @@ Both modules target Java 17. The checked-in Gradle 8.5 Wrapper can run on JDK 21
 
 `Engine.init()` creates `Window`, `Camera`, `Renderer`, and `World`, initializes the renderer, registers those services, starts scheduling, and marks the engine as running. `Engine.shutdown()` stops modules and scheduling, cleans the renderer, destroys the window, and clears global registries.
 
+Phase 6 does not add physics services to `ServiceLocator`. `GameBootstrap`
+constructs and injects the shared collision resolver, `CollisionWorld`,
+`BlockRaycast`, player `PhysicsBody`, `PlayerController`, and `PhysicsWorld`
+through the explicit `GameContext`.
+
 Current boundaries and risks:
 
 - `Engine.init()` creates the GLFW window/OpenGL context and GPU-backed renderer resources on its caller thread. Rendering and shutdown must remain on that same main/context-owning thread.
-- Lifecycle ownership is implicit. There are no guards against repeated initialization or shutdown and no `try/finally` composition at the application boundary.
+- `GameBootstrap` owns the application `try/finally` boundary and closes the
+  `ShutdownCoordinator` after success or failure. `Engine` itself still has no
+  explicit guard against repeated initialization or shutdown, so callers must
+  preserve the single-init/single-close ownership contract.
 - The engine exposes concrete subsystem getters. These are the practical integration surface for current game code.
 - The global `ServiceLocator` and singleton managers hide dependencies. Later work should prefer constructor injection or an explicit context and must not expand locator use.
 
@@ -44,7 +53,12 @@ Current boundaries and risks:
 - `System`: enabled state and lifecycle hooks;
 - `ParallelSystem`: fixed-thread-pool processing of entity list slices.
 
-The ECS is a standalone prototype and is not wired into `Engine`, `World`, rendering, or physics. It has no queries, deterministic system ordering, serialization, or thread-safety contract. `EntityManager` stores mutable `HashMap`/`HashSet` state. `ParallelSystem` waits for submitted slices but only prints worker failures.
+The ECS is a standalone prototype and is not wired into `Engine`, `World`,
+rendering, or the Phase 6 `PhysicsWorld`. Physics bodies use a separate
+insertion-ordered registry. The ECS has no queries, deterministic system
+ordering, serialization, or thread-safety contract. `EntityManager` stores
+mutable `HashMap`/`HashSet` state. `ParallelSystem` waits for submitted slices
+but only prints worker failures.
 
 `ComponentPool` is not yet a production allocator: expansion replaces the existing array instead of preserving checked-out state, and normal `EntityManager.addComponent` accepts externally constructed components rather than acquiring them from the pool.
 
@@ -68,6 +82,10 @@ Current boundaries and risks:
 
 Later phases should preserve queued, explicit-pump delivery unless an architecture decision and migration tests intentionally replace it.
 
+Phase 6 keeps delivery on the main fixed-update thread. Each running fixed step
+orders `PlayerManager.fixedUpdate`, `PhysicsWorld.step`,
+`ModuleManager.updateAll`, then `EventBus.processAll`.
+
 ## TaskScheduler
 
 `TaskScheduler` owns one single-thread executor per configured core plus one dispatcher thread per executor. Tasks enter a global `PriorityBlockingQueue`, ordered only by `HIGH`, `NORMAL`, or `LOW`.
@@ -77,9 +95,10 @@ The current implementation does not honor the requested `targetCore`: every disp
 `Engine.submitToCore(...)` remains a public legacy scheduling surface, but the
 Gaia application no longer uses it for world generation or per-frame player
 updates. `GameBootstrap` owns dedicated world-loading and chunk-meshing
-executors, while the fixed-step player and physics updates run synchronously in
-`GameLoop` on the main thread. No OpenGL/GLFW or GPU-resource work may be
-scheduled through `TaskScheduler` or either dedicated worker pool.
+executors, while the Phase 6 player controller and generic physics world run
+synchronously in `GameLoop` on the main thread at the production fixed step.
+No OpenGL/GLFW or GPU-resource work may be scheduled through `TaskScheduler`,
+the physics path, or either dedicated worker pool.
 
 ## World
 
@@ -120,6 +139,13 @@ Current boundaries and risks:
 
 The current block-coordinate behavior, 16-by-16 chunk footprint, sparse vertical allocation, and `byte` block IDs are active interfaces for game generation, physics, and meshing.
 
+Phase 6 collision and raycast queries read blocks exclusively through
+`World.getBlock`, so negative and Chunk-boundary coordinates retain the
+repository's `floorDiv`/`floorMod` behavior and missing reads remain
+non-allocating air. One injected `BlockCollisionShapeResolver` maps stored byte
+IDs to ordered local shapes; the current production resolver treats ID `0` as
+empty and every other ID as a full cube.
+
 ## Renderer
 
 `Window` initializes GLFW, requests an OpenGL 4.1 core forward-compatible
@@ -136,6 +162,12 @@ owns or replaces one combined terrain mesh. `ChunkMeshManager` owns the
 main-thread map of installed objects and releases the previous object only
 after a replacement upload succeeds. Empty mesh data reaches `RENDERABLE`
 without allocating a zero-vertex GPU object.
+
+Camera position is now one-way render output. Before rendering, `GameLoop`
+copies the player body's interpolated previous/current feet position plus eye
+height into Camera; `Camera.setPosition` copies the value into owned storage.
+Physics and collision do not read Camera position and perform no renderer,
+LWJGL, OpenGL, or GPU work.
 
 Current boundaries and risks:
 
@@ -156,32 +188,78 @@ All future renderer work must remain compatible with OpenGL 4.1 / GLSL 410 and m
 
 ## Physics
 
-`PhysicsManager` is constructed explicitly with `Camera` and `World`. It treats the camera position as the player body, applies gravity and terminal velocity, resolves vertical voxel contact, performs horizontal AABB overlap checks, supports a one-block step-up, and exposes grounded jump state.
+The legacy `PhysicsManager` has been removed. Reusable physics now lives under
+`com.overlord.physics` and remains independent of `game`, rendering, LWJGL,
+OpenGL, and GPU resources.
+
+`Aabb`, `SweepResult`, and `MotionResult` are immutable collision values.
+`BlockCollisionShape` preserves ordered local sub-boxes, and
+`BlockCollisionShapeResolver` is the one injected stored-ID-to-shape boundary.
+`CollisionWorld` is the shared static-voxel kernel for continuous swept AABB,
+bounded sweep-and-slide, strict overlap, and deterministic depenetration.
+Equal-time sweep selection uses Y/X/Z axis priority, ascending block X/Y/Z,
+then declared sub-shape order.
+
+`BlockRaycast` uses the same `World` and shape resolver as collision. It
+combines finite 3D DDA traversal with exact sub-shape slabs, returns immutable
+hit/adjacent data, preserves negative and Chunk-boundary coordinate behavior,
+uses checked adjacent-coordinate arithmetic, and caps synchronous casts at
+4096 blocks.
+
+`PhysicsBody` owns authoritative previous/current translational positions,
+linear velocity, reserved angular velocity, validated mass/material state, and
+one force/impulse/reserved-torque accumulator. Teleports synchronize both
+positions; interpolation is a pure read. `PhysicsWorld` keeps generic bodies
+in insertion order and integrates active, awake dynamic bodies against static
+voxels once per supplied fixed step. Static, inactive, and sleeping bodies do
+not integrate. Body-body collision, rotation, constraints, joints, and a full
+solver remain deferred to Phase 11.
+
+`PlayerController` is the sole integrator of the player body. It implements
+gravity, terminal velocity, continuous collision, grounded/jump/ceiling state,
+wall slide, one-block step-up, conditional one-block ground snap, bounded
+spawn recovery, collision-safe noclip exit, and normalized noclip movement.
+`PlayerManager` remains the input/view boundary: it derives normalized
+world-space movement from Camera orientation, applies look, and implements the
+15-fixed-step double-Space window without owning a collision loop.
 
 Current boundaries and risks:
 
-- Physics is player-specific rather than an engine-wide simulation and is not integrated with ECS.
-- Collision and movement update mutable camera/world state directly.
-- Broad-phase acceleration, swept collision, fixed-step accumulation, entity collision, and tests are absent.
-- Correct behavior depends on the caller supplying coherent delta time and horizontal movement values.
-
-The constructor injection boundary is preferable to global lookup and should be preserved. Any future fixed-step loop must keep physics CPU-only and coordinate world access under an explicit threading policy.
+- Production physics is exactly `1.0 / 60.0` second, supplied by `GameLoop`;
+  neither `PhysicsWorld` nor `PlayerController` owns a wall-clock accumulator.
+- The player body must not also be registered in `PhysicsWorld`, or it would
+  be integrated twice.
+- The default shape resolver treats every non-air block as a full cube until
+  block data gains collision-shape definitions.
+- Broad-phase collision and overlap enumerate voxel ranges directly; very
+  large displacements or colliders can be expensive.
+- Angular velocity and torque are reserved and cleared but do not rotate a
+  body in Phase 6.
+- Physics remains separate from ECS.
 
 ## Current application flow
 
 `GameBootstrap` is the composition root. It loads data-driven assets, starts
-the engine, installs input/player/physics state, creates one world-loading
-executor and two named chunk-meshing workers, constructs `ChunkMeshManager`
-with an upload budget of two, and registers a shutdown barrier around worker,
-GPU-manager, and engine cleanup.
+the engine, constructs one shared default block-shape resolver,
+`CollisionWorld`, `BlockRaycast`, player body, `PlayerController`, and
+`PhysicsWorld`, creates one world-loading executor and two named chunk-meshing
+workers, constructs `ChunkMeshManager` with an upload budget of two, and
+registers a shutdown barrier around worker, GPU-manager, and engine cleanup.
 
 `WorldLoader` generates the fixed initial 4-by-4 key set and spawn position
-without building combined mesh data. During `LOADING`, `GameLoop` schedules
-eligible per-key CPU work, drains completions, and processes up to two uploads
-per frame while continuing clear/swap. It enters `RUNNING` only after every
-initial key is `RENDERABLE`, then renders the manager's independent object
-collection. The fixed-step input, player, module, and event ordering is
-unchanged.
+as explicit player feet coordinates without building combined mesh data.
+During `LOADING`, `GameLoop` teleports both authoritative player transforms,
+requires collision-free recovery, schedules eligible per-key CPU work, drains
+completions, and processes up to two uploads per frame while continuing
+clear/swap. It enters `RUNNING` only after every initial key is `RENDERABLE`,
+then renders the manager's independent object collection.
+
+`RUNNING` uses an exact `1.0 / 60.0` fixed step with an eight-step catch-up
+limit, sufficient for the required 10 FPS case while preserving the existing
+0.25-second frame clamp. The first catch-up step receives the full input
+snapshot and later steps receive held-only snapshots so pressed edges are not
+replayed. Each step runs player intent/controller, generic physics, modules,
+then events. Rendering receives only the body's interpolated output.
 
 Shutdown cancels world loading, confirms the world and mesh executors have
 terminated, closes the mesh manager on the main thread to release installed
