@@ -38,6 +38,23 @@ class ChunkRenderBackendTest {
     }
 
     @Test
+    void uploadRejectsNegativeRevisionBeforeOpenGl() {
+        Renderer renderer =
+                new Renderer(
+                        MainThreadGuard.captureCurrentThread(),
+                        RenderAssets.missing());
+        ChunkMeshData data =
+                new ChunkMeshData(
+                        new ChunkKey(0, 0),
+                        -1,
+                        new float[] {
+                            0.0f, 0.0f, 0.0f, 0.0f, 0.0f
+                        });
+
+        assertThrows(IllegalArgumentException.class, () -> renderer.upload(data));
+    }
+
+    @Test
     void uploadRejectsWorkerBeforeOpenGl() throws InterruptedException {
         Renderer renderer =
                 new Renderer(

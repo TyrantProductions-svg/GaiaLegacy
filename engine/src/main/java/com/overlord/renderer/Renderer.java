@@ -2,6 +2,7 @@ package com.overlord.renderer;
 
 import com.overlord.config.GameConfig;
 import com.overlord.core.thread.MainThreadGuard;
+import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkMeshData;
 import java.util.Collection;
 import java.util.Objects;
@@ -131,12 +132,35 @@ public class Renderer implements ChunkRenderBackend {
             throw new IllegalArgumentException(
                     "Empty chunk data does not allocate a GPU mesh");
         }
+        ChunkKey key = Objects.requireNonNull(data.key(), "data.key()");
+        long revision = data.revision();
+        if (revision < 0) {
+            throw new IllegalArgumentException(
+                    "revision must not be negative");
+        }
+        AxisAlignedBounds localBounds =
+                data.localBounds()
+                        .orElseThrow(
+                                () -> new IllegalArgumentException(
+                                        "Non-empty chunk data must have local bounds"));
+
         Mesh gpuMesh = new Mesh(mainThreadGuard, data.vertices());
-        return new ChunkRenderObject(
-                data.key(),
-                data.revision(),
-                gpuMesh,
-                data.localBounds().orElseThrow());
+        try {
+            return new ChunkRenderObject(
+                    key,
+                    revision,
+                    gpuMesh,
+                    localBounds);
+        } catch (RuntimeException | Error failure) {
+            try {
+                gpuMesh.cleanup();
+            } catch (RuntimeException | Error cleanupFailure) {
+                if (cleanupFailure != failure) {
+                    failure.addSuppressed(cleanupFailure);
+                }
+            }
+            throw failure;
+        }
     }
 
     @Override
