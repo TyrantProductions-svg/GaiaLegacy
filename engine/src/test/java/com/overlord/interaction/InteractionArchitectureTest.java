@@ -6,6 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.inventory.api.BodyInventoryViewModel;
 import com.overlord.inventory.api.InventoryService;
+import com.overlord.interaction.api.InteractionViewModel;
+import com.overlord.interaction.api.WorldMutationService;
+import com.overlord.worlditem.api.WorldItemService;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
@@ -61,6 +64,21 @@ class InteractionArchitectureTest {
         for (Method method : BodyInventoryViewModel.class.getMethods()) {
             assertFalse(
                     InventoryService.class.isAssignableFrom(method.getReturnType()),
+                    method.toString());
+        }
+    }
+
+    @Test
+    void interactionViewModelCannotReturnMutableServices() {
+        for (Method method : InteractionViewModel.class.getMethods()) {
+            assertFalse(
+                    InventoryService.class.isAssignableFrom(method.getReturnType()),
+                    method.toString());
+            assertFalse(
+                    WorldMutationService.class.isAssignableFrom(method.getReturnType()),
+                    method.toString());
+            assertFalse(
+                    WorldItemService.class.isAssignableFrom(method.getReturnType()),
                     method.toString());
         }
     }

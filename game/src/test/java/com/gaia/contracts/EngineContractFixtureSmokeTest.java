@@ -4,6 +4,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.overlord.assets.ResourceLocation;
 import com.overlord.interaction.api.EntityRef;
+import com.overlord.interaction.api.BlockFace;
+import com.overlord.interaction.api.BlockHitResult;
+import com.overlord.interaction.api.InteractionMode;
+import com.overlord.interaction.testing.StubInteractionViewModel;
 import com.overlord.inventory.api.BodySlot;
 import com.overlord.inventory.api.InventoryChangeResult;
 import com.overlord.inventory.api.ItemStack;
@@ -85,5 +89,37 @@ class EngineContractFixtureSmokeTest {
                 WorldItemSpawnResult.Status.SPAWNED,
                 service.spawn(new WorldItemSpawnRequest(
                         stack, 1, 2, 3, 0, 0, 0, Optional.empty(), 9)).status());
+    }
+
+    @Test
+    void gameTestsCanUseTheSharedInteractionViewModelFixture() {
+        BlockHitResult hit =
+                new BlockHitResult(
+                        2,
+                        3,
+                        4,
+                        3,
+                        3,
+                        4,
+                        ResourceLocation.parse("gaia:stone"),
+                        1,
+                        0,
+                        0,
+                        3.0f,
+                        3.5f,
+                        4.5f,
+                        1.0f);
+        StubInteractionViewModel viewModel =
+                new StubInteractionViewModel(
+                        Optional.of(hit),
+                        Optional.of(BlockFace.EAST),
+                        0.25,
+                        InteractionMode.BREAKING,
+                        Optional.of(
+                                new TestItemStackView(
+                                        ResourceLocation.parse("gaia:pickaxe"), 1)),
+                        Optional.empty());
+
+        assertEquals(Optional.of(hit), viewModel.target());
     }
 }
