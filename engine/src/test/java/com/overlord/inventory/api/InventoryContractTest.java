@@ -106,6 +106,32 @@ class InventoryContractTest {
                             InventoryChangeRequest request) {
                         return unknownOwner;
                     }
+
+                    @Override
+                    public InventoryReserveResult reserve(
+                            InventoryReservationRequest request) {
+                        return new InventoryReserveResult(
+                                request,
+                                InventoryReserveResult.Status.UNKNOWN_OWNER,
+                                Optional.empty(),
+                                Optional.of(request.requested()),
+                                Optional.empty());
+                    }
+
+                    @Override
+                    public InventoryReservationResult commit(
+                            InventoryReservationId reservationId) {
+                        return new InventoryReservationResult(
+                                reservationId,
+                                InventoryReservationResult.Status.UNKNOWN_RESERVATION,
+                                Optional.empty());
+                    }
+
+                    @Override
+                    public InventoryReservationResult rollback(
+                            InventoryReservationId reservationId) {
+                        return commit(reservationId);
+                    }
                 };
 
         assertEquals(Optional.empty(), service.snapshot(OWNER));

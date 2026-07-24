@@ -8,4 +8,10 @@ public interface InventoryService {
 
     InventoryChangeResult replaceSlot(
             InventoryChangeRequest request);
+
+    InventoryReserveResult reserve(InventoryReservationRequest request);
+
+    InventoryReservationResult commit(InventoryReservationId reservationId);
+
+    InventoryReservationResult rollback(InventoryReservationId reservationId);
 }
