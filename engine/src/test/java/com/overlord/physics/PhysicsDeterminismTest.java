@@ -46,6 +46,9 @@ class PhysicsDeterminismTest {
 
     @Test
     void tenthSecondFrameStillSweepsHighSpeedFallToGround() {
+        float startFeetY = 5.0f;
+        float initialVelocityY = -500.0f;
+        float terminalVelocity = -600.0f;
         World world = new World();
         fillFloor(world, -1, 1, -1, 1);
         PlayerController player =
@@ -53,12 +56,33 @@ class PhysicsDeterminismTest {
                         world,
                         GameConfig.Player.MOVEMENT_SPEED,
                         GameConfig.Physics.GRAVITY,
-                        -500.0f);
-        player.teleport(new Vector3f(0.5f, 20.0f, 0.5f));
+                        terminalVelocity);
+        player.teleport(
+                new Vector3f(0.5f, startFeetY, 0.5f));
         player.body()
-                .setLinearVelocity(new Vector3f(0.0f, -200.0f, 0.0f));
+                .setLinearVelocity(
+                        new Vector3f(
+                                0.0f, initialVelocityY, 0.0f));
         FixedStepClock clock =
                 new FixedStepClock(FIXED_STEP_SECONDS, 8);
+        float firstStepVelocityY =
+                Math.max(
+                        terminalVelocity,
+                        initialVelocityY
+                                + GameConfig.Physics.GRAVITY
+                                        * clock.fixedStepSeconds());
+        float firstStepCandidateTopY =
+                startFeetY
+                        + firstStepVelocityY
+                                * clock.fixedStepSeconds()
+                        + PLAYER_COLLIDER.maxY();
+
+        assertTrue(
+                startFeetY + PLAYER_COLLIDER.minY() > 1.0f,
+                "the starting collider must be fully above the floor");
+        assertTrue(
+                firstStepCandidateTopY < 0.0f,
+                "the discrete endpoint must be fully below the floor");
 
         int steps = clock.advance(0.1);
         for (int step = 0; step < steps; step++) {
