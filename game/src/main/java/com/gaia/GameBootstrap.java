@@ -20,6 +20,7 @@ import com.overlord.core.time.FixedStepClock;
 import com.overlord.core.time.FrameClock;
 import com.overlord.physics.PhysicsManager;
 import com.overlord.voxel.ChunkMeshBuilder;
+import com.overlord.voxel.ChunkMeshManager;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -68,15 +69,30 @@ public final class GameBootstrap {
             BlockRegistry blocks = catalog.blockRegistry();
             GaiaWorldGenerator generator =
                     new GaiaWorldGenerator(blocks);
-            ChunkMeshBuilder meshBuilder =
-                    new ChunkMeshBuilder(blocks);
+            ExecutorService meshExecutor =
+                    Executors.newFixedThreadPool(
+                            2,
+                            namedThreadFactory("Gaia-Chunk-Mesher"));
+            ChunkMeshManager chunkMeshes =
+                    new ChunkMeshManager(
+                            engine.getWorld().chunks(),
+                            new ChunkMeshBuilder(blocks),
+                            meshExecutor,
+                            engine.getRenderer(),
+                            mainThreadGuard,
+                            2);
+            shutdownCoordinator.register(
+                    "chunk-meshes", chunkMeshes::close);
+            shutdownCoordinator.register(
+                    "mesh-executor",
+                    () -> shutdownExecutor(meshExecutor));
+
             byte fallbackGroundId =
                     blocks.requireStoredId(
                             ResourceLocation.parse("gaia:grass"));
             WorldLoader worldLoader =
                     new WorldLoader(
                             generator,
-                            meshBuilder,
                             fallbackGroundId);
 
             ExecutorService worldExecutor =
@@ -105,8 +121,9 @@ public final class GameBootstrap {
                             physicsManager,
                             frameClock,
                             fixedStepClock,
+                            chunkMeshes,
                             worldLoad,
-                        shutdownCoordinator);
+                            shutdownCoordinator);
             new GameLoop(context).run();
         } catch (RuntimeException | Error failure) {
             primaryFailure = failure;
@@ -167,5 +184,14 @@ public final class GameBootstrap {
             throw new IllegalStateException(
                     "Interrupted while stopping world loader", failure);
         }
+    }
+
+    private static java.util.concurrent.ThreadFactory namedThreadFactory(
+            String name) {
+        return runnable -> {
+            Thread thread = new Thread(runnable, name);
+            thread.setDaemon(true);
+            return thread;
+        };
     }
 }

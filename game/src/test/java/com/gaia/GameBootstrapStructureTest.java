@@ -10,6 +10,58 @@ import org.junit.jupiter.api.Test;
 
 class GameBootstrapStructureTest {
     @Test
+    void composesIndependentChunkMeshingAndReverseSafeShutdown()
+            throws IOException {
+        String source =
+                Files.readString(
+                        Path.of(
+                                "src/main/java/com/gaia/"
+                                        + "GameBootstrap.java"));
+        String compact = source.replaceAll("\\s+", "");
+
+        assertTrue(compact.contains("newChunkMeshManager("));
+        assertTrue(compact.contains("Executors.newFixedThreadPool("));
+        assertTrue(
+                compact.contains(
+                        "namedThreadFactory(\"Gaia-Chunk-Mesher\")"));
+        assertTrue(
+                compact.contains(
+                        "newChunkMeshManager("
+                                + "engine.getWorld().chunks(),"
+                                + "newChunkMeshBuilder(blocks),"
+                                + "meshExecutor,"
+                                + "engine.getRenderer(),"
+                                + "mainThreadGuard,2)"));
+
+        int engineConstruction = compact.indexOf("newEngine(");
+        int engineRegistration =
+                compact.indexOf(
+                        "register(\"engine\",engine::shutdown)");
+        int managerConstruction =
+                compact.indexOf("newChunkMeshManager(");
+        int managerRegistration =
+                compact.indexOf(
+                        "register(\"chunk-meshes\",chunkMeshes::close)");
+        int meshExecutorRegistration =
+                compact.indexOf(
+                        "register(\"mesh-executor\"");
+        int worldExecutorRegistration =
+                compact.indexOf(
+                        "register(\"world-executor\"");
+        int worldLoadRegistration =
+                compact.indexOf(
+                        "register(\"world-load\"");
+
+        assertTrue(engineConstruction >= 0);
+        assertTrue(engineConstruction < engineRegistration);
+        assertTrue(engineRegistration < managerConstruction);
+        assertTrue(managerConstruction < managerRegistration);
+        assertTrue(managerRegistration < meshExecutorRegistration);
+        assertTrue(meshExecutorRegistration < worldExecutorRegistration);
+        assertTrue(worldExecutorRegistration < worldLoadRegistration);
+    }
+
+    @Test
     void composesIndexedAssetsBeforeEngineAndWorldWork()
             throws IOException {
         String source =

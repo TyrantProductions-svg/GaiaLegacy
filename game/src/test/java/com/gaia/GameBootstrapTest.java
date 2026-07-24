@@ -1,5 +1,6 @@
 package com.gaia;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -9,12 +10,29 @@ import com.overlord.assets.AssetLoadReport;
 import com.overlord.assets.AssetSeverity;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.core.lifecycle.ShutdownCoordinator;
+import com.overlord.voxel.ChunkMeshManager;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.lang.reflect.RecordComponent;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import org.junit.jupiter.api.Test;
 
 class GameBootstrapTest {
+    @Test
+    void gameContextCarriesTheIndependentChunkMeshManager() {
+        RecordComponent chunkMeshes =
+                Arrays.stream(GameContext.class.getRecordComponents())
+                        .filter(
+                                component ->
+                                        component.getName()
+                                                .equals("chunkMeshes"))
+                        .findFirst()
+                        .orElseThrow();
+
+        assertEquals(ChunkMeshManager.class, chunkMeshes.getType());
+    }
+
     @Test
     void suppressesCleanupFailureOnPrimaryFailure() {
         RuntimeException primary = new RuntimeException("startup failed");
