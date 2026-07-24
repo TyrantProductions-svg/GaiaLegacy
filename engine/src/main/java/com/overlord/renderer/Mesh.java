@@ -7,7 +7,7 @@ import java.nio.FloatBuffer;
 import java.util.Objects;
 import org.lwjgl.BufferUtils;
 
-public class Mesh {
+public class Mesh implements ChunkGpuMesh {
     private final MainThreadGuard mainThreadGuard;
     private int vaoId;
     private int vboId;
@@ -51,6 +51,12 @@ public class Mesh {
         }
     }
 
+    @Override
+    public int vertexCount() {
+        return vertexCount;
+    }
+
+    @Override
     public void draw() {
         mainThreadGuard.assertMainThread("mesh draw");
         glBindVertexArray(vaoId);
@@ -58,6 +64,7 @@ public class Mesh {
         glBindVertexArray(0);
     }
 
+    @Override
     public void cleanup() {
         mainThreadGuard.assertMainThread("mesh cleanup");
         if (vboId != 0) {

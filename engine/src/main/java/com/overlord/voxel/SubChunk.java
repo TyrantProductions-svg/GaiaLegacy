@@ -41,4 +41,28 @@ public class SubChunk {
     public void setClean() {
         dirty = false;
     }
+
+    void copyBlocksTo(byte[] target, int baseY, int worldHeight) {
+        for (int z = 0; z < GameConfig.Chunk.SIZE; z++) {
+            for (int y = 0;
+                    y < GameConfig.Chunk.SUBCHUNK_HEIGHT
+                            && baseY + y < worldHeight;
+                    y++) {
+                for (int x = 0; x < GameConfig.Chunk.SIZE; x++) {
+                    int sourceIndex =
+                            x
+                                    + y * GameConfig.Chunk.SIZE
+                                    + z
+                                            * GameConfig.Chunk.SIZE
+                                            * GameConfig.Chunk.SUBCHUNK_HEIGHT;
+                    int yWorld = baseY + y;
+                    int targetIndex =
+                            x
+                                    + yWorld * GameConfig.Chunk.SIZE
+                                    + z * GameConfig.Chunk.SIZE * worldHeight;
+                    target[targetIndex] = blocks[sourceIndex];
+                }
+            }
+        }
+    }
 }

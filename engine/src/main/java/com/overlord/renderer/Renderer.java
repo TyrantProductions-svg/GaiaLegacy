@@ -2,17 +2,18 @@ package com.overlord.renderer;
 
 import com.overlord.config.GameConfig;
 import com.overlord.core.thread.MainThreadGuard;
+import com.overlord.voxel.ChunkKey;
+import com.overlord.voxel.ChunkMeshData;
+import java.util.Collection;
 import java.util.Objects;
 import org.joml.Matrix4f;
 
 import static org.lwjgl.opengl.GL30C.*;
 
-public class Renderer {
+public class Renderer implements ChunkRenderBackend {
     private final MainThreadGuard mainThreadGuard;
     private final RenderAssets renderAssets;
     private Shader shader;
-    private Mesh mesh;
-    private Mesh fallbackMesh;
     private Camera camera;
     private Texture textureAtlas;
     
@@ -63,62 +64,51 @@ public class Renderer {
                 new Texture(
                         mainThreadGuard,
                         renderAssets.blockAtlas());
-        
-        float[] vertices = {
-            -0.5f, -0.5f, -0.5f,  0.0f, 0.0f,
-             0.5f, -0.5f, -0.5f,  1.0f, 0.0f,
-             0.5f,  0.5f, -0.5f,  1.0f, 1.0f,
-             0.5f,  0.5f, -0.5f,  1.0f, 1.0f,
-            -0.5f,  0.5f, -0.5f,  0.0f, 1.0f,
-            -0.5f, -0.5f, -0.5f,  0.0f, 0.0f,
-
-            -0.5f, -0.5f,  0.5f,  0.0f, 0.0f,
-             0.5f, -0.5f,  0.5f,  1.0f, 0.0f,
-             0.5f,  0.5f,  0.5f,  1.0f, 1.0f,
-             0.5f,  0.5f,  0.5f,  1.0f, 1.0f,
-            -0.5f,  0.5f,  0.5f,  0.0f, 1.0f,
-            -0.5f, -0.5f,  0.5f,  0.0f, 0.0f,
-
-            -0.5f,  0.5f,  0.5f,  0.0f, 0.0f,
-            -0.5f,  0.5f, -0.5f,  1.0f, 0.0f,
-            -0.5f, -0.5f, -0.5f,  1.0f, 1.0f,
-            -0.5f, -0.5f, -0.5f,  1.0f, 1.0f,
-            -0.5f, -0.5f,  0.5f,  0.0f, 1.0f,
-            -0.5f,  0.5f,  0.5f,  0.0f, 0.0f,
-
-             0.5f,  0.5f,  0.5f,  0.0f, 0.0f,
-             0.5f,  0.5f, -0.5f,  1.0f, 0.0f,
-             0.5f, -0.5f, -0.5f,  1.0f, 1.0f,
-             0.5f, -0.5f, -0.5f,  1.0f, 1.0f,
-             0.5f, -0.5f,  0.5f,  0.0f, 1.0f,
-             0.5f,  0.5f,  0.5f,  0.0f, 0.0f,
-
-            -0.5f, -0.5f, -0.5f,  0.0f, 0.0f,
-             0.5f, -0.5f, -0.5f,  1.0f, 0.0f,
-             0.5f, -0.5f,  0.5f,  1.0f, 1.0f,
-             0.5f, -0.5f,  0.5f,  1.0f, 1.0f,
-            -0.5f, -0.5f,  0.5f,  0.0f, 1.0f,
-            -0.5f, -0.5f, -0.5f,  0.0f, 0.0f,
-
-            -0.5f,  0.5f, -0.5f,  0.0f, 0.0f,
-             0.5f,  0.5f, -0.5f,  1.0f, 0.0f,
-             0.5f,  0.5f,  0.5f,  1.0f, 1.0f,
-             0.5f,  0.5f,  0.5f,  1.0f, 1.0f,
-            -0.5f,  0.5f,  0.5f,  0.0f, 1.0f,
-            -0.5f,  0.5f, -0.5f,  0.0f, 0.0f
-        };
-        
-        mesh = new Mesh(mainThreadGuard, vertices);
-        fallbackMesh = mesh;
     }
-    
-    public void replaceMesh(float[] vertices) {
-        mainThreadGuard.assertMainThread("terrain mesh GPU upload");
-        Mesh replacement = new Mesh(mainThreadGuard, vertices);
-        if (mesh != null && mesh != fallbackMesh) {
-            mesh.cleanup();
+
+    @Override
+    public ChunkRenderObject upload(ChunkMeshData data) {
+        mainThreadGuard.assertMainThread("chunk mesh GPU upload");
+        Objects.requireNonNull(data, "data");
+        if (data.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Empty chunk data does not allocate a GPU mesh");
         }
-        mesh = replacement;
+        ChunkKey key = Objects.requireNonNull(data.key(), "data.key()");
+        long revision = data.revision();
+        if (revision < 0) {
+            throw new IllegalArgumentException(
+                    "revision must not be negative");
+        }
+        AxisAlignedBounds localBounds =
+                data.localBounds()
+                        .orElseThrow(
+                                () -> new IllegalArgumentException(
+                                        "Non-empty chunk data must have local bounds"));
+
+        Mesh gpuMesh = new Mesh(mainThreadGuard, data.vertices());
+        try {
+            return new ChunkRenderObject(
+                    key,
+                    revision,
+                    gpuMesh,
+                    localBounds);
+        } catch (RuntimeException | Error failure) {
+            try {
+                gpuMesh.cleanup();
+            } catch (RuntimeException | Error cleanupFailure) {
+                if (cleanupFailure != failure) {
+                    failure.addSuppressed(cleanupFailure);
+                }
+            }
+            throw failure;
+        }
+    }
+
+    @Override
+    public void release(ChunkRenderObject object) {
+        mainThreadGuard.assertMainThread("chunk mesh GPU release");
+        Objects.requireNonNull(object, "object").mesh().cleanup();
     }
 
     public void clear() {
@@ -135,30 +125,22 @@ public class Renderer {
         rebuildProjection(width, height);
     }
 
-    public void render() {
-        mainThreadGuard.assertMainThread("scene rendering");
-        if (mesh == null) return;
+    public void renderChunks(Collection<ChunkRenderObject> chunks) {
+        mainThreadGuard.assertMainThread("chunk rendering");
+        Objects.requireNonNull(chunks, "chunks");
 
         shader.use();
-
         textureAtlas.bind(0);
         shader.setUniformMat4f("projection", projectionMatrix);
         shader.setUniformMat4f("view", camera.getViewMatrix());
-        shader.setUniformMat4f("model", new Matrix4f());
-        
-        mesh.draw();
+        for (ChunkRenderObject chunk : chunks) {
+            shader.setUniformMat4f("model", chunk.modelMatrix());
+            chunk.mesh().draw();
+        }
     }
 
     public void cleanup() {
         mainThreadGuard.assertMainThread("renderer cleanup");
-        if (mesh != null && mesh != fallbackMesh) {
-            mesh.cleanup();
-        }
-        mesh = null;
-        if (fallbackMesh != null) {
-            fallbackMesh.cleanup();
-            fallbackMesh = null;
-        }
         if (shader != null) {
             shader.cleanup();
             shader = null;

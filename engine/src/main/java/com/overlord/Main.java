@@ -18,7 +18,6 @@ public final class Main {
                                         engine.getRenderer()
                                                 .resizeFramebuffer(size.width(), size.height()));
                 engine.getRenderer().clear();
-                engine.getRenderer().render();
                 engine.getWindow().swapBuffers();
             }
         } finally {

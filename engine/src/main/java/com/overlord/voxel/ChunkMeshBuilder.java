@@ -5,10 +5,9 @@ import com.overlord.renderer.texture.TextureRegion;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 
-public final class ChunkMeshBuilder {
+public final class ChunkMeshBuilder implements ChunkMesher {
     private static final BlockFace[] FACES = {
         BlockFace.NORTH,
         BlockFace.SOUTH,
@@ -26,96 +25,89 @@ public final class ChunkMeshBuilder {
                         renderResolver, "renderResolver");
     }
 
-    public float[] buildChunkMeshData(
-            Chunk chunk, int chunkX, int chunkZ, World world) {
+    @Override
+    public ChunkMeshData build(ChunkMeshInput input) {
+        Objects.requireNonNull(input, "input");
         List<Float> vertices = new ArrayList<>();
-        
-        Map<Integer, SubChunk> subChunks = chunk.getSubChunks();
-        if (subChunks.isEmpty()) {
-            return new float[0];
-        }
-        
-        for (Map.Entry<Integer, SubChunk> entry : subChunks.entrySet()) {
-            int sectionIndex = entry.getKey();
-            SubChunk subChunk = entry.getValue();
-            
-            int baseY = sectionIndex * GameConfig.Chunk.SUBCHUNK_HEIGHT;
-            
-            for (int x = 0; x < GameConfig.Chunk.SUBCHUNK_HEIGHT; x++) {
-                for (int y = 0; y < GameConfig.Chunk.SUBCHUNK_HEIGHT; y++) {
-                    for (int z = 0; z < GameConfig.Chunk.SUBCHUNK_HEIGHT; z++) {
-                        byte block = subChunk.getBlock(x, y, z);
-                        if (block == 0) continue;
 
-                        BlockRenderInfo renderInfo =
-                                renderResolver.resolve(
-                                        Byte.toUnsignedInt(block));
-                        if (!renderInfo.renderable()) {
-                            continue;
-                        }
-                        
-                        int worldY = baseY + y;
-                        int worldX = chunkX * GameConfig.Chunk.SIZE + x;
-                        int worldZ = chunkZ * GameConfig.Chunk.SIZE + z;
-                        
-                        float px = worldX;
-                        float py = worldY;
-                        float pz = worldZ;
-                        
-                        if (!isBlockSolid(world, worldX, worldY, worldZ - 1)) {
-                            addFace(
-                                    vertices, px, py, pz, 0,
-                                    renderInfo.region(FACES[0]));
-                        }
-                        if (!isBlockSolid(world, worldX, worldY, worldZ + 1)) {
-                            addFace(
-                                    vertices, px, py, pz, 1,
-                                    renderInfo.region(FACES[1]));
-                        }
-                        if (!isBlockSolid(world, worldX, worldY + 1, worldZ)) {
-                            addFace(
-                                    vertices, px, py, pz, 2,
-                                    renderInfo.region(FACES[2]));
-                        }
-                        if (!isBlockSolid(world, worldX, worldY - 1, worldZ)) {
-                            addFace(
-                                    vertices, px, py, pz, 3,
-                                    renderInfo.region(FACES[3]));
-                        }
-                        if (!isBlockSolid(world, worldX - 1, worldY, worldZ)) {
-                            addFace(
-                                    vertices, px, py, pz, 4,
-                                    renderInfo.region(FACES[4]));
-                        }
-                        if (!isBlockSolid(world, worldX + 1, worldY, worldZ)) {
-                            addFace(
-                                    vertices, px, py, pz, 5,
-                                    renderInfo.region(FACES[5]));
-                        }
+        for (int x = 0; x < GameConfig.Chunk.SIZE; x++) {
+            for (int y = 0;
+                    y < input.center().worldHeight();
+                    y++) {
+                for (int z = 0;
+                        z < GameConfig.Chunk.SIZE;
+                        z++) {
+                    byte block = input.center().getBlock(x, y, z);
+                    if (block == 0) {
+                        continue;
+                    }
+
+                    BlockRenderInfo renderInfo =
+                            renderResolver.resolve(
+                                    Byte.toUnsignedInt(block));
+                    if (!renderInfo.renderable()) {
+                        continue;
+                    }
+
+                    if (!isBlockSolid(
+                            input.getBlock(x, y, z - 1))) {
+                        addFace(
+                                vertices, x, y, z, 0,
+                                renderInfo.region(FACES[0]));
+                    }
+                    if (!isBlockSolid(
+                            input.getBlock(x, y, z + 1))) {
+                        addFace(
+                                vertices, x, y, z, 1,
+                                renderInfo.region(FACES[1]));
+                    }
+                    if (!isBlockSolid(
+                            input.getBlock(x, y + 1, z))) {
+                        addFace(
+                                vertices, x, y, z, 2,
+                                renderInfo.region(FACES[2]));
+                    }
+                    if (!isBlockSolid(
+                            input.getBlock(x, y - 1, z))) {
+                        addFace(
+                                vertices, x, y, z, 3,
+                                renderInfo.region(FACES[3]));
+                    }
+                    if (!isBlockSolid(
+                            input.getBlock(x - 1, y, z))) {
+                        addFace(
+                                vertices, x, y, z, 4,
+                                renderInfo.region(FACES[4]));
+                    }
+                    if (!isBlockSolid(
+                            input.getBlock(x + 1, y, z))) {
+                        addFace(
+                                vertices, x, y, z, 5,
+                                renderInfo.region(FACES[5]));
                     }
                 }
             }
         }
-        
-        if (vertices.isEmpty()) {
-            return new float[0];
-        }
-        
+
+        return new ChunkMeshData(
+                input.center().key(),
+                input.center().revision(),
+                toArray(vertices));
+    }
+
+    private boolean isBlockSolid(byte block) {
+        return block != 0
+                && renderResolver
+                        .resolve(Byte.toUnsignedInt(block))
+                        .renderable();
+    }
+
+    private static float[] toArray(List<Float> vertices) {
         float[] vertexArray = new float[vertices.size()];
         for (int i = 0; i < vertices.size(); i++) {
             vertexArray[i] = vertices.get(i);
         }
-        
         return vertexArray;
-    }
-    
-    private boolean isBlockSolid(World world, int x, int y, int z) {
-        if (y < 0) return false;
-        byte neighbor = world.getBlock(x, y, z);
-        return neighbor != 0
-                && renderResolver
-                        .resolve(Byte.toUnsignedInt(neighbor))
-                        .renderable();
     }
     
     private static void addFace(

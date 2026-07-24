@@ -10,6 +10,94 @@ import org.junit.jupiter.api.Test;
 
 class GameBootstrapStructureTest {
     @Test
+    void worldLoadingDoesNotPublishCombinedMeshData()
+            throws IOException {
+        String worldLoader =
+                Files.readString(
+                        Path.of(
+                                "src/main/java/com/gaia/world/"
+                                        + "WorldLoader.java"));
+        String worldLoadResult =
+                Files.readString(
+                        Path.of(
+                                "src/main/java/com/gaia/world/"
+                                        + "WorldLoadResult.java"));
+
+        assertFalse(worldLoader.contains("combineMeshData"));
+        assertFalse(worldLoadResult.contains("float[]"));
+    }
+
+    @Test
+    void composesIndependentChunkMeshingAndReverseSafeShutdown()
+            throws IOException {
+        String source =
+                Files.readString(
+                        Path.of(
+                                "src/main/java/com/gaia/"
+                                        + "GameBootstrap.java"));
+        String compact = source.replaceAll("\\s+", "");
+
+        assertTrue(compact.contains("newChunkMeshManager("));
+        assertTrue(compact.contains("Executors.newFixedThreadPool("));
+        assertTrue(
+                compact.contains(
+                        "namedThreadFactory(\"Gaia-Chunk-Mesher\")"));
+        assertTrue(
+                compact.contains(
+                        "newChunkMeshManager("
+                                + "engine.getWorld().chunks(),"
+                                + "newChunkMeshBuilder(blocks),"
+                                + "meshExecutor,"
+                                + "engine.getRenderer(),"
+                                + "mainThreadGuard,2)"));
+        assertTrue(compact.contains("newShutdownBarrier("));
+        assertTrue(
+                compact.contains(
+                        "shutdownBarrier.registerChunkMeshes("));
+        assertTrue(
+                compact.contains(
+                        "shutdownBarrier.registerWorldExecutor("));
+
+        int engineConstruction = compact.indexOf("newEngine(");
+        int engineRegistration =
+                compact.indexOf(
+                        "register(\"engine\","
+                                + "()->shutdownBarrier.closeEngine("
+                                + "engine::shutdown))");
+        int managerConstruction =
+                compact.indexOf("newChunkMeshManager(");
+        int meshLifecycleRegistration =
+                compact.indexOf(
+                        "shutdownBarrier.registerChunkMeshes(");
+        int worldExecutorRegistration =
+                compact.indexOf(
+                        "shutdownBarrier.registerWorldExecutor(");
+        int worldLoadRegistration =
+                compact.indexOf(
+                        "register(\"world-load\"");
+
+        assertTrue(engineConstruction >= 0);
+        assertTrue(engineConstruction < engineRegistration);
+        assertTrue(engineRegistration < meshLifecycleRegistration);
+        assertTrue(meshLifecycleRegistration < managerConstruction);
+        assertTrue(
+                managerConstruction < worldExecutorRegistration);
+        assertTrue(worldExecutorRegistration < worldLoadRegistration);
+        assertTrue(
+                compact.contains(
+                        "register(\"chunk-meshes\","
+                                + "()->closeManager("));
+        assertTrue(
+                compact.contains(
+                        "register(\"mesh-executor\","
+                                + "()->stopMeshExecutor("));
+        assertTrue(
+                compact.contains(
+                        "register(\"world-executor\","
+                                + "()->stopWorldExecutor("));
+    }
+
+    @Test
     void composesIndexedAssetsBeforeEngineAndWorldWork()
             throws IOException {
         String source =

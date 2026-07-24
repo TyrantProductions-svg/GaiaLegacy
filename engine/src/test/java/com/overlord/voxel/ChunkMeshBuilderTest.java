@@ -1,8 +1,12 @@
 package com.overlord.voxel;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.assets.ResourceLocation;
+import com.overlord.config.GameConfig;
+import com.overlord.renderer.AxisAlignedBounds;
 import com.overlord.renderer.material.MaterialDefinition;
 import com.overlord.renderer.material.RenderType;
 import com.overlord.renderer.texture.TextureRegion;
@@ -13,6 +17,7 @@ import org.junit.jupiter.api.Test;
 
 class ChunkMeshBuilderTest {
     private static final float EPSILON = 0.000001f;
+    private static final int WORLD_HEIGHT = GameConfig.Chunk.SIZE;
     private static final BlockFace[] FACE_ORDER = {
         BlockFace.NORTH,
         BlockFace.SOUTH,
@@ -31,12 +36,10 @@ class ChunkMeshBuilderTest {
                     resolvedId.set(unsignedBlockId);
                     return renderInfo;
                 });
-        World world = new World();
-        world.setBlock(1, 1, 1, (byte) 0xFF);
 
-        float[] vertices =
-                meshBuilder.buildChunkMeshData(
-                        world.getChunk(0, 0), 0, 0, world);
+        ChunkMeshData data =
+                meshBuilder.build(singleBlockInput(1, 1, 1, (byte) 0xFF));
+        float[] vertices = data.vertices();
 
         assertEquals(255, resolvedId.get());
         assertEquals(180, vertices.length);
@@ -58,14 +61,11 @@ class ChunkMeshBuilderTest {
                         unsignedBlockId ->
                                 BlockRenderInfo.nonRenderable(
                                         material, fallback));
-        World world = new World();
-        world.setBlock(1, 1, 1, (byte) 7);
 
-        float[] vertices =
-                meshBuilder.buildChunkMeshData(
-                        world.getChunk(0, 0), 0, 0, world);
+        ChunkMeshData data =
+                meshBuilder.build(singleBlockInput(1, 1, 1, (byte) 7));
 
-        assertEquals(0, vertices.length);
+        assertTrue(data.isEmpty());
     }
 
     @Test
@@ -80,15 +80,263 @@ class ChunkMeshBuilderTest {
                                 unsignedBlockId == 1
                                         ? solid
                                         : nonRenderable);
-        World world = new World();
-        world.setBlock(1, 1, 1, (byte) 1);
-        world.setBlock(1, 1, 0, (byte) 7);
+        ChunkKey centerKey = new ChunkKey(0, 0);
+        ChunkSnapshot center =
+                snapshotWithBlock(
+                        centerKey,
+                        1,
+                        GameConfig.Chunk.SIZE - 1,
+                        1,
+                        2,
+                        (byte) 1);
+        ChunkSnapshot east =
+                snapshotWithBlock(
+                        centerKey.east(), 1, 0, 1, 2, (byte) 7);
 
-        float[] vertices =
-                meshBuilder.buildChunkMeshData(
-                        world.getChunk(0, 0), 0, 0, world);
+        ChunkMeshData data =
+                meshBuilder.build(
+                        new ChunkMeshInput(
+                                center, null, null, null, east));
 
-        assertEquals(180, vertices.length);
+        assertEquals(180, data.vertices().length);
+    }
+
+    @Test
+    void usesNeighborSnapshotToHideEastBoundaryFace() {
+        ChunkKey centerKey = new ChunkKey(0, 0);
+        ChunkSnapshot center =
+                snapshotWithBlock(
+                        centerKey,
+                        1,
+                        GameConfig.Chunk.SIZE - 1,
+                        1,
+                        2,
+                        (byte) 1);
+        ChunkSnapshot east =
+                snapshotWithBlock(
+                        centerKey.east(), 1, 0, 1, 2, (byte) 1);
+
+        ChunkMeshData data =
+                builder().build(
+                        new ChunkMeshInput(
+                                center, null, null, null, east));
+
+        assertEquals(150, data.vertices().length);
+    }
+
+    @Test
+    void usesNeighborSnapshotToHideWestBoundaryFace() {
+        ChunkKey centerKey = new ChunkKey(0, 0);
+        ChunkSnapshot center =
+                snapshotWithBlock(
+                        centerKey, 1, 0, 1, 2, (byte) 1);
+        ChunkSnapshot west =
+                snapshotWithBlock(
+                        centerKey.west(),
+                        1,
+                        GameConfig.Chunk.SIZE - 1,
+                        1,
+                        2,
+                        (byte) 1);
+
+        ChunkMeshData data =
+                builder().build(
+                        new ChunkMeshInput(
+                                center, null, null, west, null));
+
+        assertEquals(150, data.vertices().length);
+    }
+
+    @Test
+    void usesNeighborSnapshotToHideNorthBoundaryFace() {
+        ChunkKey centerKey = new ChunkKey(0, 0);
+        ChunkSnapshot center =
+                snapshotWithBlock(
+                        centerKey, 1, 2, 1, 0, (byte) 1);
+        ChunkSnapshot north =
+                snapshotWithBlock(
+                        centerKey.north(),
+                        1,
+                        2,
+                        1,
+                        GameConfig.Chunk.SIZE - 1,
+                        (byte) 1);
+
+        ChunkMeshData data =
+                builder().build(
+                        new ChunkMeshInput(
+                                center, north, null, null, null));
+
+        assertEquals(150, data.vertices().length);
+    }
+
+    @Test
+    void usesNeighborSnapshotToHideSouthBoundaryFace() {
+        ChunkKey centerKey = new ChunkKey(0, 0);
+        ChunkSnapshot center =
+                snapshotWithBlock(
+                        centerKey,
+                        1,
+                        2,
+                        1,
+                        GameConfig.Chunk.SIZE - 1,
+                        (byte) 1);
+        ChunkSnapshot south =
+                snapshotWithBlock(
+                        centerKey.south(), 1, 2, 1, 0, (byte) 1);
+
+        ChunkMeshData data =
+                builder().build(
+                        new ChunkMeshInput(
+                                center, null, south, null, null));
+
+        assertEquals(150, data.vertices().length);
+    }
+
+    @Test
+    void missingNeighborsBehaveAsAir() {
+        ChunkSnapshot center =
+                snapshotWithBlock(
+                        new ChunkKey(0, 0),
+                        1,
+                        GameConfig.Chunk.SIZE - 1,
+                        1,
+                        2,
+                        (byte) 1);
+
+        ChunkMeshData data =
+                builder().build(
+                        new ChunkMeshInput(
+                                center, null, null, null, null));
+
+        assertEquals(180, data.vertices().length);
+    }
+
+    @Test
+    void emptyCenterSnapshotProducesEmptyMesh() {
+        ChunkSnapshot center =
+                ChunkSnapshot.empty(
+                        new ChunkKey(3, -2), 9, WORLD_HEIGHT);
+
+        ChunkMeshData data =
+                builder().build(
+                        new ChunkMeshInput(
+                                center, null, null, null, null));
+
+        assertTrue(data.isEmpty());
+        assertTrue(data.localBounds().isEmpty());
+    }
+
+    @Test
+    void emittedVerticesAreChunkLocalAndBoundsAreLocal() {
+        ChunkMeshData data =
+                builder().build(
+                        singleBlockInput(
+                                GameConfig.Chunk.SIZE - 1,
+                                4,
+                                3,
+                                (byte) 1));
+
+        assertEquals(
+                new AxisAlignedBounds(
+                        GameConfig.Chunk.SIZE - 1,
+                        4,
+                        3,
+                        GameConfig.Chunk.SIZE,
+                        5,
+                        4),
+                data.localBounds().orElseThrow());
+        assertTrue(
+                maxPositionX(data.vertices())
+                        <= GameConfig.Chunk.SIZE);
+    }
+
+    @Test
+    void propagatesCenterKeyAndRevision() {
+        ChunkKey key = new ChunkKey(-4, 7);
+        ChunkSnapshot center =
+                snapshotWithBlock(
+                        key, 42, 1, 2, 3, (byte) 1);
+
+        ChunkMeshData data =
+                builder().build(
+                        new ChunkMeshInput(
+                                center, null, null, null, null));
+
+        assertEquals(key, data.key());
+        assertEquals(42, data.revision());
+    }
+
+    @Test
+    void rejectsMissingCenterSnapshot() {
+        assertThrows(
+                NullPointerException.class,
+                () -> new ChunkMeshInput(
+                        null, null, null, null, null));
+    }
+
+    @Test
+    void rejectsNeighborWithWrongCardinalKey() {
+        ChunkSnapshot center =
+                ChunkSnapshot.empty(
+                        new ChunkKey(0, 0), 1, WORLD_HEIGHT);
+        ChunkSnapshot wrongEast =
+                ChunkSnapshot.empty(
+                        new ChunkKey(2, 0), 1, WORLD_HEIGHT);
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new ChunkMeshInput(
+                        center, null, null, null, wrongEast));
+    }
+
+    @Test
+    void rejectsNeighborWithDifferentWorldHeight() {
+        ChunkSnapshot center =
+                ChunkSnapshot.empty(
+                        new ChunkKey(0, 0), 1, WORLD_HEIGHT);
+        ChunkSnapshot east =
+                ChunkSnapshot.empty(
+                        center.key().east(), 1, WORLD_HEIGHT + 1);
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new ChunkMeshInput(
+                        center, null, null, null, east));
+    }
+
+    private static ChunkMeshBuilder builder() {
+        return new ChunkMeshBuilder(ignored -> renderInfo());
+    }
+
+    private static ChunkMeshInput singleBlockInput(
+            int x, int y, int z, byte block) {
+        ChunkSnapshot center =
+                snapshotWithBlock(
+                        new ChunkKey(0, 0), 1, x, y, z, block);
+        return new ChunkMeshInput(
+                center, null, null, null, null);
+    }
+
+    private static ChunkSnapshot snapshotWithBlock(
+            ChunkKey key,
+            long revision,
+            int x,
+            int y,
+            int z,
+            byte block) {
+        byte[] blocks =
+                new byte[
+                        GameConfig.Chunk.SIZE
+                                * WORLD_HEIGHT
+                                * GameConfig.Chunk.SIZE];
+        int index =
+                x
+                        + y * GameConfig.Chunk.SIZE
+                        + z * GameConfig.Chunk.SIZE * WORLD_HEIGHT;
+        blocks[index] = block;
+        return ChunkSnapshot.of(
+                key, revision, WORLD_HEIGHT, blocks);
     }
 
     private static BlockRenderInfo renderInfo() {
@@ -97,7 +345,11 @@ class ChunkMeshBuilderTest {
         for (int face = 0; face < FACE_ORDER.length; face++) {
             regions.put(
                     FACE_ORDER[face],
-                    region(FACE_ORDER[face].name().toLowerCase(), face));
+                    region(
+                            FACE_ORDER[face]
+                                    .name()
+                                    .toLowerCase(),
+                            face));
         }
         return new BlockRenderInfo(material(), regions, true);
     }
@@ -111,7 +363,8 @@ class ChunkMeshBuilderTest {
                 ResourceLocation.parse("test:missing"));
     }
 
-    private static TextureRegion region(String name, int column) {
+    private static TextureRegion region(
+            String name, int column) {
         return new TextureRegion(
                 ResourceLocation.of("test", name),
                 column * 16,
@@ -136,5 +389,13 @@ class ChunkMeshBuilderTest {
         }
         assertEquals(expectedMin, actualMin, EPSILON);
         assertEquals(expectedMax, actualMax, EPSILON);
+    }
+
+    private static float maxPositionX(float[] vertices) {
+        float maximum = Float.NEGATIVE_INFINITY;
+        for (int offset = 0; offset < vertices.length; offset += 5) {
+            maximum = Math.max(maximum, vertices[offset]);
+        }
+        return maximum;
     }
 }

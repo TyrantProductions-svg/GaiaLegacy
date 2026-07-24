@@ -1,12 +1,11 @@
 package com.gaia.world;
 
 import com.overlord.config.GameConfig;
-import com.overlord.voxel.Chunk;
-import com.overlord.voxel.ChunkMeshBuilder;
+import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.World;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CancellationException;
 import org.joml.Vector3f;
 
@@ -14,45 +13,33 @@ public final class WorldLoader {
     private static final int CHUNK_RADIUS = 2;
 
     private final GaiaWorldGenerator worldGenerator;
-    private final ChunkMeshBuilder meshBuilder;
     private final byte fallbackGroundId;
 
     public WorldLoader(
             GaiaWorldGenerator worldGenerator,
-            ChunkMeshBuilder meshBuilder,
             byte fallbackGroundId) {
         this.worldGenerator =
                 Objects.requireNonNull(
                         worldGenerator, "worldGenerator");
-        this.meshBuilder =
-                Objects.requireNonNull(meshBuilder, "meshBuilder");
         this.fallbackGroundId = fallbackGroundId;
     }
 
     public WorldLoadResult load(World world) {
         Objects.requireNonNull(world, "world");
 
-        for (int chunkX = -CHUNK_RADIUS; chunkX < CHUNK_RADIUS; chunkX++) {
+        Set<ChunkKey> generated = new LinkedHashSet<>();
+        for (int chunkX = -CHUNK_RADIUS;
+                chunkX < CHUNK_RADIUS;
+                chunkX++) {
             for (int chunkZ = -CHUNK_RADIUS; chunkZ < CHUNK_RADIUS; chunkZ++) {
                 checkCancelled();
-                worldGenerator.generateChunk(world, chunkX, chunkZ);
+                ChunkKey key = new ChunkKey(chunkX, chunkZ);
+                worldGenerator.generateChunk(world, key);
+                generated.add(key);
             }
         }
 
-        List<float[]> allMeshData = new ArrayList<>();
-        for (int chunkX = -CHUNK_RADIUS; chunkX < CHUNK_RADIUS; chunkX++) {
-            for (int chunkZ = -CHUNK_RADIUS; chunkZ < CHUNK_RADIUS; chunkZ++) {
-                checkCancelled();
-                Chunk chunk = world.getChunk(chunkX, chunkZ);
-                float[] meshData =
-                        meshBuilder.buildChunkMeshData(
-                                chunk, chunkX, chunkZ, world);
-                if (meshData.length > 0) {
-                    allMeshData.add(meshData);
-                }
-            }
-        }
-
+        checkCancelled();
         int spawnX = 0;
         int spawnZ = 0;
         int highestBlockY = findHighestBlock(world, spawnX, spawnZ);
@@ -70,7 +57,7 @@ public final class WorldLoader {
                         spawnX + 0.5f,
                         spawnY + GameConfig.Player.HEIGHT,
                         spawnZ + 0.5f);
-        return new WorldLoadResult(combineMeshData(allMeshData), spawnPosition);
+        return new WorldLoadResult(generated, spawnPosition);
     }
 
     private static void checkCancelled() {
@@ -88,18 +75,4 @@ public final class WorldLoader {
         return 0;
     }
 
-    private static float[] combineMeshData(List<float[]> meshDataList) {
-        int totalLength = 0;
-        for (float[] data : meshDataList) {
-            totalLength += data.length;
-        }
-
-        float[] combined = new float[totalLength];
-        int offset = 0;
-        for (float[] data : meshDataList) {
-            System.arraycopy(data, 0, combined, offset, data.length);
-            offset += data.length;
-        }
-        return combined;
-    }
 }

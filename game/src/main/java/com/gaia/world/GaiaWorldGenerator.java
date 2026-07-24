@@ -4,6 +4,7 @@ import com.gaia.blocks.BlockRegistry;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.config.GameConfig;
 import com.overlord.voxel.Chunk;
+import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.PerlinNoise;
 import com.overlord.voxel.World;
 import java.util.Objects;
@@ -34,9 +35,14 @@ public class GaiaWorldGenerator {
                         ResourceLocation.parse("gaia:stone"));
     }
 
-    public void generateChunk(World world, int chunkX, int chunkZ) {
-        Chunk chunk = world.getChunk(chunkX, chunkZ);
-        
+    public void generateChunk(World world, ChunkKey key) {
+        Objects.requireNonNull(world, "world")
+                .generate(
+                        Objects.requireNonNull(key, "key"),
+                        chunk -> fillChunk(chunk, key.x(), key.z()));
+    }
+
+    private void fillChunk(Chunk chunk, int chunkX, int chunkZ) {
         for (int x = 0; x < GameConfig.Chunk.SIZE; x++) {
             for (int z = 0; z < GameConfig.Chunk.SIZE; z++) {
                 int worldX = chunkX * GameConfig.Chunk.SIZE + x;
