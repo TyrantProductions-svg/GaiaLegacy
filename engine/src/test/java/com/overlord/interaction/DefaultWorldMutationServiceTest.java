@@ -14,6 +14,7 @@ import com.overlord.interaction.api.BlockChangeDispatchException;
 import com.overlord.interaction.api.BlockChangeEventPublisher;
 import com.overlord.interaction.api.BlockChangeRequest;
 import com.overlord.interaction.api.BlockChangeResult;
+import com.overlord.interaction.api.BlockMutationReentrancyException;
 import com.overlord.interaction.api.BlockChangedEvent;
 import com.overlord.interaction.api.BeforeBlockChangedEvent;
 import com.overlord.interaction.api.ChunkDirtyEvent;
@@ -21,8 +22,8 @@ import com.overlord.interaction.api.EntityRef;
 import com.overlord.interaction.api.InteractionAction;
 import com.overlord.interaction.api.ItemUseContext;
 import com.overlord.inventory.api.BodySlot;
-import com.overlord.voxel.ChunkDirtyTracker;
 import com.overlord.voxel.ChunkKey;
+import com.overlord.voxel.DirtyChunkRevision;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -41,28 +42,40 @@ class DefaultWorldMutationServiceTest {
             ResourceLocation.parse("gaia:stone");
     private static final ResourceLocation DIRT =
             ResourceLocation.parse("gaia:dirt");
+    private static final DirtyChunkRevision CENTER_REVISION =
+            new DirtyChunkRevision(new ChunkKey(0, 0), 7);
+    private static final DirtyChunkRevision EAST_REVISION =
+            new DirtyChunkRevision(new ChunkKey(1, 0), 11);
 
     @Test
-    void appliesInBeforeWriteChangedDirtyOrderAtChunkEdge() {
+    void appliesInBeforeCompareAndSetChangedDirtyOrderWithExactRevisions() {
         List<String> order = new ArrayList<>();
         RecordingAccess access = new RecordingAccess(order, STONE);
+        access.outcome =
+                applied(
+                        STONE,
+                        List.of(CENTER_REVISION, EAST_REVISION));
         RecordingPublisher events = new RecordingPublisher(order);
         DefaultWorldMutationService service = service(access, events);
         BlockChangeRequest request = request(15, 4, 3);
 
         BlockChangeResult result = service.changeBlock(request);
 
-        Set<ChunkKey> expectedDirtyChunks =
-                Set.of(new ChunkKey(0, 0), new ChunkKey(1, 0));
         assertEquals(BlockChangeResult.Status.APPLIED, result.status());
         assertSame(request, result.request());
         assertEquals(Optional.of(STONE), result.observedBlock());
-        assertEquals(expectedDirtyChunks, result.dirtyChunks());
+        assertEquals(
+                List.of(CENTER_REVISION, EAST_REVISION),
+                result.dirtiedChunks());
         assertEquals(AIR, access.block);
         assertEquals(1, access.writeAttempts);
         assertEquals(1, access.successfulWrites);
         assertEquals(
-                List.of("before", "write", "changed", "dirty"),
+                List.of(
+                        "before",
+                        "compare-and-set",
+                        "changed",
+                        "dirty"),
                 order);
         assertEquals(
                 new BeforeBlockChangedEvent(request, STONE),
@@ -71,8 +84,34 @@ class DefaultWorldMutationServiceTest {
                 new BlockChangedEvent(request, STONE, AIR),
                 events.changedEvent);
         assertEquals(
-                new ChunkDirtyEvent(request, expectedDirtyChunks),
+                new ChunkDirtyEvent(
+                        request,
+                        List.of(CENTER_REVISION, EAST_REVISION)),
                 events.dirtyEvent);
+    }
+
+    @Test
+    void boundaryMutationPublishesOnlyRepositoryReportedLoadedChunk() {
+        List<String> order = new ArrayList<>();
+        RecordingAccess access = new RecordingAccess(order, STONE);
+        access.outcome =
+                applied(STONE, List.of(CENTER_REVISION));
+        RecordingPublisher events = new RecordingPublisher(order);
+
+        BlockChangeResult result =
+                service(access, events)
+                        .changeBlock(request(15, 4, 3));
+
+        assertEquals(
+                List.of(CENTER_REVISION),
+                result.dirtiedChunks());
+        assertEquals(Set.of(new ChunkKey(0, 0)), result.dirtyChunks());
+        assertEquals(
+                List.of(CENTER_REVISION),
+                events.dirtyEvent.dirtiedChunks());
+        assertFalse(
+                result.dirtyChunks().contains(new ChunkKey(1, 0)),
+                "service must not add the theoretical east neighbor");
     }
 
     @Test
@@ -104,7 +143,9 @@ class DefaultWorldMutationServiceTest {
         access.known.add(DIRT);
         RecordingPublisher events = new RecordingPublisher(order);
         events.beforeAction =
-                () -> access.setBlock(2, 4, 3, DIRT);
+                () ->
+                        access.forceExternalBlockChangeForTest(
+                                DIRT);
         BlockChangeRequest request = request(2, 4, 3);
 
         BlockChangeResult result =
@@ -115,11 +156,11 @@ class DefaultWorldMutationServiceTest {
         assertEquals(Optional.of(DIRT), result.observedBlock());
         assertTrue(result.dirtyChunks().isEmpty());
         assertEquals(2, access.reads);
-        assertEquals(1, access.writeAttempts);
-        assertEquals(1, access.successfulWrites);
-        assertEquals(List.of(DIRT), access.writtenBlocks);
+        assertEquals(0, access.writeAttempts);
+        assertEquals(0, access.successfulWrites);
+        assertTrue(access.writtenBlocks.isEmpty());
         assertEquals(DIRT, access.block);
-        assertEquals(List.of("before", "write"), order);
+        assertEquals(List.of("before"), order);
         assertEquals(
                 new BeforeBlockChangedEvent(request, STONE),
                 events.beforeEvent);
@@ -255,10 +296,13 @@ class DefaultWorldMutationServiceTest {
     }
 
     @Test
-    void failedConditionalWriteRejectsAsConflictWithoutSuccessEvents() {
+    void conflictOutcomeRejectsWithoutSuccessEvents() {
         List<String> order = new ArrayList<>();
         RecordingAccess access = new RecordingAccess(order, STONE);
-        access.writeSucceeds = false;
+        access.outcome =
+                outcome(
+                        BlockWorldMutationOutcome.Status.CONFLICT,
+                        DIRT);
         RecordingPublisher events = new RecordingPublisher(order);
         BlockChangeRequest request = request(2, 4, 3);
 
@@ -267,14 +311,120 @@ class DefaultWorldMutationServiceTest {
 
         assertEquals(BlockChangeResult.Status.CONFLICT, result.status());
         assertSame(request, result.request());
-        assertEquals(Optional.of(STONE), result.observedBlock());
+        assertEquals(Optional.of(DIRT), result.observedBlock());
         assertTrue(result.dirtyChunks().isEmpty());
         assertEquals(1, access.writeAttempts);
         assertEquals(0, access.successfulWrites);
         assertEquals(STONE, access.block);
-        assertEquals(List.of("before", "write"), order);
+        assertEquals(
+                List.of("before", "compare-and-set"), order);
         assertEquals(null, events.changedEvent);
         assertEquals(null, events.dirtyEvent);
+    }
+
+    @Test
+    void noChangeOutcomeMapsWithoutSuccessEventsOrDirtyRevisions() {
+        assertNonAppliedOutcomeMaps(
+                BlockWorldMutationOutcome.Status.NO_CHANGE,
+                BlockChangeResult.Status.NO_CHANGE);
+    }
+
+    @Test
+    void outOfBoundsOutcomeMapsWithoutSuccessEventsOrDirtyRevisions() {
+        assertNonAppliedOutcomeMaps(
+                BlockWorldMutationOutcome.Status.OUT_OF_BOUNDS,
+                BlockChangeResult.Status.OUT_OF_BOUNDS);
+    }
+
+    @Test
+    void inconsistentAppliedOutcomeReportsCommittedWithoutSuccessEvents() {
+        List<String> order = new ArrayList<>();
+        RecordingAccess access = new RecordingAccess(order, STONE);
+        access.outcome =
+                applied(AIR, List.of(CENTER_REVISION));
+        RecordingPublisher events = new RecordingPublisher(order);
+
+        BlockChangeDispatchException failure =
+                assertThrows(
+                        BlockChangeDispatchException.class,
+                        () ->
+                                service(access, events)
+                                        .changeBlock(
+                                                request(2, 4, 3)));
+
+        assertTrue(failure.mutationApplied());
+        assertInstanceOf(
+                IllegalStateException.class, failure.getCause());
+        assertEquals(1, access.successfulWrites);
+        assertEquals(AIR, access.block);
+        assertEquals(
+                List.of("before", "compare-and-set"), order);
+        assertEquals(null, events.changedEvent);
+        assertEquals(null, events.dirtyEvent);
+    }
+
+    @Test
+    void recursiveBeforeMutationFailsBeforeNestedWorldAccess() {
+        List<String> order = new ArrayList<>();
+        RecordingAccess access = new RecordingAccess(order, STONE);
+        RecordingPublisher events = new RecordingPublisher(order);
+        DefaultWorldMutationService service = service(access, events);
+        events.beforeAction =
+                () -> service.changeBlock(request(3, 4, 3));
+
+        BlockChangeDispatchException failure =
+                assertThrows(
+                        BlockChangeDispatchException.class,
+                        () -> service.changeBlock(request(2, 4, 3)));
+
+        assertFalse(failure.mutationApplied());
+        assertInstanceOf(
+                BlockMutationReentrancyException.class,
+                failure.getCause());
+        assertEquals(1, access.boundsChecks);
+        assertEquals(2, access.knownChecks);
+        assertEquals(1, access.reads);
+        assertEquals(0, access.writeAttempts);
+        assertEquals(List.of("before"), order);
+    }
+
+    @Test
+    void beforeGuardResetsAfterCancellation() {
+        List<String> order = new ArrayList<>();
+        RecordingAccess access = new RecordingAccess(order, STONE);
+        RecordingPublisher events = new RecordingPublisher(order);
+        DefaultWorldMutationService service = service(access, events);
+        events.decision = BlockChangeDecision.CANCEL;
+
+        assertEquals(
+                BlockChangeResult.Status.CANCELLED,
+                service.changeBlock(request(2, 4, 3)).status());
+
+        events.decision = BlockChangeDecision.ALLOW;
+        assertEquals(
+                BlockChangeResult.Status.APPLIED,
+                service.changeBlock(request(2, 4, 3)).status());
+        assertEquals(1, access.successfulWrites);
+    }
+
+    @Test
+    void beforeGuardResetsAfterSubscriberException() {
+        List<String> order = new ArrayList<>();
+        RecordingAccess access = new RecordingAccess(order, STONE);
+        RecordingPublisher events = new RecordingPublisher(order);
+        DefaultWorldMutationService service = service(access, events);
+        events.beforeFailure =
+                new IllegalStateException("before listener");
+
+        assertThrows(
+                BlockChangeDispatchException.class,
+                () -> service.changeBlock(request(2, 4, 3)));
+
+        events.beforeFailure = null;
+        assertEquals(
+                BlockChangeResult.Status.APPLIED,
+                service.changeBlock(request(2, 4, 3)).status());
+        assertEquals(1, access.successfulWrites);
     }
 
     @Test
@@ -348,11 +498,15 @@ class DefaultWorldMutationServiceTest {
         assertEquals(1, access.successfulWrites);
         assertEquals(AIR, access.block);
         assertEquals(
-                List.of("before", "write", "changed", "dirty"),
+                List.of(
+                        "before",
+                        "compare-and-set",
+                        "changed",
+                        "dirty"),
                 order);
         assertEquals(
                 Set.of(new ChunkKey(0, 0)),
-                events.dirtyEvent.chunks());
+                events.dirtyEvent.dirtyChunks());
     }
 
     @Test
@@ -377,7 +531,11 @@ class DefaultWorldMutationServiceTest {
         assertEquals(1, access.successfulWrites);
         assertEquals(AIR, access.block);
         assertEquals(
-                List.of("before", "write", "changed", "dirty"),
+                List.of(
+                        "before",
+                        "compare-and-set",
+                        "changed",
+                        "dirty"),
                 order);
         assertEquals(STONE, events.changedEvent.previousBlock());
         assertEquals(AIR, events.changedEvent.currentBlock());
@@ -411,7 +569,11 @@ class DefaultWorldMutationServiceTest {
         assertEquals(1, access.successfulWrites);
         assertEquals(AIR, access.block);
         assertEquals(
-                List.of("before", "write", "changed", "dirty"),
+                List.of(
+                        "before",
+                        "compare-and-set",
+                        "changed",
+                        "dirty"),
                 order);
     }
 
@@ -437,7 +599,11 @@ class DefaultWorldMutationServiceTest {
         assertEquals(0, failure.getCause().getSuppressed().length);
         assertEquals(1, access.successfulWrites);
         assertEquals(
-                List.of("before", "write", "changed", "dirty"),
+                List.of(
+                        "before",
+                        "compare-and-set",
+                        "changed",
+                        "dirty"),
                 order);
     }
 
@@ -504,14 +670,53 @@ class DefaultWorldMutationServiceTest {
                 replacement);
     }
 
+    private static BlockWorldMutationOutcome applied(
+            ResourceLocation observed,
+            List<DirtyChunkRevision> revisions) {
+        return new BlockWorldMutationOutcome(
+                BlockWorldMutationOutcome.Status.APPLIED,
+                observed,
+                revisions);
+    }
+
+    private static BlockWorldMutationOutcome outcome(
+            BlockWorldMutationOutcome.Status status,
+            ResourceLocation observed) {
+        return new BlockWorldMutationOutcome(
+                status, observed, List.of());
+    }
+
+    private static void assertNonAppliedOutcomeMaps(
+            BlockWorldMutationOutcome.Status worldStatus,
+            BlockChangeResult.Status resultStatus) {
+        List<String> order = new ArrayList<>();
+        RecordingAccess access = new RecordingAccess(order, STONE);
+        access.outcome = outcome(worldStatus, STONE);
+        RecordingPublisher events = new RecordingPublisher(order);
+        BlockChangeRequest request = request(2, 4, 3);
+
+        BlockChangeResult result =
+                service(access, events).changeBlock(request);
+
+        assertEquals(resultStatus, result.status());
+        assertEquals(Optional.of(STONE), result.observedBlock());
+        assertTrue(result.dirtiedChunks().isEmpty());
+        assertEquals(1, access.writeAttempts);
+        assertEquals(0, access.successfulWrites);
+        assertEquals(STONE, access.block);
+        assertEquals(
+                List.of("before", "compare-and-set"), order);
+        assertEquals(null, events.changedEvent);
+        assertEquals(null, events.dirtyEvent);
+    }
+
     private static DefaultWorldMutationService service(
             RecordingAccess access,
             RecordingPublisher events) {
         return new DefaultWorldMutationService(
                 MainThreadGuard.captureCurrentThread(),
                 access,
-                events,
-                new ChunkDirtyTracker());
+                events);
     }
 
     private static final class RecordingAccess
@@ -528,12 +733,16 @@ class DefaultWorldMutationServiceTest {
         private final List<ResourceLocation> writtenBlocks =
                 new ArrayList<>();
         private boolean withinBounds = true;
-        private boolean writeSucceeds = true;
+        private BlockWorldMutationOutcome outcome;
 
         private RecordingAccess(
                 List<String> order, ResourceLocation block) {
             this.order = order;
             this.block = block;
+            outcome =
+                    applied(
+                            block,
+                            List.of(CENTER_REVISION));
         }
 
         @Override
@@ -555,20 +764,26 @@ class DefaultWorldMutationServiceTest {
         }
 
         @Override
-        public boolean setBlock(
+        public BlockWorldMutationOutcome compareAndSetBlock(
                 int x,
                 int y,
                 int z,
+                ResourceLocation expected,
                 ResourceLocation replacement) {
-            order.add("write");
+            order.add("compare-and-set");
             writeAttempts++;
             writtenBlocks.add(replacement);
-            if (!writeSucceeds) {
-                return false;
+            if (outcome.status()
+                    == BlockWorldMutationOutcome.Status.APPLIED) {
+                block = replacement;
+                successfulWrites++;
             }
+            return outcome;
+        }
+
+        private void forceExternalBlockChangeForTest(
+                ResourceLocation replacement) {
             block = replacement;
-            successfulWrites++;
-            return true;
         }
     }
 

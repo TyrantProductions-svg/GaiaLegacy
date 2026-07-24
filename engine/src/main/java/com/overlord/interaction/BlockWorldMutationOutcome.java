@@ -1,5 +1,6 @@
-package com.overlord.interaction.api;
+package com.overlord.interaction;
 
+import com.overlord.assets.ResourceLocation;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.DirtyChunkRevision;
 import java.util.Collections;
@@ -10,11 +11,23 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-public record ChunkDirtyEvent(
-        BlockChangeRequest request,
+public record BlockWorldMutationOutcome(
+        Status status,
+        ResourceLocation observedBlock,
         List<DirtyChunkRevision> dirtiedChunks) {
-    public ChunkDirtyEvent {
-        request = Objects.requireNonNull(request, "request");
+
+    public enum Status {
+        APPLIED,
+        NO_CHANGE,
+        CONFLICT,
+        OUT_OF_BOUNDS
+    }
+
+    public BlockWorldMutationOutcome {
+        status = Objects.requireNonNull(status, "status");
+        observedBlock =
+                Objects.requireNonNull(
+                        observedBlock, "observedBlock");
         dirtiedChunks = List.copyOf(dirtiedChunks);
 
         Set<ChunkKey> keys = new HashSet<>();
@@ -24,9 +37,13 @@ public record ChunkDirtyEvent(
                         "dirtiedChunks must not contain duplicate keys");
             }
         }
-        if (dirtiedChunks.isEmpty()) {
+        if (status == Status.APPLIED && dirtiedChunks.isEmpty()) {
             throw new IllegalArgumentException(
-                    "dirty event requires at least one dirty revision");
+                    "APPLIED requires at least one dirty revision");
+        }
+        if (status != Status.APPLIED && !dirtiedChunks.isEmpty()) {
+            throw new IllegalArgumentException(
+                    status + " requires an empty dirty revision list");
         }
     }
 

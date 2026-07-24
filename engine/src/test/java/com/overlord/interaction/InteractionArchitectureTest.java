@@ -1,6 +1,7 @@
 package com.overlord.interaction;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.inventory.api.BodyInventoryViewModel;
@@ -123,6 +124,41 @@ class InteractionArchitectureTest {
         assertFalse(
                 source.contains("ServiceLocator"),
                 "DefaultWorldMutationService must use explicit dependencies");
+        assertFalse(
+                source.contains("ChunkDirtyTracker"),
+                "DefaultWorldMutationService must use repository-issued dirty revisions");
+        assertFalse(
+                source.contains("affectedByBlock"),
+                "DefaultWorldMutationService must not calculate dirty chunks");
+        assertFalse(
+                source.contains("ChunkKey.fromWorld"),
+                "DefaultWorldMutationService must not derive dirty chunk keys");
+        assertFalse(
+                source.contains("localCoordinate"),
+                "DefaultWorldMutationService must not calculate theoretical neighbors");
+    }
+
+    @Test
+    void blockWorldAccessExposesOutcomeCompareAndSetWithoutBooleanSetBlock()
+            throws Exception {
+        Method compareAndSet =
+                BlockWorldAccess.class.getMethod(
+                        "compareAndSetBlock",
+                        int.class,
+                        int.class,
+                        int.class,
+                        com.overlord.assets.ResourceLocation.class,
+                        com.overlord.assets.ResourceLocation.class);
+
+        assertEquals(
+                BlockWorldMutationOutcome.class,
+                compareAndSet.getReturnType());
+        for (Method method : BlockWorldAccess.class.getMethods()) {
+            assertFalse(
+                    method.getName().equals("setBlock")
+                            && method.getReturnType() == boolean.class,
+                    method.toString());
+        }
     }
 
     private static Stream<Path> javaSources(Path... roots) throws IOException {

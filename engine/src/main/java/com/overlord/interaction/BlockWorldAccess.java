@@ -9,6 +9,10 @@ public interface BlockWorldAccess {
 
     ResourceLocation blockAt(int x, int y, int z);
 
-    boolean setBlock(
-            int x, int y, int z, ResourceLocation block);
+    BlockWorldMutationOutcome compareAndSetBlock(
+            int x,
+            int y,
+            int z,
+            ResourceLocation expectedBlock,
+            ResourceLocation replacementBlock);
 }

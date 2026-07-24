@@ -8,41 +8,40 @@ import com.overlord.interaction.api.BlockChangeEventPublisher;
 import com.overlord.interaction.api.BlockChangeRequest;
 import com.overlord.interaction.api.BlockChangeResult;
 import com.overlord.interaction.api.BlockChangedEvent;
+import com.overlord.interaction.api.BlockMutationReentrancyException;
 import com.overlord.interaction.api.BeforeBlockChangedEvent;
 import com.overlord.interaction.api.ChunkDirtyEvent;
 import com.overlord.interaction.api.WorldMutationService;
-import com.overlord.voxel.ChunkDirtyTracker;
-import com.overlord.voxel.ChunkKey;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 
 public final class DefaultWorldMutationService
         implements WorldMutationService {
     private final MainThreadGuard mainThreadGuard;
     private final BlockWorldAccess world;
     private final BlockChangeEventPublisher events;
-    private final ChunkDirtyTracker dirtyTracker;
+    private boolean dispatchingBefore;
 
     public DefaultWorldMutationService(
             MainThreadGuard mainThreadGuard,
             BlockWorldAccess world,
-            BlockChangeEventPublisher events,
-            ChunkDirtyTracker dirtyTracker) {
+            BlockChangeEventPublisher events) {
         this.mainThreadGuard =
                 Objects.requireNonNull(
                         mainThreadGuard, "mainThreadGuard");
         this.world = Objects.requireNonNull(world, "world");
         this.events = Objects.requireNonNull(events, "events");
-        this.dirtyTracker =
-                Objects.requireNonNull(
-                        dirtyTracker, "dirtyTracker");
     }
 
     @Override
     public BlockChangeResult changeBlock(
             BlockChangeRequest request) {
         mainThreadGuard.assertMainThread("world mutation");
+        if (dispatchingBefore) {
+            throw new BlockMutationReentrancyException(
+                    "world mutation is not reentrant during before-change dispatch");
+        }
         Objects.requireNonNull(request, "request");
 
         if (!world.isWithinBounds(
@@ -82,6 +81,7 @@ public final class DefaultWorldMutationService
         }
 
         BlockChangeDecision decision;
+        dispatchingBefore = true;
         try {
             decision =
                     Objects.requireNonNull(
@@ -94,6 +94,8 @@ public final class DefaultWorldMutationService
                     "before-change event delivery failed",
                     failure,
                     false);
+        } finally {
+            dispatchingBefore = false;
         }
         if (decision == BlockChangeDecision.CANCEL) {
             return rejected(
@@ -117,37 +119,49 @@ public final class DefaultWorldMutationService
                     Optional.of(revalidatedCurrent));
         }
 
-        if (!world.setBlock(
-                request.x(),
-                request.y(),
-                request.z(),
-                request.replacementBlock())) {
+        BlockWorldMutationOutcome outcome =
+                Objects.requireNonNull(
+                        world.compareAndSetBlock(
+                                request.x(),
+                                request.y(),
+                                request.z(),
+                                request.expectedBlock(),
+                                request.replacementBlock()),
+                        "world mutation outcome");
+        if (outcome.status()
+                != BlockWorldMutationOutcome.Status.APPLIED) {
             return rejected(
                     request,
-                    BlockChangeResult.Status.CONFLICT,
-                    Optional.of(current));
+                    mapRejectedStatus(outcome.status()),
+                    Optional.of(outcome.observedBlock()));
         }
 
-        ChunkKey key =
-                ChunkKey.fromWorld(request.x(), request.z());
-        Set<ChunkKey> dirtyChunks =
-                dirtyTracker.affectedByBlock(
-                        key,
-                        ChunkKey.localCoordinate(request.x()),
-                        ChunkKey.localCoordinate(request.z()));
+        ResourceLocation previous = outcome.observedBlock();
+        if (!previous.equals(request.expectedBlock())) {
+            throw new BlockChangeDispatchException(
+                    "applied world mutation reported an inconsistent observed block",
+                    new IllegalStateException(
+                            "applied outcome observed "
+                                    + previous
+                                    + " instead of expected "
+                                    + request.expectedBlock()),
+                    true);
+        }
+
         RuntimeException deliveryFailure = null;
         try {
             events.blockChanged(
                     new BlockChangedEvent(
                             request,
-                            current,
+                            previous,
                             request.replacementBlock()));
         } catch (RuntimeException failure) {
             deliveryFailure = failure;
         }
         try {
             events.chunksDirty(
-                    new ChunkDirtyEvent(request, dirtyChunks));
+                    new ChunkDirtyEvent(
+                            request, outcome.dirtiedChunks()));
         } catch (RuntimeException failure) {
             if (deliveryFailure == null) {
                 deliveryFailure = failure;
@@ -164,8 +178,21 @@ public final class DefaultWorldMutationService
         return new BlockChangeResult(
                 request,
                 BlockChangeResult.Status.APPLIED,
-                Optional.of(current),
-                dirtyChunks);
+                Optional.of(previous),
+                outcome.dirtiedChunks());
+    }
+
+    private static BlockChangeResult.Status mapRejectedStatus(
+            BlockWorldMutationOutcome.Status status) {
+        return switch (status) {
+            case NO_CHANGE -> BlockChangeResult.Status.NO_CHANGE;
+            case CONFLICT -> BlockChangeResult.Status.CONFLICT;
+            case OUT_OF_BOUNDS ->
+                    BlockChangeResult.Status.OUT_OF_BOUNDS;
+            case APPLIED ->
+                    throw new IllegalArgumentException(
+                            "APPLIED is not a rejected status");
+        };
     }
 
     private static BlockChangeResult rejected(
@@ -173,6 +200,6 @@ public final class DefaultWorldMutationService
             BlockChangeResult.Status status,
             Optional<ResourceLocation> observed) {
         return new BlockChangeResult(
-                request, status, observed, Set.of());
+                request, status, observed, List.of());
     }
 }

@@ -2,7 +2,11 @@ package com.overlord.interaction.testing;
 
 import com.overlord.assets.ResourceLocation;
 import com.overlord.interaction.BlockWorldAccess;
+import com.overlord.interaction.BlockWorldMutationOutcome;
+import com.overlord.voxel.ChunkKey;
+import com.overlord.voxel.DirtyChunkRevision;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
@@ -12,12 +16,20 @@ public final class FakeBlockWorldAccess
     private ResourceLocation block;
     private boolean withinBounds = true;
     private int writes;
+    private BlockWorldMutationOutcome compareAndSetOutcome;
 
     public FakeBlockWorldAccess(
             ResourceLocation initialBlock,
             Set<ResourceLocation> knownBlocks) {
         block = Objects.requireNonNull(initialBlock, "initialBlock");
         known.addAll(Set.copyOf(knownBlocks));
+        compareAndSetOutcome =
+                new BlockWorldMutationOutcome(
+                        BlockWorldMutationOutcome.Status.APPLIED,
+                        initialBlock,
+                        List.of(
+                                new DirtyChunkRevision(
+                                        new ChunkKey(0, 0), 1)));
     }
 
     @Override
@@ -36,14 +48,20 @@ public final class FakeBlockWorldAccess
     }
 
     @Override
-    public boolean setBlock(
+    public BlockWorldMutationOutcome compareAndSetBlock(
             int x,
             int y,
             int z,
+            ResourceLocation expected,
             ResourceLocation replacement) {
-        block = Objects.requireNonNull(replacement, "replacement");
         writes++;
-        return true;
+        if (compareAndSetOutcome.status()
+                == BlockWorldMutationOutcome.Status.APPLIED) {
+            block =
+                    Objects.requireNonNull(
+                            replacement, "replacement");
+        }
+        return compareAndSetOutcome;
     }
 
     public void setWithinBounds(boolean withinBounds) {
@@ -52,5 +70,16 @@ public final class FakeBlockWorldAccess
 
     public int writes() {
         return writes;
+    }
+
+    public void setCompareAndSetOutcome(
+            BlockWorldMutationOutcome outcome) {
+        compareAndSetOutcome =
+                Objects.requireNonNull(outcome, "outcome");
+    }
+
+    public void forceExternalBlockChangeForTest(
+            ResourceLocation replacement) {
+        block = Objects.requireNonNull(replacement, "replacement");
     }
 }
