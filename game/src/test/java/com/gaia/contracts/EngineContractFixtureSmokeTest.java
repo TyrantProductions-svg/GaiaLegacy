@@ -14,6 +14,9 @@ import com.overlord.inventory.testing.FakeInventoryReservationService;
 import com.overlord.inventory.testing.StubInventoryService;
 import com.overlord.inventory.testing.TestInventoryView;
 import com.overlord.inventory.testing.TestItemStackView;
+import com.overlord.worlditem.api.WorldItemSpawnRequest;
+import com.overlord.worlditem.api.WorldItemSpawnResult;
+import com.overlord.worlditem.testing.FakeWorldItemService;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -71,5 +74,16 @@ class EngineContractFixtureSmokeTest {
                         InventoryReservationOperation.INSERT,
                         new ItemStack(ResourceLocation.parse("gaia:stone"), 2)))
                         .status());
+    }
+
+    @Test
+    void gameTestsCanUseTheSharedWorldItemFake() {
+        FakeWorldItemService service = new FakeWorldItemService();
+        ItemStack stack = new ItemStack(ResourceLocation.parse("gaia:stone"), 2);
+
+        assertEquals(
+                WorldItemSpawnResult.Status.SPAWNED,
+                service.spawn(new WorldItemSpawnRequest(
+                        stack, 1, 2, 3, 0, 0, 0, Optional.empty(), 9)).status());
     }
 }
