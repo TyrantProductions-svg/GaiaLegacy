@@ -248,8 +248,8 @@ Packaged-resource verification:
 Hygiene and scope checks:
 
 - `git diff --check`: passed after removing Task 7 trailing spaces.
-- `git diff --check origin/main..HEAD`: passed for the committed pre-Task 7
-  range; it is rerun after the Task 7 commit.
+- Final post-Task-7 `git diff --check origin/main..HEAD` at
+  `3a5f0c0e386c54e2b1a8b189ac5eb96096913c61`: exit `0`, no output.
 - Tracked `build/`, `bin/`, `.class`, crash-dump, and replay-dump scan:
   no matches.
 - Prohibited renderer/player/controller/mesh-manager production path changes
