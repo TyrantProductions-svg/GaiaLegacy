@@ -70,7 +70,7 @@ public final class GenerationRegion {
         return blocks[blockIndex(localX, y, localZ)];
     }
 
-    public void setBlock(
+    public void writeBlock(
             int localX, int y, int localZ, byte block) {
         validateBlockCoordinates(localX, y, localZ);
         blocks[blockIndex(localX, y, localZ)] = block;

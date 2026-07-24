@@ -1,5 +1,6 @@
 package com.gaia.world.generation;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -10,27 +11,48 @@ import org.junit.jupiter.api.Test;
 
 class GenerationRegionTest {
     @Test
+    void exposesCpuStagingWriteWithoutLiveWorldMutationName() {
+        assertDoesNotThrow(
+                () ->
+                        GenerationRegion.class.getMethod(
+                                "writeBlock",
+                                int.class,
+                                int.class,
+                                int.class,
+                                byte.class));
+        assertThrows(
+                NoSuchMethodException.class,
+                () ->
+                        GenerationRegion.class.getMethod(
+                                "setBlock",
+                                int.class,
+                                int.class,
+                                int.class,
+                                byte.class));
+    }
+
+    @Test
     void regionRejectsEveryOutOfBoundsWrite() {
         GenerationRegion region = region(new ChunkKey(-1, 2), 64);
 
         assertThrows(
                 IndexOutOfBoundsException.class,
-                () -> region.setBlock(-1, 2, 1, (byte) 3));
+                () -> region.writeBlock(-1, 2, 1, (byte) 3));
         assertThrows(
                 IndexOutOfBoundsException.class,
-                () -> region.setBlock(16, 2, 1, (byte) 3));
+                () -> region.writeBlock(16, 2, 1, (byte) 3));
         assertThrows(
                 IndexOutOfBoundsException.class,
-                () -> region.setBlock(1, -1, 1, (byte) 3));
+                () -> region.writeBlock(1, -1, 1, (byte) 3));
         assertThrows(
                 IndexOutOfBoundsException.class,
-                () -> region.setBlock(1, 64, 1, (byte) 3));
+                () -> region.writeBlock(1, 64, 1, (byte) 3));
         assertThrows(
                 IndexOutOfBoundsException.class,
-                () -> region.setBlock(1, 2, -1, (byte) 3));
+                () -> region.writeBlock(1, 2, -1, (byte) 3));
         assertThrows(
                 IndexOutOfBoundsException.class,
-                () -> region.setBlock(1, 2, 16, (byte) 3));
+                () -> region.writeBlock(1, 2, 16, (byte) 3));
         assertEquals(0, region.writeCount());
     }
 
@@ -50,8 +72,8 @@ class GenerationRegionTest {
     void storesBlocksInCanonicalLayoutAndCountsWrites() {
         GenerationRegion region = region(new ChunkKey(0, 0), 32);
 
-        region.setBlock(2, 7, 3, (byte) 5);
-        region.setBlock(2, 7, 3, (byte) 5);
+        region.writeBlock(2, 7, 3, (byte) 5);
+        region.writeBlock(2, 7, 3, (byte) 5);
 
         assertEquals((byte) 5, region.getBlock(2, 7, 3));
         assertEquals(2, region.writeCount());
@@ -109,10 +131,10 @@ class GenerationRegionTest {
     void freezeCreatesOneChunkSnapshotIndependentOfRegion() {
         ChunkKey key = new ChunkKey(-2, 3);
         GenerationRegion region = region(key, 32);
-        region.setBlock(1, 2, 3, (byte) 4);
+        region.writeBlock(1, 2, 3, (byte) 4);
 
         ChunkGenerationData frozen = region.freeze();
-        region.setBlock(1, 2, 3, (byte) 9);
+        region.writeBlock(1, 2, 3, (byte) 9);
         byte[] returned = frozen.copyBlocks();
         returned[1 + 2 * 16 + 3 * 16 * 32] = 8;
 
