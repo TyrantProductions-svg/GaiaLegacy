@@ -7,9 +7,12 @@ import java.util.Optional;
 import org.joml.Vector3fc;
 
 public final class BlockRaycast {
+    public static final float MAX_DISTANCE = 4096.0f;
+
     private static final int Y_AXIS_PRIORITY = 0;
     private static final int X_AXIS_PRIORITY = 1;
     private static final int Z_AXIS_PRIORITY = 2;
+    private static final double EVENT_RELATIVE_EPSILON = 1.0e-12;
 
     private final World world;
     private final BlockCollisionShapeResolver shapeResolver;
@@ -30,9 +33,12 @@ public final class BlockRaycast {
         Objects.requireNonNull(direction, "direction");
         validateFinite(origin, "origin");
         validateFinite(direction, "direction");
-        if (!Float.isFinite(maxDistance) || maxDistance < 0) {
+        if (!Float.isFinite(maxDistance)
+                || maxDistance < 0
+                || maxDistance > MAX_DISTANCE) {
             throw new IllegalArgumentException(
-                    "maxDistance must be finite and non-negative");
+                    "maxDistance must be finite and between 0 and "
+                            + MAX_DISTANCE);
         }
 
         double directionLength =
@@ -75,7 +81,10 @@ public final class BlockRaycast {
                             blockX,
                             blockY,
                             blockZ);
-            if (best != null && best.distance() < nextDistance) {
+            if (best != null
+                    && compareEvents(
+                                    best.distance(), nextDistance)
+                            < 0) {
                 return Optional.of(
                         best.toHit(
                                 origin,
@@ -89,23 +98,32 @@ public final class BlockRaycast {
             }
 
             boolean stepX =
-                    xTraversal.nextDistance() == nextDistance;
+                    sameEvent(
+                            xTraversal.nextDistance(),
+                            nextDistance);
             boolean stepY =
-                    yTraversal.nextDistance() == nextDistance;
+                    sameEvent(
+                            yTraversal.nextDistance(),
+                            nextDistance);
             boolean stepZ =
-                    zTraversal.nextDistance() == nextDistance;
-            if ((stepX
-                            && cannotStep(blockX, xTraversal.step()))
-                    || (stepY
-                            && cannotStep(blockY, yTraversal.step()))
-                    || (stepZ
-                            && cannotStep(blockZ, zTraversal.step()))) {
-                return Optional.empty();
-            }
-
-            int xChoices = stepX ? 1 : 0;
-            int yChoices = stepY ? 1 : 0;
-            int zChoices = stepZ ? 1 : 0;
+                    sameEvent(
+                            zTraversal.nextDistance(),
+                            nextDistance);
+            boolean canStepX =
+                    !stepX
+                            || !cannotStep(
+                                    blockX, xTraversal.step());
+            boolean canStepY =
+                    !stepY
+                            || !cannotStep(
+                                    blockY, yTraversal.step());
+            boolean canStepZ =
+                    !stepZ
+                            || !cannotStep(
+                                    blockZ, zTraversal.step());
+            int xChoices = stepX && canStepX ? 1 : 0;
+            int yChoices = stepY && canStepY ? 1 : 0;
+            int zChoices = stepZ && canStepZ ? 1 : 0;
             for (int chooseX = 0; chooseX <= xChoices; chooseX++) {
                 for (int chooseY = 0;
                         chooseY <= yChoices;
@@ -135,8 +153,9 @@ public final class BlockRaycast {
                                                 + chooseZ
                                                         * zTraversal.step());
                         if (candidate != null
-                                && candidate.distance()
-                                        == nextDistance
+                                && sameEvent(
+                                        candidate.distance(),
+                                        nextDistance)
                                 && (best == null
                                         || candidate.isBetterThan(best))) {
                             best = candidate;
@@ -144,13 +163,18 @@ public final class BlockRaycast {
                     }
                 }
             }
-            if (best != null && best.distance() == nextDistance) {
+            if (best != null
+                    && sameEvent(
+                            best.distance(), nextDistance)) {
                 return Optional.of(
                         best.toHit(
                                 origin,
                                 directionX,
                                 directionY,
                                 directionZ));
+            }
+            if (!canStepX || !canStepY || !canStepZ) {
+                return Optional.empty();
             }
             if (stepX) {
                 blockX += xTraversal.step();
@@ -210,14 +234,8 @@ public final class BlockRaycast {
                 subShapeIndex < boxes.size();
                 subShapeIndex++) {
             Aabb localShape = boxes.get(subShapeIndex);
-            Aabb shape =
-                    new Aabb(
-                            localShape.minX() + blockX,
-                            localShape.minY() + blockY,
-                            localShape.minZ() + blockZ,
-                            localShape.maxX() + blockX,
-                            localShape.maxY() + blockY,
-                            localShape.maxZ() + blockZ);
+            TranslatedBounds shape =
+                    translate(localShape, blockX, blockY, blockZ);
             Candidate candidate =
                     intersect(
                             origin,
@@ -250,8 +268,8 @@ public final class BlockRaycast {
             int blockZ,
             byte blockId,
             int subShapeIndex,
-            Aabb shape) {
-        if (contains(shape, origin)) {
+            TranslatedBounds shape) {
+        if (strictlyContains(shape, origin)) {
             return insideCandidate(
                     directionX,
                     directionY,
@@ -291,14 +309,17 @@ public final class BlockRaycast {
         double entry =
                 Math.max(x.entry(), Math.max(y.entry(), z.entry()));
         double exit = Math.min(x.exit(), Math.min(y.exit(), z.exit()));
-        if (entry > exit || exit < 0 || entry < 0 || entry > maxDistance) {
+        if (compareEvents(entry, exit) > 0
+                || exit < 0
+                || entry < 0
+                || entry > maxDistance) {
             return null;
         }
 
         AxisIntersection contactAxis;
-        if (y.entry() == entry) {
+        if (sameEvent(y.entry(), entry)) {
             contactAxis = y;
-        } else if (x.entry() == entry) {
+        } else if (sameEvent(x.entry(), entry)) {
             contactAxis = x;
         } else {
             contactAxis = z;
@@ -405,13 +426,25 @@ public final class BlockRaycast {
         };
     }
 
-    private static boolean contains(Aabb shape, Vector3fc point) {
-        return point.x() >= shape.minX()
-                && point.x() <= shape.maxX()
-                && point.y() >= shape.minY()
-                && point.y() <= shape.maxY()
-                && point.z() >= shape.minZ()
-                && point.z() <= shape.maxZ();
+    private static boolean strictlyContains(
+            TranslatedBounds shape, Vector3fc point) {
+        return point.x() > shape.minX()
+                && point.x() < shape.maxX()
+                && point.y() > shape.minY()
+                && point.y() < shape.maxY()
+                && point.z() > shape.minZ()
+                && point.z() < shape.maxZ();
+    }
+
+    private static TranslatedBounds translate(
+            Aabb localShape, int blockX, int blockY, int blockZ) {
+        return new TranslatedBounds(
+                (double) blockX + localShape.minX(),
+                (double) blockY + localShape.minY(),
+                (double) blockZ + localShape.minZ(),
+                (double) blockX + localShape.maxX(),
+                (double) blockY + localShape.maxY(),
+                (double) blockZ + localShape.maxZ());
     }
 
     private static AxisTraversal traversal(
@@ -437,6 +470,29 @@ public final class BlockRaycast {
         return step > 0
                 ? coordinate == Integer.MAX_VALUE
                 : coordinate == Integer.MIN_VALUE;
+    }
+
+    private static int compareEvents(double first, double second) {
+        return sameEvent(first, second)
+                ? 0
+                : Double.compare(first, second);
+    }
+
+    private static boolean sameEvent(double first, double second) {
+        if (first == second) {
+            return true;
+        }
+        if (!Double.isFinite(first) || !Double.isFinite(second)) {
+            return false;
+        }
+        double scale =
+                Math.max(
+                        1,
+                        Math.max(
+                                Math.abs(first),
+                                Math.abs(second)));
+        return Math.abs(first - second)
+                <= EVENT_RELATIVE_EPSILON * scale;
     }
 
     private static int floorBlockCoordinate(float value) {
@@ -466,6 +522,14 @@ public final class BlockRaycast {
         }
     }
 
+    private record TranslatedBounds(
+            double minX,
+            double minY,
+            double minZ,
+            double maxX,
+            double maxY,
+            double maxZ) {}
+
     private record AxisIntersection(
             double entry,
             double exit,
@@ -487,7 +551,7 @@ public final class BlockRaycast {
             int subShapeIndex) {
         private boolean isBetterThan(Candidate other) {
             int distanceComparison =
-                    Double.compare(distance, other.distance);
+                    compareEvents(distance, other.distance);
             if (distanceComparison != 0) {
                 return distanceComparison < 0;
             }
@@ -516,9 +580,9 @@ public final class BlockRaycast {
                     blockX,
                     blockY,
                     blockZ,
-                    blockX + (int) normalX,
-                    blockY + (int) normalY,
-                    blockZ + (int) normalZ,
+                    Math.addExact(blockX, (int) normalX),
+                    Math.addExact(blockY, (int) normalY),
+                    Math.addExact(blockZ, (int) normalZ),
                     blockId,
                     normalX,
                     normalY,

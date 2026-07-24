@@ -135,6 +135,63 @@ class BlockRaycastTest {
     }
 
     @Test
+    void exactSlabsPreserveUnitBlockPrecisionAboveFloatIntegerRange() {
+        int blockX = 16_777_217;
+
+        BlockRaycastHit hit =
+                raycastFor(worldWithBlock(blockX, 0, 0))
+                        .cast(
+                                new Vector3f(16_777_216f, 0.5f, 0.5f),
+                                new Vector3f(1, 0, 0),
+                                2)
+                        .orElseThrow();
+
+        assertEquals(blockX, hit.blockX());
+        assertEquals(1.0f, hit.distance(), EPSILON);
+    }
+
+    @Test
+    void adjacentCoordinateOverflowFailsExplicitly() {
+        BlockRaycast raycast =
+                raycastFor(worldWithBlock(Integer.MIN_VALUE, 0, 0));
+
+        assertThrows(
+                ArithmeticException.class,
+                () ->
+                        raycast.cast(
+                                new Vector3f(
+                                        (float) Integer.MIN_VALUE,
+                                        0.5f,
+                                        0.5f),
+                                new Vector3f(1, 0, 0),
+                                0));
+    }
+
+    @Test
+    void unrepresentableTiedStepStillChecksRepresentableIncidentCell() {
+        BlockRaycastHit hit =
+                raycastFor(
+                                worldWithBlock(
+                                        Integer.MIN_VALUE,
+                                        0,
+                                        -1))
+                        .cast(
+                                new Vector3f(
+                                        (float) Integer.MIN_VALUE,
+                                        0.5f,
+                                        0),
+                                new Vector3f(-1, 0, -1),
+                                0)
+                        .orElseThrow();
+
+        assertEquals(Integer.MIN_VALUE, hit.blockX());
+        assertEquals(-1, hit.blockZ());
+        assertEquals(0.0f, hit.normalX());
+        assertEquals(0.0f, hit.normalY());
+        assertEquals(1.0f, hit.normalZ());
+    }
+
+    @Test
     void originInsideShapeReturnsZeroWithDominantDirectionTiePriority() {
         Vector3f origin = new Vector3f(0.25f, 0.5f, 0.75f);
 
@@ -152,6 +209,56 @@ class BlockRaycastTest {
         assertEquals(-1, hit.adjacentY());
         assertEquals(0, hit.adjacentZ());
         assertEquals(254, Byte.toUnsignedInt(hit.blockId()));
+    }
+
+    @Test
+    void originOnMinimumFaceMovingOutwardIsNotInsideOrAHit() {
+        assertTrue(
+                raycastFor(worldWithBlock(0, 0, 0))
+                        .cast(
+                                new Vector3f(0, 0.5f, 0.5f),
+                                new Vector3f(-1, 0, 0),
+                                1)
+                        .isEmpty());
+    }
+
+    @Test
+    void originOnMinimumFaceMovingInwardIsAZeroDistanceSlabHit() {
+        BlockRaycastHit hit =
+                raycastFor(worldWithBlock(0, 0, 0))
+                        .cast(
+                                new Vector3f(0, 0.5f, 0.5f),
+                                new Vector3f(1, 0, 0),
+                                1)
+                        .orElseThrow();
+
+        assertEquals(0.0f, hit.distance());
+        assertEquals(-1.0f, hit.normalX());
+    }
+
+    @Test
+    void originOnMaximumFaceMovingOutwardIsNotInsideOrAHit() {
+        assertTrue(
+                raycastFor(worldWithBlock(0, 0, 0))
+                        .cast(
+                                new Vector3f(1, 0.5f, 0.5f),
+                                new Vector3f(1, 0, 0),
+                                1)
+                        .isEmpty());
+    }
+
+    @Test
+    void originOnMaximumFaceMovingInwardIsAZeroDistanceSlabHit() {
+        BlockRaycastHit hit =
+                raycastFor(worldWithBlock(0, 0, 0))
+                        .cast(
+                                new Vector3f(1, 0.5f, 0.5f),
+                                new Vector3f(-1, 0, 0),
+                                1)
+                        .orElseThrow();
+
+        assertEquals(0.0f, hit.distance());
+        assertEquals(1.0f, hit.normalX());
     }
 
     @Test
@@ -220,6 +327,27 @@ class BlockRaycastTest {
     }
 
     @Test
+    void accumulatedDdaRoundingKeepsMathematicalEdgeEventTied() {
+        BlockRaycastHit hit =
+                raycastFor(worldWithBlock(0, 0, 2))
+                        .cast(
+                                new Vector3f(0.5f, 0.5f, 0.5f),
+                                new Vector3f(1, 0, 3),
+                                2)
+                        .orElseThrow();
+
+        assertEquals(0, hit.blockX());
+        assertEquals(2, hit.blockZ());
+        assertEquals(0.0f, hit.normalX());
+        assertEquals(0.0f, hit.normalY());
+        assertEquals(-1.0f, hit.normalZ());
+        assertEquals(
+                (float) (Math.sqrt(10.0) / 2.0),
+                hit.distance(),
+                EPSILON);
+    }
+
+    @Test
     void hitAtMaximumDistanceIsIncludedButFartherHitIsMissed() {
         BlockRaycast raycast = raycastFor(worldWithBlock(2, 0, 0));
         Vector3f origin = new Vector3f(0.5f, 0.5f, 0.5f);
@@ -234,6 +362,35 @@ class BlockRaycastTest {
         assertTrue(
                 raycast.cast(origin, direction, 1.499f)
                         .isEmpty());
+    }
+
+    @Test
+    void synchronousDistanceSafetyLimitIsPublicAndInclusive() {
+        assertEquals(4096.0f, BlockRaycast.MAX_DISTANCE);
+
+        assertEquals(
+                0.0f,
+                raycastFor(worldWithBlock(0, 0, 0))
+                        .cast(
+                                new Vector3f(0.5f, 0.5f, 0.5f),
+                                new Vector3f(1, 0, 0),
+                                BlockRaycast.MAX_DISTANCE)
+                        .orElseThrow()
+                        .distance());
+    }
+
+    @Test
+    void rejectsDistanceAboveSynchronousSafetyLimit() {
+        BlockRaycast raycast = raycastFor(new World());
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        raycast.cast(
+                                new Vector3f(),
+                                new Vector3f(1, 0, 0),
+                                Math.nextUp(
+                                        BlockRaycast.MAX_DISTANCE)));
     }
 
     @Test
