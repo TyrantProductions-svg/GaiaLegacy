@@ -2,12 +2,14 @@ package com.overlord.renderer;
 
 import com.overlord.config.GameConfig;
 import com.overlord.core.thread.MainThreadGuard;
+import com.overlord.voxel.ChunkMeshData;
+import java.util.Collection;
 import java.util.Objects;
 import org.joml.Matrix4f;
 
 import static org.lwjgl.opengl.GL30C.*;
 
-public class Renderer {
+public class Renderer implements ChunkRenderBackend {
     private final MainThreadGuard mainThreadGuard;
     private final RenderAssets renderAssets;
     private Shader shader;
@@ -121,6 +123,28 @@ public class Renderer {
         mesh = replacement;
     }
 
+    @Override
+    public ChunkRenderObject upload(ChunkMeshData data) {
+        mainThreadGuard.assertMainThread("chunk mesh GPU upload");
+        Objects.requireNonNull(data, "data");
+        if (data.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Empty chunk data does not allocate a GPU mesh");
+        }
+        Mesh gpuMesh = new Mesh(mainThreadGuard, data.vertices());
+        return new ChunkRenderObject(
+                data.key(),
+                data.revision(),
+                gpuMesh,
+                data.localBounds().orElseThrow());
+    }
+
+    @Override
+    public void release(ChunkRenderObject object) {
+        mainThreadGuard.assertMainThread("chunk mesh GPU release");
+        Objects.requireNonNull(object, "object").mesh().cleanup();
+    }
+
     public void clear() {
         mainThreadGuard.assertMainThread("framebuffer clear");
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -147,6 +171,20 @@ public class Renderer {
         shader.setUniformMat4f("model", new Matrix4f());
         
         mesh.draw();
+    }
+
+    public void renderChunks(Collection<ChunkRenderObject> chunks) {
+        mainThreadGuard.assertMainThread("chunk rendering");
+        Objects.requireNonNull(chunks, "chunks");
+
+        shader.use();
+        textureAtlas.bind(0);
+        shader.setUniformMat4f("projection", projectionMatrix);
+        shader.setUniformMat4f("view", camera.getViewMatrix());
+        for (ChunkRenderObject chunk : chunks) {
+            shader.setUniformMat4f("model", chunk.modelMatrix());
+            chunk.mesh().draw();
+        }
     }
 
     public void cleanup() {

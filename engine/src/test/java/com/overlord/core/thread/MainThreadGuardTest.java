@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.overlord.core.input.InputManager;
+import com.overlord.renderer.ChunkGpuMesh;
+import com.overlord.renderer.Mesh;
 import com.overlord.renderer.RenderAssets;
 import com.overlord.renderer.Renderer;
 import com.overlord.renderer.Texture;
@@ -13,9 +15,15 @@ import com.overlord.renderer.texture.TextureImage;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class MainThreadGuardTest {
+    @Test
+    void meshImplementsChunkGpuMesh() {
+        assertTrue(ChunkGpuMesh.class.isAssignableFrom(Mesh.class));
+    }
+
     @Test
     void acceptsOwnerAndRejectsWorkerThreadOperations() throws InterruptedException {
         MainThreadGuard guard = MainThreadGuard.captureCurrentThread();
@@ -33,6 +41,7 @@ class MainThreadGuardTest {
             assertTrue(cause.getMessage().contains("GPU upload"));
         } finally {
             worker.shutdownNow();
+            assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
         }
     }
 
@@ -52,6 +61,7 @@ class MainThreadGuardTest {
             assertInstanceOf(IllegalStateException.class, failure.getCause());
         } finally {
             worker.shutdownNow();
+            assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
         }
     }
 
@@ -69,6 +79,7 @@ class MainThreadGuardTest {
             assertInstanceOf(IllegalStateException.class, failure.getCause());
         } finally {
             worker.shutdownNow();
+            assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
         }
     }
 
@@ -86,6 +97,7 @@ class MainThreadGuardTest {
             assertInstanceOf(IllegalStateException.class, failure.getCause());
         } finally {
             worker.shutdownNow();
+            assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
         }
     }
 }
