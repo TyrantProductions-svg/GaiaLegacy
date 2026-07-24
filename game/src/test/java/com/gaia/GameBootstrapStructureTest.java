@@ -36,6 +36,9 @@ class GameBootstrapStructureTest {
         assertTrue(
                 compact.contains(
                         "shutdownBarrier.registerChunkMeshes("));
+        assertTrue(
+                compact.contains(
+                        "shutdownBarrier.registerWorldExecutor("));
 
         int engineConstruction = compact.indexOf("newEngine(");
         int engineRegistration =
@@ -50,7 +53,7 @@ class GameBootstrapStructureTest {
                         "shutdownBarrier.registerChunkMeshes(");
         int worldExecutorRegistration =
                 compact.indexOf(
-                        "register(\"world-executor\"");
+                        "shutdownBarrier.registerWorldExecutor(");
         int worldLoadRegistration =
                 compact.indexOf(
                         "register(\"world-load\"");
@@ -70,6 +73,10 @@ class GameBootstrapStructureTest {
                 compact.contains(
                         "register(\"mesh-executor\","
                                 + "()->stopMeshExecutor("));
+        assertTrue(
+                compact.contains(
+                        "register(\"world-executor\","
+                                + "()->stopWorldExecutor("));
     }
 
     @Test

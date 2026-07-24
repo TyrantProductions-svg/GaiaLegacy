@@ -110,14 +110,8 @@ public final class GameBootstrap {
                                 thread.setDaemon(true);
                                 return thread;
                             });
-            shutdownCoordinator.register(
-                    "world-executor",
-                    () ->
-                            shutdownExecutor(
-                                    worldExecutor,
-                                    "World loader executor",
-                                    5,
-                                    TimeUnit.SECONDS));
+            shutdownBarrier.registerWorldExecutor(
+                    shutdownCoordinator, worldExecutor);
 
             CompletableFuture<WorldLoadResult> worldLoad =
                     CompletableFuture.supplyAsync(
@@ -257,6 +251,8 @@ public final class GameBootstrap {
         private final long timeout;
         private final TimeUnit timeoutUnit;
         private boolean managerCleanupRequired;
+        private boolean worldExecutorRequired;
+        private boolean worldExecutorStopped;
         private boolean meshExecutorStopped;
         private boolean managerCleanupAttempted;
 
@@ -317,6 +313,43 @@ public final class GameBootstrap {
             }
         }
 
+        void registerWorldExecutor(
+                ShutdownCoordinator shutdownCoordinator,
+                ExecutorService worldExecutor) {
+            Objects.requireNonNull(
+                    shutdownCoordinator, "shutdownCoordinator");
+            Objects.requireNonNull(
+                    worldExecutor, "worldExecutor");
+            try {
+                shutdownCoordinator.register(
+                        "world-executor",
+                        () -> stopWorldExecutor(worldExecutor));
+            } catch (RuntimeException | Error failure) {
+                try {
+                    stopWorldExecutor(worldExecutor);
+                } catch (RuntimeException | Error cleanupFailure) {
+                    if (cleanupFailure != failure) {
+                        failure.addSuppressed(cleanupFailure);
+                    }
+                }
+                throw failure;
+            }
+            worldExecutorRequired = true;
+        }
+
+        void stopWorldExecutor(ExecutorService worldExecutor) {
+            shutdownExecutor(
+                    worldExecutor,
+                    "World loader executor",
+                    timeout,
+                    timeoutUnit);
+            if (!worldExecutor.isTerminated()) {
+                throw new IllegalStateException(
+                        "World loader executor termination was not confirmed");
+            }
+            worldExecutorStopped = true;
+        }
+
         void stopMeshExecutor(ExecutorService meshExecutor) {
             shutdownExecutor(
                     meshExecutor,
@@ -333,10 +366,12 @@ public final class GameBootstrap {
         void closeManager(Runnable managerCleanup) {
             Objects.requireNonNull(
                     managerCleanup, "managerCleanup");
-            if (!meshExecutorStopped) {
+            if (!meshExecutorStopped
+                    || (worldExecutorRequired
+                            && !worldExecutorStopped)) {
                 throw new IllegalStateException(
                         "Chunk mesh manager cleanup was skipped because "
-                                + "mesh executor termination was not confirmed");
+                                + "executor termination was not confirmed");
             }
             managerCleanupAttempted = true;
             managerCleanup.run();

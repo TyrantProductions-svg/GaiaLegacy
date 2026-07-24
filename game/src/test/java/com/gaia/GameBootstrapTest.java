@@ -98,11 +98,60 @@ class GameBootstrapTest {
     }
 
     @Test
-    void normalShutdownStopsMeshThenClosesManagerAndEngineExactlyOnce() {
+    void worldTimeoutStillStopsMeshButSkipsManagerAndEngineCleanup() {
+        List<String> cleanupOrder = new ArrayList<>();
+        ScriptedExecutor worldExecutor =
+                ScriptedExecutor.neverTerminates();
+        ScriptedExecutor meshExecutor =
+                ScriptedExecutor.terminatesAfterAwaits(
+                        1, 0, cleanupOrder, "mesh");
+        GameBootstrap.ShutdownBarrier barrier =
+                new GameBootstrap.ShutdownBarrier(
+                        1, TimeUnit.MILLISECONDS);
+        ShutdownCoordinator coordinator = new ShutdownCoordinator();
+        AtomicInteger managerCleanup = new AtomicInteger();
+        AtomicInteger engineCleanup = new AtomicInteger();
+        coordinator.register(
+                "engine",
+                () ->
+                        barrier.closeEngine(
+                                engineCleanup::incrementAndGet));
+        barrier.registerChunkMeshes(
+                coordinator,
+                meshExecutor,
+                Object::new,
+                manager -> managerCleanup.incrementAndGet());
+        barrier.registerWorldExecutor(
+                coordinator, worldExecutor);
+        coordinator.register(
+                "world-load",
+                () -> cleanupOrder.add("cancel"));
+
+        IllegalStateException failure =
+                assertThrows(
+                        IllegalStateException.class,
+                        coordinator::close);
+
+        assertTrue(
+                failure.getMessage()
+                        .contains("World loader executor"));
+        assertEquals(2, failure.getSuppressed().length);
+        assertEquals(List.of("cancel", "mesh"), cleanupOrder);
+        assertEquals(0, managerCleanup.get());
+        assertEquals(0, engineCleanup.get());
+        assertTrue(meshExecutor.isTerminated());
+        assertFalse(worldExecutor.isTerminated());
+    }
+
+    @Test
+    void normalShutdownStopsWorldThenMeshThenManagerAndEngineExactlyOnce() {
         List<String> cleanupOrder = new ArrayList<>();
         ScriptedExecutor meshExecutor =
                 ScriptedExecutor.terminatesAfterAwaits(
                         1, 0, cleanupOrder, "mesh");
+        ScriptedExecutor worldExecutor =
+                ScriptedExecutor.terminatesAfterAwaits(
+                        1, 0, cleanupOrder, "world");
         GameBootstrap.ShutdownBarrier barrier =
                 new GameBootstrap.ShutdownBarrier(
                         1, TimeUnit.SECONDS);
@@ -117,12 +166,23 @@ class GameBootstrapTest {
                 meshExecutor,
                 Object::new,
                 manager -> cleanupOrder.add("manager"));
+        barrier.registerWorldExecutor(
+                coordinator, worldExecutor);
+        coordinator.register(
+                "world-load",
+                () -> cleanupOrder.add("cancel"));
 
         coordinator.close();
 
         assertEquals(
-                List.of("mesh", "manager", "engine"),
+                List.of(
+                        "cancel",
+                        "world",
+                        "mesh",
+                        "manager",
+                        "engine"),
                 cleanupOrder);
+        assertEquals(1, Collections.frequency(cleanupOrder, "world"));
         assertEquals(1, Collections.frequency(cleanupOrder, "mesh"));
         assertEquals(1, Collections.frequency(cleanupOrder, "manager"));
         assertEquals(1, Collections.frequency(cleanupOrder, "engine"));
@@ -190,6 +250,28 @@ class GameBootstrapTest {
 
         assertSame(constructionFailure, thrown);
         assertTrue(meshExecutor.isTerminated());
+    }
+
+    @Test
+    void worldRegistrationFailureStopsUnregisteredWorldExecutor() {
+        ScriptedExecutor worldExecutor =
+                ScriptedExecutor.terminatesAfterAwaits(
+                        1, 0, new ArrayList<>(), null);
+        GameBootstrap.ShutdownBarrier barrier =
+                new GameBootstrap.ShutdownBarrier(
+                        1, TimeUnit.SECONDS);
+        ShutdownCoordinator closedCoordinator =
+                new ShutdownCoordinator();
+        closedCoordinator.close();
+
+        assertThrows(
+                IllegalStateException.class,
+                () ->
+                        barrier.registerWorldExecutor(
+                                closedCoordinator,
+                                worldExecutor));
+
+        assertTrue(worldExecutor.isTerminated());
     }
 
     @Test
