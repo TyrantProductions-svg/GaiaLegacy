@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 
 class InventoryReservationContractTest {
     private static final EntityRef OWNER = new EntityRef(7);
+    private static final EntityRef OTHER_OWNER = new EntityRef(8);
     private static final ItemStack STONE =
             new ItemStack(ResourceLocation.parse("gaia:stone"), 5);
 
@@ -173,6 +174,57 @@ class InventoryReservationContractTest {
     }
 
     @Test
+    void reserveResultsRejectSnapshotsOwnedByAnotherEntity() {
+        InventoryReservationRequest request =
+                request(InventoryReservationOperation.INSERT);
+        TestInventoryView foreignInventory = inventory(OTHER_OWNER, 3);
+        InventoryReservation fullReservation =
+                new InventoryReservation(
+                        new InventoryReservationId(1), request, STONE);
+        InventoryReservation partialReservation =
+                new InventoryReservation(
+                        new InventoryReservationId(2),
+                        request,
+                        new ItemStack(STONE.itemId(), 2));
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        new InventoryReserveResult(
+                                request,
+                                InventoryReserveResult.Status.RESERVED,
+                                Optional.of(fullReservation),
+                                Optional.empty(),
+                                Optional.of(foreignInventory)));
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        new InventoryReserveResult(
+                                request,
+                                InventoryReserveResult.Status.PARTIALLY_RESERVED,
+                                Optional.of(partialReservation),
+                                Optional.of(
+                                        new ItemStack(
+                                                STONE.itemId(), 3)),
+                                Optional.of(foreignInventory)));
+        for (InventoryReserveResult.Status status :
+                new InventoryReserveResult.Status[] {
+                    InventoryReserveResult.Status.REJECTED,
+                    InventoryReserveResult.Status.INVALID_STACK
+                }) {
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () ->
+                            new InventoryReserveResult(
+                                    request,
+                                    status,
+                                    Optional.empty(),
+                                    Optional.of(STONE),
+                                    Optional.of(foreignInventory)));
+        }
+    }
+
+    @Test
     void reservationResultsRequireSnapshotsForKnownReservations() {
         InventoryReservationId id = new InventoryReservationId(3);
 
@@ -240,6 +292,91 @@ class InventoryReservationContractTest {
 
         assertEquals(InventoryReserveResult.Status.RESERVED,
                 service.reserve(request(InventoryReservationOperation.INSERT)).status());
+    }
+
+    @Test
+    void fakeSnapshotDoesNotExposeAnotherOwnersInventory() {
+        FakeInventoryReservationService service =
+                new FakeInventoryReservationService(Optional.of(inventory(1)));
+
+        assertEquals(Optional.empty(), service.snapshot(OTHER_OWNER));
+        assertEquals(Optional.of(inventory(1)), service.snapshot(OWNER));
+    }
+
+    @Test
+    void fakeReplaceSlotReportsUnknownOwnerWithoutAnotherOwnersSnapshot() {
+        FakeInventoryReservationService service =
+                new FakeInventoryReservationService(Optional.of(inventory(1)));
+        InventoryChangeRequest request =
+                new InventoryChangeRequest(
+                        OTHER_OWNER,
+                        BodySlot.LEFT_HAND,
+                        1,
+                        Optional.empty());
+
+        InventoryChangeResult result = service.replaceSlot(request);
+
+        assertEquals(InventoryChangeResult.Status.UNKNOWN_OWNER, result.status());
+        assertEquals(Optional.empty(), result.inventory());
+    }
+
+    @Test
+    void fakeWrongOwnerReserveReturnsFullRemainderAndConsumesOneShotLimit() {
+        FakeInventoryReservationService service =
+                new FakeInventoryReservationService(Optional.of(inventory(1)));
+        InventoryReservationRequest wrongOwnerRequest =
+                request(
+                        OTHER_OWNER,
+                        InventoryReservationOperation.INSERT);
+        service.setNextReservationLimit(2);
+
+        InventoryReserveResult result = service.reserve(wrongOwnerRequest);
+
+        assertEquals(InventoryReserveResult.Status.UNKNOWN_OWNER, result.status());
+        assertEquals(Optional.empty(), result.reservation());
+        assertEquals(Optional.of(STONE), result.remainder());
+        assertEquals(Optional.empty(), result.inventory());
+        InventoryReserveResult next =
+                service.reserve(
+                        request(InventoryReservationOperation.INSERT));
+        assertEquals(InventoryReserveResult.Status.RESERVED, next.status());
+        assertEquals(5, next.reservation().orElseThrow().reserved().count());
+    }
+
+    @Test
+    void fakeOrdinaryStateChangeCannotSwitchInventoryOwner() {
+        TestInventoryView original = inventory(1);
+        FakeInventoryReservationService service =
+                new FakeInventoryReservationService(Optional.of(original));
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        service.simulateOrdinaryStateChange(
+                                inventory(OTHER_OWNER, 2)));
+
+        assertEquals(Optional.of(original), service.snapshot(OWNER));
+        assertEquals(Optional.empty(), service.snapshot(OTHER_OWNER));
+    }
+
+    @Test
+    void fakeConfiguredReplacementCannotReturnAnotherOwnersView() {
+        FakeInventoryReservationService service =
+                new FakeInventoryReservationService(Optional.of(inventory(1)));
+        service.setReplacementResult(
+                new InventoryChangeResult(
+                        InventoryChangeResult.Status.CONFLICT,
+                        Optional.of(inventory(OTHER_OWNER, 2))));
+        InventoryChangeRequest request =
+                new InventoryChangeRequest(
+                        OWNER,
+                        BodySlot.LEFT_HAND,
+                        1,
+                        Optional.empty());
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> service.replaceSlot(request));
     }
 
     @Test
@@ -324,11 +461,22 @@ class InventoryReservationContractTest {
 
     private static InventoryReservationRequest request(
             InventoryReservationOperation operation) {
+        return request(OWNER, operation);
+    }
+
+    private static InventoryReservationRequest request(
+            EntityRef owner,
+            InventoryReservationOperation operation) {
         return new InventoryReservationRequest(
-                OWNER, BodySlot.LEFT_HAND, operation, STONE);
+                owner, BodySlot.LEFT_HAND, operation, STONE);
     }
 
     private static TestInventoryView inventory(long revision) {
-        return new TestInventoryView(OWNER, revision, Map.of());
+        return inventory(OWNER, revision);
+    }
+
+    private static TestInventoryView inventory(
+            EntityRef owner, long revision) {
+        return new TestInventoryView(owner, revision, Map.of());
     }
 }

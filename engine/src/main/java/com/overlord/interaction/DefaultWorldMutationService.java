@@ -89,7 +89,7 @@ public final class DefaultWorldMutationService
                                     new BeforeBlockChangedEvent(
                                             request, current)),
                             "before-change decision");
-        } catch (RuntimeException failure) {
+        } catch (RuntimeException | Error failure) {
             throw new BlockChangeDispatchException(
                     "before-change event delivery failed",
                     failure,
@@ -148,21 +148,21 @@ public final class DefaultWorldMutationService
                     true);
         }
 
-        RuntimeException deliveryFailure = null;
+        Throwable deliveryFailure = null;
         try {
             events.blockChanged(
                     new BlockChangedEvent(
                             request,
                             previous,
                             request.replacementBlock()));
-        } catch (RuntimeException failure) {
+        } catch (RuntimeException | Error failure) {
             deliveryFailure = failure;
         }
         try {
             events.chunksDirty(
                     new ChunkDirtyEvent(
                             request, outcome.dirtiedChunks()));
-        } catch (RuntimeException failure) {
+        } catch (RuntimeException | Error failure) {
             if (deliveryFailure == null) {
                 deliveryFailure = failure;
             } else if (failure != deliveryFailure) {

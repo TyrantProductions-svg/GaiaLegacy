@@ -453,6 +453,34 @@ class DefaultWorldMutationServiceTest {
     }
 
     @Test
+    void beforeChangeErrorReportsUncommittedMutationAndResetsGuard() {
+        List<String> order = new ArrayList<>();
+        RecordingAccess access = new RecordingAccess(order, STONE);
+        RecordingPublisher events = new RecordingPublisher(order);
+        DefaultWorldMutationService service = service(access, events);
+        AssertionError listenerFailure =
+                new AssertionError("before listener");
+        events.beforeFailure = listenerFailure;
+
+        BlockChangeDispatchException failure =
+                assertThrows(
+                        BlockChangeDispatchException.class,
+                        () -> service.changeBlock(request(2, 4, 3)));
+
+        assertFalse(failure.mutationApplied());
+        assertSame(listenerFailure, failure.getCause());
+        assertEquals(0, access.writeAttempts);
+        assertEquals(STONE, access.block);
+        assertEquals(List.of("before"), order);
+
+        events.beforeFailure = null;
+        assertEquals(
+                BlockChangeResult.Status.APPLIED,
+                service.changeBlock(request(2, 4, 3)).status());
+        assertEquals(1, access.successfulWrites);
+    }
+
+    @Test
     void nullBeforeChangeDecisionReportsUncommittedMutation() {
         List<String> order = new ArrayList<>();
         RecordingAccess access = new RecordingAccess(order, STONE);
@@ -510,12 +538,77 @@ class DefaultWorldMutationServiceTest {
     }
 
     @Test
+    void changedErrorStillAttemptsDirtyEventAndReportsCommittedMutation() {
+        List<String> order = new ArrayList<>();
+        RecordingAccess access = new RecordingAccess(order, STONE);
+        RecordingPublisher events = new RecordingPublisher(order);
+        AssertionError listenerFailure =
+                new AssertionError("changed listener");
+        events.changedFailure = listenerFailure;
+
+        BlockChangeDispatchException failure =
+                assertThrows(
+                        BlockChangeDispatchException.class,
+                        () ->
+                                service(access, events)
+                                        .changeBlock(request(2, 4, 3)));
+
+        assertTrue(failure.mutationApplied());
+        assertSame(listenerFailure, failure.getCause());
+        assertEquals(0, failure.getCause().getSuppressed().length);
+        assertEquals(1, access.successfulWrites);
+        assertEquals(AIR, access.block);
+        assertEquals(
+                List.of(
+                        "before",
+                        "compare-and-set",
+                        "changed",
+                        "dirty"),
+                order);
+        assertEquals(
+                Set.of(new ChunkKey(0, 0)),
+                events.dirtyEvent.dirtyChunks());
+    }
+
+    @Test
     void dirtyFailureReportsCommittedMutationAfterChangedEvent() {
         List<String> order = new ArrayList<>();
         RecordingAccess access = new RecordingAccess(order, STONE);
         RecordingPublisher events = new RecordingPublisher(order);
         RuntimeException listenerFailure =
                 new IllegalArgumentException("dirty listener");
+        events.dirtyFailure = listenerFailure;
+
+        BlockChangeDispatchException failure =
+                assertThrows(
+                        BlockChangeDispatchException.class,
+                        () ->
+                                service(access, events)
+                                        .changeBlock(request(2, 4, 3)));
+
+        assertTrue(failure.mutationApplied());
+        assertSame(listenerFailure, failure.getCause());
+        assertEquals(0, failure.getCause().getSuppressed().length);
+        assertEquals(1, access.successfulWrites);
+        assertEquals(AIR, access.block);
+        assertEquals(
+                List.of(
+                        "before",
+                        "compare-and-set",
+                        "changed",
+                        "dirty"),
+                order);
+        assertEquals(STONE, events.changedEvent.previousBlock());
+        assertEquals(AIR, events.changedEvent.currentBlock());
+    }
+
+    @Test
+    void dirtyErrorReportsCommittedMutationAfterChangedEvent() {
+        List<String> order = new ArrayList<>();
+        RecordingAccess access = new RecordingAccess(order, STONE);
+        RecordingPublisher events = new RecordingPublisher(order);
+        AssertionError listenerFailure =
+                new AssertionError("dirty listener");
         events.dirtyFailure = listenerFailure;
 
         BlockChangeDispatchException failure =
@@ -578,12 +671,48 @@ class DefaultWorldMutationServiceTest {
     }
 
     @Test
+    void mixedPostChangeFailuresKeepFirstAndSuppressSecond() {
+        List<String> order = new ArrayList<>();
+        RecordingAccess access = new RecordingAccess(order, STONE);
+        RecordingPublisher events = new RecordingPublisher(order);
+        RuntimeException changedFailure =
+                new IllegalStateException("changed listener");
+        AssertionError dirtyFailure =
+                new AssertionError("dirty listener");
+        events.changedFailure = changedFailure;
+        events.dirtyFailure = dirtyFailure;
+
+        BlockChangeDispatchException failure =
+                assertThrows(
+                        BlockChangeDispatchException.class,
+                        () ->
+                                service(access, events)
+                                        .changeBlock(request(2, 4, 3)));
+
+        assertTrue(failure.mutationApplied());
+        assertSame(changedFailure, failure.getCause());
+        assertEquals(1, failure.getCause().getSuppressed().length);
+        assertSame(
+                dirtyFailure,
+                failure.getCause().getSuppressed()[0]);
+        assertEquals(1, access.successfulWrites);
+        assertEquals(AIR, access.block);
+        assertEquals(
+                List.of(
+                        "before",
+                        "compare-and-set",
+                        "changed",
+                        "dirty"),
+                order);
+    }
+
+    @Test
     void sharedPostChangeFailureIsNotSelfSuppressed() {
         List<String> order = new ArrayList<>();
         RecordingAccess access = new RecordingAccess(order, STONE);
         RecordingPublisher events = new RecordingPublisher(order);
-        RuntimeException sharedFailure =
-                new IllegalStateException("shared listener failure");
+        AssertionError sharedFailure =
+                new AssertionError("shared listener failure");
         events.changedFailure = sharedFailure;
         events.dirtyFailure = sharedFailure;
 
@@ -792,9 +921,9 @@ class DefaultWorldMutationServiceTest {
         private final List<String> order;
         private BlockChangeDecision decision =
                 BlockChangeDecision.ALLOW;
-        private RuntimeException beforeFailure;
-        private RuntimeException changedFailure;
-        private RuntimeException dirtyFailure;
+        private Throwable beforeFailure;
+        private Throwable changedFailure;
+        private Throwable dirtyFailure;
         private Runnable beforeAction;
         private BeforeBlockChangedEvent beforeEvent;
         private BlockChangedEvent changedEvent;
@@ -810,7 +939,7 @@ class DefaultWorldMutationServiceTest {
             beforeEvent = event;
             order.add("before");
             if (beforeFailure != null) {
-                throw beforeFailure;
+                throwUnchecked(beforeFailure);
             }
             if (beforeAction != null) {
                 beforeAction.run();
@@ -823,7 +952,7 @@ class DefaultWorldMutationServiceTest {
             changedEvent = event;
             order.add("changed");
             if (changedFailure != null) {
-                throw changedFailure;
+                throwUnchecked(changedFailure);
             }
         }
 
@@ -832,8 +961,20 @@ class DefaultWorldMutationServiceTest {
             dirtyEvent = event;
             order.add("dirty");
             if (dirtyFailure != null) {
-                throw dirtyFailure;
+                throwUnchecked(dirtyFailure);
             }
+        }
+
+        private static void throwUnchecked(Throwable failure) {
+            if (failure instanceof RuntimeException runtimeFailure) {
+                throw runtimeFailure;
+            }
+            if (failure instanceof Error error) {
+                throw error;
+            }
+            throw new AssertionError(
+                    "test publisher accepts only unchecked failures",
+                    failure);
         }
     }
 }

@@ -199,9 +199,9 @@ void repeatedRollbackIsIdempotentAndBlocksLaterCommit() {
 }
 ```
 
-Require `INSERT` and `EXTRACT`, positive stable IDs, a positive reserved stack,
-an optional positive same-item remainder, explicit failure statuses, and
-unknown-reservation results.
+Require `INSERT` and `EXTRACT`, non-negative stable IDs, a positive reserved
+stack, an optional positive same-item remainder, explicit failure statuses,
+and unknown-reservation results.
 
 - [x] **Step 2: Verify RED**
 

@@ -23,7 +23,7 @@ public record InventoryReserveResult(
             case REJECTED, INVALID_STACK, UNKNOWN_OWNER ->
                     validateFailure(request, reservation, remainder);
         }
-        validateInventory(status, inventory);
+        validateInventory(request, status, inventory);
     }
 
     private static void validateReserved(
@@ -76,7 +76,9 @@ public record InventoryReserveResult(
     }
 
     private static void validateInventory(
-            Status status, Optional<InventoryView> inventory) {
+            InventoryReservationRequest request,
+            Status status,
+            Optional<InventoryView> inventory) {
         if (status == Status.UNKNOWN_OWNER) {
             if (inventory.isPresent()) {
                 throw new IllegalArgumentException(
@@ -86,6 +88,10 @@ public record InventoryReserveResult(
         }
         InventoryView view = inventory.orElseThrow(
                 () -> new IllegalArgumentException(status + " requires an inventory"));
+        if (!request.owner().equals(view.owner())) {
+            throw new IllegalArgumentException(
+                    "inventory owner must match the reservation request");
+        }
         if (view.revision() < 0) {
             throw new IllegalArgumentException(
                     "inventory revision must be non-negative");

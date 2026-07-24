@@ -27,9 +27,10 @@ UI implementation was added.
 
 ## Unfinished work
 
-- Final branch-wide engine-owner and game-owner reviews remain pending. The
-  controller will dispatch them after the Task 7 documentation commit; this
-  task does not claim either review complete.
+- Initial branch-wide owner review at `1583b34` reported two Important
+  findings: inventory owner isolation and the subscriber `Error` protocol.
+  This fix wave addresses both; controller re-review remains pending, and this
+  handoff does not claim a clean or approved owner-review verdict.
 - Gaia `BlockRaycastService` and resource-ID `BlockWorldAccess` adapters are
   not implemented or wired.
 - Production inventory storage/rules, a production world-item adapter,
@@ -263,13 +264,18 @@ Hygiene and scope checks:
 - Task 7 changes exactly four documentation files and one engine test; it
   changes no production Java.
 
-Final HEAD at the documentation commit:
+Owner-review input and final reconciliation HEAD:
 
 ```text
-This handoff is part of the Task 7 documentation commit. Its resolved commit
-hash is recorded in the ignored Task 7 report after commit because a commit
-cannot contain its own content-derived hash.
+Initial owner-review input: 1583b34
+Final fix/reconciliation HEAD: reported in the final external task report
+after the required commit because a commit cannot contain its own
+content-derived hash.
 ```
+
+The initial review's two Important findings—inventory owner isolation and the
+subscriber `Error` protocol—are addressed by this fix wave pending controller
+re-review. No clean or approved owner-review verdict is claimed here.
 
 Interactive/platform truth:
 
@@ -279,7 +285,8 @@ Interactive/platform truth:
 
 ## Known risks
 
-- Final engine-owner and game-owner reviews are pending controller dispatch.
+- Controller re-review of the two addressed Important findings is pending;
+  owner review is not yet recorded as clean or approved.
 - Production adapters do not exist, so cross-service transaction sketches
   are contract obligations, not exercised gameplay paths.
 - Reservation fakes intentionally omit production capacity, persistence,
@@ -376,7 +383,8 @@ Suggested pull request description:
 
 ## Remaining
 
-- final engine-owner and game-owner reviews are pending controller dispatch
+- controller re-review of the two addressed Important findings remains
+  pending; no clean or approved verdict is claimed
 - production gameplay/adapters, formal inventory, world entities, physics
   drops, renderer/controller/mesh-manager work, and UI remain out of scope
 - Windows interactive and native macOS verification were not run for v2.1

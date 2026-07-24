@@ -4,10 +4,11 @@
 
 This document describes the Phase 7 architecture on
 `feat/interaction-api-contracts`, based on `origin/main` at commit `ed707ec`.
-The original reviewed implementation and handoff end at `0f73604`; the final
-review code fixes end at `7415cf6`. Phase 7 preserves the Phase 3 chunk mesh
-lifecycle and Phase 6 fixed-step physics foundation while defining
-game-neutral block-interaction and three-slot body-inventory contracts.
+The original reviewed implementation and handoff end at `0f73604`; original
+Phase 7 production hardening continued through `64f1743`. Phase 7 preserves
+the Phase 3 chunk mesh lifecycle and Phase 6 fixed-step physics foundation
+while defining game-neutral block-interaction and three-slot body-inventory
+contracts.
 
 The repository is a two-module Gradle build:
 

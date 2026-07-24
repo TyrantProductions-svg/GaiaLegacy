@@ -33,16 +33,27 @@ public final class FakeInventoryReservationService implements InventoryService {
     @Override
     public Optional<InventoryView> snapshot(EntityRef owner) {
         Objects.requireNonNull(owner, "owner");
-        return snapshot;
+        return snapshotFor(owner);
     }
 
     @Override
     public InventoryChangeResult replaceSlot(InventoryChangeRequest request) {
         Objects.requireNonNull(request, "request");
+        Optional<InventoryView> requestInventory = snapshotFor(request.owner());
+        if (requestInventory.isEmpty()) {
+            return new InventoryChangeResult(
+                    InventoryChangeResult.Status.UNKNOWN_OWNER, Optional.empty());
+        }
         if (replacementResult != null) {
+            replacementResult.inventory().ifPresent(view -> {
+                if (!request.owner().equals(view.owner())) {
+                    throw new IllegalStateException(
+                            "configured replacement inventory owner does not match request");
+                }
+            });
             return replacementResult;
         }
-        return snapshot.map(view -> new InventoryChangeResult(
+        return requestInventory.map(view -> new InventoryChangeResult(
                         InventoryChangeResult.Status.CONFLICT, Optional.of(view)))
                 .orElseGet(() -> new InventoryChangeResult(
                         InventoryChangeResult.Status.UNKNOWN_OWNER, Optional.empty()));
@@ -53,11 +64,18 @@ public final class FakeInventoryReservationService implements InventoryService {
         Objects.requireNonNull(request, "request");
         int limit = nextReservationLimit;
         nextReservationLimit = Integer.MAX_VALUE;
-        if (snapshot.isEmpty()) {
-            return failedReserve(request, InventoryReserveResult.Status.UNKNOWN_OWNER);
+        Optional<InventoryView> requestInventory = snapshotFor(request.owner());
+        if (requestInventory.isEmpty()) {
+            return failedReserve(
+                    request,
+                    InventoryReserveResult.Status.UNKNOWN_OWNER,
+                    Optional.empty());
         }
         if (limit <= 0) {
-            return failedReserve(request, InventoryReserveResult.Status.REJECTED);
+            return failedReserve(
+                    request,
+                    InventoryReserveResult.Status.REJECTED,
+                    requestInventory);
         }
         int protectedCount = Math.min(limit, request.requested().count());
         InventoryReservation reservation = new InventoryReservation(
@@ -67,7 +85,7 @@ public final class FakeInventoryReservationService implements InventoryService {
         if (protectedCount == request.requested().count()) {
             return new InventoryReserveResult(
                     request, InventoryReserveResult.Status.RESERVED,
-                    Optional.of(reservation), Optional.empty(), snapshot);
+                    Optional.of(reservation), Optional.empty(), requestInventory);
         }
         return new InventoryReserveResult(
                 request, InventoryReserveResult.Status.PARTIALLY_RESERVED,
@@ -75,7 +93,7 @@ public final class FakeInventoryReservationService implements InventoryService {
                 Optional.of(new ItemStack(
                         request.requested().itemId(),
                         request.requested().count() - protectedCount)),
-                snapshot);
+                requestInventory);
     }
 
     @Override
@@ -100,7 +118,14 @@ public final class FakeInventoryReservationService implements InventoryService {
     }
 
     public void simulateOrdinaryStateChange(InventoryView changedSnapshot) {
-        snapshot = Optional.of(Objects.requireNonNull(changedSnapshot, "changedSnapshot"));
+        InventoryView changed =
+                Objects.requireNonNull(changedSnapshot, "changedSnapshot");
+        if (snapshot.isPresent()
+                && !Objects.equals(snapshot.orElseThrow().owner(), changed.owner())) {
+            throw new IllegalArgumentException(
+                    "ordinary state change must preserve inventory owner");
+        }
+        snapshot = Optional.of(changed);
     }
 
     public int commitSideEffectCount() {
@@ -121,9 +146,19 @@ public final class FakeInventoryReservationService implements InventoryService {
     }
 
     private InventoryReserveResult failedReserve(
-            InventoryReservationRequest request, InventoryReserveResult.Status status) {
+            InventoryReservationRequest request,
+            InventoryReserveResult.Status status,
+            Optional<InventoryView> requestInventory) {
         return new InventoryReserveResult(
-                request, status, Optional.empty(), Optional.of(request.requested()), snapshot);
+                request,
+                status,
+                Optional.empty(),
+                Optional.of(request.requested()),
+                requestInventory);
+    }
+
+    private Optional<InventoryView> snapshotFor(EntityRef owner) {
+        return snapshot.filter(view -> owner.equals(view.owner()));
     }
 
     private InventoryReservationResult complete(
