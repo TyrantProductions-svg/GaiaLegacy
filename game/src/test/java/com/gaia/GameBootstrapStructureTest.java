@@ -10,6 +10,24 @@ import org.junit.jupiter.api.Test;
 
 class GameBootstrapStructureTest {
     @Test
+    void worldLoadingDoesNotPublishCombinedMeshData()
+            throws IOException {
+        String worldLoader =
+                Files.readString(
+                        Path.of(
+                                "src/main/java/com/gaia/world/"
+                                        + "WorldLoader.java"));
+        String worldLoadResult =
+                Files.readString(
+                        Path.of(
+                                "src/main/java/com/gaia/world/"
+                                        + "WorldLoadResult.java"));
+
+        assertFalse(worldLoader.contains("combineMeshData"));
+        assertFalse(worldLoadResult.contains("float[]"));
+    }
+
+    @Test
     void composesIndependentChunkMeshingAndReverseSafeShutdown()
             throws IOException {
         String source =

@@ -18,12 +18,6 @@ public final class World {
         return chunks;
     }
 
-    @Deprecated
-    public Chunk getChunk(int chunkX, int chunkZ) {
-        return chunks.mutableChunkForCompatibility(
-                new ChunkKey(chunkX, chunkZ));
-    }
-
     public byte getBlock(int x, int y, int z) {
         return chunks.getBlock(x, y, z);
     }

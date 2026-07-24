@@ -66,10 +66,6 @@ public class Chunk {
         return subChunks.get(sectionIndex);
     }
     
-    public Map<Integer, SubChunk> getSubChunks() {
-        return subChunks;
-    }
-    
     public int getWorldHeight() {
         return worldHeight;
     }

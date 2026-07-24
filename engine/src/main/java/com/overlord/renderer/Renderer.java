@@ -14,8 +14,6 @@ public class Renderer implements ChunkRenderBackend {
     private final MainThreadGuard mainThreadGuard;
     private final RenderAssets renderAssets;
     private Shader shader;
-    private Mesh mesh;
-    private Mesh fallbackMesh;
     private Camera camera;
     private Texture textureAtlas;
     
@@ -66,62 +64,6 @@ public class Renderer implements ChunkRenderBackend {
                 new Texture(
                         mainThreadGuard,
                         renderAssets.blockAtlas());
-        
-        float[] vertices = {
-            -0.5f, -0.5f, -0.5f,  0.0f, 0.0f,
-             0.5f, -0.5f, -0.5f,  1.0f, 0.0f,
-             0.5f,  0.5f, -0.5f,  1.0f, 1.0f,
-             0.5f,  0.5f, -0.5f,  1.0f, 1.0f,
-            -0.5f,  0.5f, -0.5f,  0.0f, 1.0f,
-            -0.5f, -0.5f, -0.5f,  0.0f, 0.0f,
-
-            -0.5f, -0.5f,  0.5f,  0.0f, 0.0f,
-             0.5f, -0.5f,  0.5f,  1.0f, 0.0f,
-             0.5f,  0.5f,  0.5f,  1.0f, 1.0f,
-             0.5f,  0.5f,  0.5f,  1.0f, 1.0f,
-            -0.5f,  0.5f,  0.5f,  0.0f, 1.0f,
-            -0.5f, -0.5f,  0.5f,  0.0f, 0.0f,
-
-            -0.5f,  0.5f,  0.5f,  0.0f, 0.0f,
-            -0.5f,  0.5f, -0.5f,  1.0f, 0.0f,
-            -0.5f, -0.5f, -0.5f,  1.0f, 1.0f,
-            -0.5f, -0.5f, -0.5f,  1.0f, 1.0f,
-            -0.5f, -0.5f,  0.5f,  0.0f, 1.0f,
-            -0.5f,  0.5f,  0.5f,  0.0f, 0.0f,
-
-             0.5f,  0.5f,  0.5f,  0.0f, 0.0f,
-             0.5f,  0.5f, -0.5f,  1.0f, 0.0f,
-             0.5f, -0.5f, -0.5f,  1.0f, 1.0f,
-             0.5f, -0.5f, -0.5f,  1.0f, 1.0f,
-             0.5f, -0.5f,  0.5f,  0.0f, 1.0f,
-             0.5f,  0.5f,  0.5f,  0.0f, 0.0f,
-
-            -0.5f, -0.5f, -0.5f,  0.0f, 0.0f,
-             0.5f, -0.5f, -0.5f,  1.0f, 0.0f,
-             0.5f, -0.5f,  0.5f,  1.0f, 1.0f,
-             0.5f, -0.5f,  0.5f,  1.0f, 1.0f,
-            -0.5f, -0.5f,  0.5f,  0.0f, 1.0f,
-            -0.5f, -0.5f, -0.5f,  0.0f, 0.0f,
-
-            -0.5f,  0.5f, -0.5f,  0.0f, 0.0f,
-             0.5f,  0.5f, -0.5f,  1.0f, 0.0f,
-             0.5f,  0.5f,  0.5f,  1.0f, 1.0f,
-             0.5f,  0.5f,  0.5f,  1.0f, 1.0f,
-            -0.5f,  0.5f,  0.5f,  0.0f, 1.0f,
-            -0.5f,  0.5f, -0.5f,  0.0f, 0.0f
-        };
-        
-        mesh = new Mesh(mainThreadGuard, vertices);
-        fallbackMesh = mesh;
-    }
-    
-    public void replaceMesh(float[] vertices) {
-        mainThreadGuard.assertMainThread("terrain mesh GPU upload");
-        Mesh replacement = new Mesh(mainThreadGuard, vertices);
-        if (mesh != null && mesh != fallbackMesh) {
-            mesh.cleanup();
-        }
-        mesh = replacement;
     }
 
     @Override
@@ -183,20 +125,6 @@ public class Renderer implements ChunkRenderBackend {
         rebuildProjection(width, height);
     }
 
-    public void render() {
-        mainThreadGuard.assertMainThread("scene rendering");
-        if (mesh == null) return;
-
-        shader.use();
-
-        textureAtlas.bind(0);
-        shader.setUniformMat4f("projection", projectionMatrix);
-        shader.setUniformMat4f("view", camera.getViewMatrix());
-        shader.setUniformMat4f("model", new Matrix4f());
-        
-        mesh.draw();
-    }
-
     public void renderChunks(Collection<ChunkRenderObject> chunks) {
         mainThreadGuard.assertMainThread("chunk rendering");
         Objects.requireNonNull(chunks, "chunks");
@@ -213,14 +141,6 @@ public class Renderer implements ChunkRenderBackend {
 
     public void cleanup() {
         mainThreadGuard.assertMainThread("renderer cleanup");
-        if (mesh != null && mesh != fallbackMesh) {
-            mesh.cleanup();
-        }
-        mesh = null;
-        if (fallbackMesh != null) {
-            fallbackMesh.cleanup();
-            fallbackMesh = null;
-        }
         if (shader != null) {
             shader.cleanup();
             shader = null;

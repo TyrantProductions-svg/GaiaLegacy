@@ -55,25 +55,37 @@ class WorldTest {
     }
 
     @Test
-    @SuppressWarnings("deprecation")
-    void deprecatedChunkAccessUsesRepositoryOwnedStorage() {
+    void worldWritesArePublishedAsImmutableSnapshots() {
         ChunkRepository repository = new ChunkRepository();
         World world = new World(repository);
         ChunkKey key = new ChunkKey(2, -1);
+        int worldX = key.worldOriginX() + 3;
+        int worldZ = key.worldOriginZ() + 5;
 
-        Chunk chunk = world.getChunk(key.x(), key.z());
-        chunk.setBlock(3, 4, 5, (byte) 6);
+        assertTrue(world.setBlock(worldX, 4, worldZ, (byte) 6));
+        ChunkSnapshot snapshot =
+                repository.snapshot(key).orElseThrow();
 
         assertTrue(repository.contains(key));
-        assertEquals(ChunkState.EMPTY, repository.state(key));
+        assertEquals(ChunkState.DIRTY, repository.state(key));
         assertEquals(
                 6,
                 Byte.toUnsignedInt(
-                        repository.getBlock(
-                                key.worldOriginX() + 3,
-                                4,
-                                key.worldOriginZ() + 5)));
-        assertSame(chunk, world.getChunk(key.x(), key.z()));
+                        snapshot.getBlock(3, 4, 5)));
+
+        assertTrue(world.setBlock(worldX, 4, worldZ, (byte) 8));
+
+        assertEquals(
+                6,
+                Byte.toUnsignedInt(
+                        snapshot.getBlock(3, 4, 5)));
+        assertEquals(
+                8,
+                Byte.toUnsignedInt(
+                        repository
+                                .snapshot(key)
+                                .orElseThrow()
+                                .getBlock(3, 4, 5)));
     }
 
     @Test

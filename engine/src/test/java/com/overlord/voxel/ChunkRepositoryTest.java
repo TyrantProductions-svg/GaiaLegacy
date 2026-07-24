@@ -178,18 +178,14 @@ class ChunkRepositoryTest {
     }
 
     @Test
-    @SuppressWarnings("deprecation")
-    void boundaryPropagationLeavesCompatibilityCreatedNeighborEmpty() {
+    void boundaryPropagationDoesNotCreateMissingNeighborSnapshot() {
         ChunkRepository repository = new ChunkRepository();
-        World world = new World(repository);
         ChunkKey center = new ChunkKey(0, 0);
         ChunkKey east = center.east();
-        Chunk compatibilityChunk = world.getChunk(east.x(), east.z());
 
         repository.generate(
                 center, chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
-        assertEquals(ChunkState.EMPTY, repository.state(east));
-        assertEquals(0L, repository.revision(east));
+        assertTrue(repository.snapshot(east).isEmpty());
         long centerRevision = repository.revision(center);
 
         assertTrue(
@@ -203,9 +199,7 @@ class ChunkRepositoryTest {
         assertEquals(centerRevision + 1, repository.revision(center));
         assertEquals(ChunkState.EMPTY, repository.state(east));
         assertEquals(0L, repository.revision(east));
-        assertSame(
-                compatibilityChunk,
-                world.getChunk(east.x(), east.z()));
+        assertTrue(repository.snapshot(east).isEmpty());
     }
 
     @Test

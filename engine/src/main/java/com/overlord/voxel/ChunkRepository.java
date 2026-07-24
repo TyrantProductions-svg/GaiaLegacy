@@ -149,13 +149,6 @@ public final class ChunkRepository {
         }
     }
 
-    Chunk mutableChunkForCompatibility(ChunkKey key) {
-        return entries.computeIfAbsent(
-                        Objects.requireNonNull(key, "key"),
-                        this::newEntry)
-                .chunk;
-    }
-
     public Optional<ChunkSnapshot> snapshot(ChunkKey key) {
         Entry entry = entries.get(Objects.requireNonNull(key, "key"));
         if (entry == null) {
