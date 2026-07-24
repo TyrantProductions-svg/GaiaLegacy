@@ -196,6 +196,23 @@ class PhysicsBodyTest {
         assertThrows(IllegalArgumentException.class, () -> body.setFriction(1.001f));
     }
 
+    @Test
+    void copyAndInterpolationDestinationsMustBeExplicitlyNonNull() {
+        PhysicsBody body = new PhysicsBody(COLLIDER, MASS);
+
+        assertNullDestination(() -> body.position(null));
+        assertNullDestination(() -> body.previousPosition(null));
+        assertNullDestination(() -> body.interpolatedPosition(0.5f, null));
+        assertNullDestination(() -> body.linearVelocity(null));
+        assertNullDestination(() -> body.angularVelocity(null));
+    }
+
+    private static void assertNullDestination(Runnable action) {
+        NullPointerException exception =
+                assertThrows(NullPointerException.class, action::run);
+        assertEquals("destination", exception.getMessage());
+    }
+
     private static PhysicsBody bodyAt(float x, float y, float z) {
         PhysicsBody body = new PhysicsBody(COLLIDER, MASS);
         body.teleport(new Vector3f(x, y, z));

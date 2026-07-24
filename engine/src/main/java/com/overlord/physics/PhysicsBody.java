@@ -35,10 +35,12 @@ public final class PhysicsBody {
     }
 
     public Vector3f position(Vector3f destination) {
+        Objects.requireNonNull(destination, "destination");
         return destination.set(position);
     }
 
     public Vector3f previousPosition(Vector3f destination) {
+        Objects.requireNonNull(destination, "destination");
         return destination.set(previousPosition);
     }
 
@@ -48,6 +50,7 @@ public final class PhysicsBody {
     }
 
     public Vector3f interpolatedPosition(float alpha, Vector3f destination) {
+        Objects.requireNonNull(destination, "destination");
         if (!Float.isFinite(alpha) || alpha < 0 || alpha > 1) {
             throw new IllegalArgumentException("alpha must be finite and in [0, 1]");
         }
@@ -55,6 +58,7 @@ public final class PhysicsBody {
     }
 
     public Vector3f linearVelocity(Vector3f destination) {
+        Objects.requireNonNull(destination, "destination");
         return destination.set(linearVelocity);
     }
 
@@ -64,6 +68,7 @@ public final class PhysicsBody {
     }
 
     public Vector3f angularVelocity(Vector3f destination) {
+        Objects.requireNonNull(destination, "destination");
         return destination.set(angularVelocity);
     }
 

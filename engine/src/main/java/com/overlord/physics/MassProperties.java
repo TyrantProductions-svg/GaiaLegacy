@@ -13,7 +13,12 @@ public final class MassProperties {
         if (!Float.isFinite(mass) || mass <= 0) {
             throw new IllegalArgumentException("dynamic mass must be finite and positive");
         }
-        return new MassProperties(mass, 1.0f / mass);
+        float inverseMass = 1.0f / mass;
+        if (!Float.isFinite(inverseMass) || inverseMass <= 0) {
+            throw new IllegalArgumentException(
+                    "dynamic mass must produce a finite positive inverse mass");
+        }
+        return new MassProperties(mass, inverseMass);
     }
 
     public static MassProperties staticBody() {

@@ -33,4 +33,11 @@ class MassPropertiesTest {
                 IllegalArgumentException.class,
                 () -> MassProperties.dynamic(Float.NEGATIVE_INFINITY));
     }
+
+    @Test
+    void dynamicMassRejectsAValueWhoseInverseWouldNotBeFinite() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> MassProperties.dynamic(Float.MIN_VALUE));
+    }
 }

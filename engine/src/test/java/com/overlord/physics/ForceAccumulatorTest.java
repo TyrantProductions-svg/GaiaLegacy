@@ -5,7 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.joml.Vector3f;
+import org.joml.Vector3fc;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 class ForceAccumulatorTest {
     @Test
@@ -71,5 +74,108 @@ class ForceAccumulatorTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> accumulator.applyTorque(new Vector3f(0, 0, Float.NEGATIVE_INFINITY)));
+    }
+
+    @ParameterizedTest
+    @EnumSource(AccumulatorType.class)
+    void overflowIsRejectedWithoutChangingThePreviousAccumulation(AccumulatorType type) {
+        ForceAccumulator accumulator = new ForceAccumulator();
+        Vector3f previous = type.previousValue();
+
+        type.apply(accumulator, previous);
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> type.apply(accumulator, type.overflowingValue()));
+        assertEquals(previous, type.consume(accumulator, new Vector3f()));
+    }
+
+    @Test
+    void consumeDestinationsMustBeExplicitlyNonNull() {
+        ForceAccumulator accumulator = new ForceAccumulator();
+
+        assertNullDestination(() -> accumulator.consumeForce(null));
+        assertNullDestination(() -> accumulator.consumeImpulse(null));
+        assertNullDestination(() -> accumulator.consumeTorque(null));
+    }
+
+    private static void assertNullDestination(Runnable action) {
+        NullPointerException exception =
+                assertThrows(NullPointerException.class, action::run);
+        assertEquals("destination", exception.getMessage());
+    }
+
+    private enum AccumulatorType {
+        FORCE {
+            @Override
+            void apply(ForceAccumulator accumulator, Vector3fc value) {
+                accumulator.applyForce(value);
+            }
+
+            @Override
+            Vector3f consume(ForceAccumulator accumulator, Vector3f destination) {
+                return accumulator.consumeForce(destination);
+            }
+
+            @Override
+            Vector3f previousValue() {
+                return new Vector3f(Float.MAX_VALUE, 1, 2);
+            }
+
+            @Override
+            Vector3f overflowingValue() {
+                return new Vector3f(Float.MAX_VALUE, 3, 4);
+            }
+        },
+        IMPULSE {
+            @Override
+            void apply(ForceAccumulator accumulator, Vector3fc value) {
+                accumulator.applyImpulse(value);
+            }
+
+            @Override
+            Vector3f consume(ForceAccumulator accumulator, Vector3f destination) {
+                return accumulator.consumeImpulse(destination);
+            }
+
+            @Override
+            Vector3f previousValue() {
+                return new Vector3f(1, Float.MAX_VALUE, 2);
+            }
+
+            @Override
+            Vector3f overflowingValue() {
+                return new Vector3f(3, Float.MAX_VALUE, 4);
+            }
+        },
+        TORQUE {
+            @Override
+            void apply(ForceAccumulator accumulator, Vector3fc value) {
+                accumulator.applyTorque(value);
+            }
+
+            @Override
+            Vector3f consume(ForceAccumulator accumulator, Vector3f destination) {
+                return accumulator.consumeTorque(destination);
+            }
+
+            @Override
+            Vector3f previousValue() {
+                return new Vector3f(1, 2, Float.MAX_VALUE);
+            }
+
+            @Override
+            Vector3f overflowingValue() {
+                return new Vector3f(3, 4, Float.MAX_VALUE);
+            }
+        };
+
+        abstract void apply(ForceAccumulator accumulator, Vector3fc value);
+
+        abstract Vector3f consume(ForceAccumulator accumulator, Vector3f destination);
+
+        abstract Vector3f previousValue();
+
+        abstract Vector3f overflowingValue();
     }
 }
