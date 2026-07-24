@@ -101,7 +101,7 @@ public final class ChunkMeshBuilder implements ChunkMesher {
                         .resolve(Byte.toUnsignedInt(block))
                         .renderable();
     }
-    
+
     private static float[] toArray(List<Float> vertices) {
         float[] vertexArray = new float[vertices.size()];
         for (int i = 0; i < vertices.size(); i++) {
