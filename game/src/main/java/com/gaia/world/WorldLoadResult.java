@@ -7,20 +7,20 @@ import org.joml.Vector3f;
 
 public record WorldLoadResult(
         Set<ChunkKey> initialChunks,
-        Vector3f spawnPosition) {
+        Vector3f playerFeetPosition) {
     public WorldLoadResult {
         initialChunks =
                 Set.copyOf(
                         Objects.requireNonNull(
                                 initialChunks, "initialChunks"));
-        spawnPosition =
+        playerFeetPosition =
                 new Vector3f(
                         Objects.requireNonNull(
-                                spawnPosition, "spawnPosition"));
+                                playerFeetPosition, "playerFeetPosition"));
     }
 
     @Override
-    public Vector3f spawnPosition() {
-        return new Vector3f(spawnPosition);
+    public Vector3f playerFeetPosition() {
+        return new Vector3f(playerFeetPosition);
     }
 }

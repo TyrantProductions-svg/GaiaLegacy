@@ -10,6 +10,7 @@ import com.overlord.assets.AssetDiagnostic;
 import com.overlord.assets.AssetLoadReport;
 import com.overlord.assets.AssetManager;
 import com.overlord.assets.ResourceLocation;
+import com.overlord.config.GameConfig;
 import com.overlord.core.Engine;
 import com.overlord.core.ModuleManager;
 import com.overlord.core.PlayerManager;
@@ -18,7 +19,14 @@ import com.overlord.core.lifecycle.ShutdownCoordinator;
 import com.overlord.core.thread.MainThreadGuard;
 import com.overlord.core.time.FixedStepClock;
 import com.overlord.core.time.FrameClock;
-import com.overlord.physics.PhysicsManager;
+import com.overlord.physics.Aabb;
+import com.overlord.physics.BlockCollisionShapeResolver;
+import com.overlord.physics.BlockRaycast;
+import com.overlord.physics.CollisionWorld;
+import com.overlord.physics.MassProperties;
+import com.overlord.physics.PhysicsBody;
+import com.overlord.physics.PhysicsWorld;
+import com.overlord.physics.PlayerController;
 import com.overlord.voxel.ChunkMeshBuilder;
 import com.overlord.voxel.ChunkMeshManager;
 import java.util.Objects;
@@ -28,10 +36,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import org.joml.Vector3f;
 
 public final class GameBootstrap {
     private static final double FIXED_STEP_SECONDS = 1.0 / 60.0;
-    private static final int MAX_FIXED_STEPS_PER_FRAME = 5;
+    private static final int MAX_FIXED_STEPS_PER_FRAME = 8;
     private static final double MAX_FRAME_DELTA_SECONDS = 0.25;
 
     public void run() {
@@ -61,10 +70,41 @@ public final class GameBootstrap {
             InputManager inputManager = new InputManager(mainThreadGuard);
             inputManager.install(engine.getWindow().getWindow());
 
-            PhysicsManager physicsManager =
-                    new PhysicsManager(engine.getCamera(), engine.getWorld());
+            BlockCollisionShapeResolver shapes =
+                    BlockCollisionShapeResolver.fullCubesForNonAir();
+            CollisionWorld collisionWorld =
+                    new CollisionWorld(engine.getWorld(), shapes);
+            BlockRaycast blockRaycast =
+                    new BlockRaycast(engine.getWorld(), shapes);
+            PhysicsBody playerBody =
+                    new PhysicsBody(
+                            new Aabb(
+                                    -GameConfig.Player.WIDTH / 2.0f,
+                                    0.0f,
+                                    -GameConfig.Player.WIDTH / 2.0f,
+                                    GameConfig.Player.WIDTH / 2.0f,
+                                    GameConfig.Player.HEIGHT,
+                                    GameConfig.Player.WIDTH / 2.0f),
+                            MassProperties.dynamic(1.0f));
+            PlayerController playerController =
+                    new PlayerController(
+                            playerBody,
+                            collisionWorld,
+                            GameConfig.Player.MOVEMENT_SPEED,
+                            GameConfig.Player.NOCLIP_SPEED,
+                            GameConfig.Player.JUMP_VELOCITY,
+                            GameConfig.Physics.GRAVITY,
+                            GameConfig.Physics.TERMINAL_VELOCITY);
+            PhysicsWorld physicsWorld =
+                    new PhysicsWorld(
+                            collisionWorld,
+                            new Vector3f(
+                                    0,
+                                    GameConfig.Physics.GRAVITY,
+                                    0));
             PlayerManager playerManager =
-                    new PlayerManager(engine.getCamera(), physicsManager);
+                    new PlayerManager(
+                            engine.getCamera(), playerController);
             ModuleManager.getInstance().initAll();
 
             FrameClock frameClock =
@@ -125,7 +165,10 @@ public final class GameBootstrap {
                             engine,
                             inputManager,
                             playerManager,
-                            physicsManager,
+                            physicsWorld,
+                            collisionWorld,
+                            playerController,
+                            blockRaycast,
                             frameClock,
                             fixedStepClock,
                             chunkMeshes,

@@ -76,4 +76,59 @@ class GameLoopStructureTest {
         assertTrue(source.contains("throw runtimeException;"));
         assertTrue(source.contains("throw (Error) failure;"));
     }
+
+    @Test
+    void loadsFeetThenRunsOrderedPhysicsAndRenderInterpolation()
+            throws IOException {
+        String source =
+                Files.readString(
+                        Path.of(
+                                "src/main/java/com/gaia/"
+                                        + "GameLoop.java"));
+        String compact = source.replaceAll("\\s+", "");
+
+        assertTrue(
+                compact.contains(
+                        "playerController().teleport("
+                                + "loadResult.playerFeetPosition())"));
+        assertTrue(
+                compact.contains(
+                        "playerController().recoverFromPenetration()"));
+        assertTrue(
+                compact.contains(
+                        "step==0?input:input.heldOnly()"));
+        assertTrue(compact.contains("physicsWorld().step(fixedDelta)"));
+        assertTrue(
+                compact.contains(
+                        "playerController().body()"
+                                + ".interpolatedPosition("));
+        assertTrue(
+                compact.contains(
+                        "fixedStepClock().interpolationAlpha()"));
+
+        int playerUpdate =
+                compact.indexOf("playerManager().fixedUpdate(");
+        int physicsStep =
+                compact.indexOf("physicsWorld().step(fixedDelta)");
+        int moduleUpdate =
+                compact.indexOf(
+                        "ModuleManager.getInstance()"
+                                + ".updateAll(fixedDelta)");
+        int eventProcessing =
+                compact.indexOf(
+                        "EventBus.getInstance().processAll()");
+        int interpolation =
+                compact.indexOf(".interpolatedPosition(");
+        int cameraPosition =
+                compact.indexOf(".getCamera().setPosition(");
+        int renderCameraUpdate =
+                compact.indexOf("updateRenderCamera();");
+        int render = compact.indexOf("renderChunks(");
+        assertTrue(playerUpdate < physicsStep);
+        assertTrue(physicsStep < moduleUpdate);
+        assertTrue(moduleUpdate < eventProcessing);
+        assertTrue(interpolation < cameraPosition);
+        assertTrue(renderCameraUpdate < render);
+        assertFalse(source.contains("PhysicsManager"));
+    }
 }

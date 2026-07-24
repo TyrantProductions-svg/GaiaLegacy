@@ -12,7 +12,6 @@ import com.gaia.assets.GaiaAssetCatalog;
 import com.gaia.assets.GaiaResourceLoader;
 import com.overlord.assets.AssetManager;
 import com.overlord.assets.ResourceLocation;
-import com.overlord.config.GameConfig;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkState;
 import com.overlord.voxel.World;
@@ -66,16 +65,19 @@ class WorldLoaderTest {
         assertEquals(
                 Vector3f.class,
                 WorldLoadResult.class.getRecordComponents()[1].getType());
-        assertEquals(0.5f, result.spawnPosition().x, 1.0e-6f);
-        assertEquals(0.5f, result.spawnPosition().z, 1.0e-6f);
+        assertEquals(0.5f, result.playerFeetPosition().x, 1.0e-6f);
+        assertEquals(0.5f, result.playerFeetPosition().z, 1.0e-6f);
 
         int groundY =
                 (int)
                                 Math.floor(
-                                        result.spawnPosition().y
-                                                - GameConfig.Player.HEIGHT)
+                                        result.playerFeetPosition().y)
                         - 1;
         assertNotEquals(0, world.getBlock(0, groundY, 0));
+        assertEquals(
+                groundY + 1.0f,
+                result.playerFeetPosition().y,
+                1.0e-6f);
     }
 
     @Test
@@ -98,11 +100,11 @@ class WorldLoaderTest {
                 () ->
                         result.initialChunks()
                                 .add(new ChunkKey(2, 0)));
-        Vector3f returnedSpawn = result.spawnPosition();
+        Vector3f returnedSpawn = result.playerFeetPosition();
         returnedSpawn.set(9.0f, 9.0f, 9.0f);
         assertEquals(
                 new Vector3f(0.5f, 31.8f, 0.5f),
-                result.spawnPosition());
+                result.playerFeetPosition());
     }
 
     @Test

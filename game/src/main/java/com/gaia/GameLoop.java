@@ -9,12 +9,14 @@ import com.overlord.core.input.MouseDelta;
 import com.overlord.event.EventBus;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletionException;
+import org.joml.Vector3f;
 
 public final class GameLoop {
     private final GameContext context;
     private State state = State.LOADING;
     private WorldLoadResult loadResult;
     private boolean cursorCaptured = true;
+    private final Vector3f interpolationScratch = new Vector3f();
 
     public GameLoop(GameContext context) {
         this.context = context;
@@ -60,6 +62,9 @@ public final class GameLoop {
                 break;
             }
 
+            if (state == State.RUNNING) {
+                updateRenderCamera();
+            }
             context.engine().getRenderer().clear();
             if (state == State.RUNNING) {
                 context.engine()
@@ -99,11 +104,11 @@ public final class GameLoop {
             throw new RuntimeException("World loading failed", cause);
         }
 
-        context.engine()
-                .getCamera()
-                .setPosition(loadResult.spawnPosition());
+        context.playerController()
+                .teleport(loadResult.playerFeetPosition());
+        context.playerController().recoverFromPenetration();
+        updateRenderCamera();
         context.engine().getCamera().setPitch(-30.0f);
-        context.physicsManager().initializeSpawnPosition();
     }
 
     private void pumpChunkMeshes() {
@@ -145,10 +150,26 @@ public final class GameLoop {
         }
         for (int step = 0; step < fixedSteps; step++) {
             float fixedDelta = context.fixedStepClock().fixedStepSeconds();
-            context.playerManager().fixedUpdate(fixedDelta, input);
+            InputSnapshot stepInput =
+                    step == 0 ? input : input.heldOnly();
+            context.playerManager().fixedUpdate(fixedDelta, stepInput);
+            context.physicsWorld().step(fixedDelta);
             ModuleManager.getInstance().updateAll(fixedDelta);
             EventBus.getInstance().processAll();
         }
+    }
+
+    private void updateRenderCamera() {
+        Vector3f cameraFeet =
+                context.playerController()
+                        .body()
+                        .interpolatedPosition(
+                                (float)
+                                        context.fixedStepClock()
+                                                .interpolationAlpha(),
+                                interpolationScratch);
+        cameraFeet.y += GameConfig.Player.EYE_HEIGHT;
+        context.engine().getCamera().setPosition(cameraFeet);
     }
 
     private enum State {

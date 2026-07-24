@@ -40,4 +40,10 @@ public final class FixedStepClock {
     public double remainderSeconds() {
         return accumulatorSeconds;
     }
+
+    public double interpolationAlpha() {
+        return Math.min(
+                Math.nextDown(1.0),
+                Math.max(0.0, remainderSeconds() / fixedStepSeconds));
+    }
 }

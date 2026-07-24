@@ -51,13 +51,13 @@ public final class WorldLoader {
             highestBlockY = 29;
         }
 
-        int spawnY = highestBlockY + 1;
-        Vector3f spawnPosition =
+        int playerFeetY = highestBlockY + 1;
+        Vector3f playerFeetPosition =
                 new Vector3f(
                         spawnX + 0.5f,
-                        spawnY + GameConfig.Player.HEIGHT,
+                        playerFeetY,
                         spawnZ + 0.5f);
-        return new WorldLoadResult(generated, spawnPosition);
+        return new WorldLoadResult(generated, playerFeetPosition);
     }
 
     private static void checkCancelled() {
