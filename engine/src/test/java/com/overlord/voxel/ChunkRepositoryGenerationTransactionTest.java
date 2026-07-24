@@ -10,6 +10,10 @@ import com.overlord.config.GameConfig;
 import java.lang.reflect.Field;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class ChunkRepositoryGenerationTransactionTest {
@@ -497,6 +501,114 @@ class ChunkRepositoryGenerationTransactionTest {
     }
 
     @Test
+    void oldUnloadCleanupCannotClearNewIncarnationMetadata()
+            throws InterruptedException {
+        ChunkRepository repository = repository();
+        ChunkKey key = new ChunkKey(0, 0);
+        commitInitial(
+                repository, key, filled(key, (byte) 1));
+        assertTrue(repository.beginUnload(key));
+
+        Object oldEntry = capturedEntry(repository, key);
+        Object attemptsMonitor =
+                generationAttemptsMonitor(repository);
+        CountDownLatch entryHeld = new CountDownLatch(1);
+        CountDownLatch releaseEntry = new CountDownLatch(1);
+        AtomicReference<Throwable> asynchronousFailure =
+                new AtomicReference<>();
+        Thread entryHolder =
+                new Thread(
+                        () -> {
+                            synchronized (oldEntry) {
+                                entryHeld.countDown();
+                                try {
+                                    if (!releaseEntry.await(
+                                            5, TimeUnit.SECONDS)) {
+                                        throw new AssertionError(
+                                                "Timed out waiting to release old entry");
+                                    }
+                                } catch (Throwable failure) {
+                                    asynchronousFailure.compareAndSet(
+                                            null, failure);
+                                }
+                            }
+                        },
+                        "old-entry-holder");
+        entryHolder.setDaemon(true);
+        entryHolder.start();
+        assertTrue(
+                entryHeld.await(5, TimeUnit.SECONDS),
+                "Old entry monitor was not acquired");
+
+        AtomicBoolean oldUnloadCompleted = new AtomicBoolean();
+        Thread oldUnload =
+                new Thread(
+                        () -> {
+                            try {
+                                oldUnloadCompleted.set(
+                                        repository.completeUnload(key));
+                            } catch (Throwable failure) {
+                                asynchronousFailure.compareAndSet(
+                                        null, failure);
+                            }
+                        },
+                        "old-unload-completion");
+        oldUnload.setDaemon(true);
+        oldUnload.start();
+        awaitBlocked(
+                oldUnload,
+                "Old unload did not block on its entry monitor");
+
+        try {
+            synchronized (attemptsMonitor) {
+                releaseEntry.countDown();
+                awaitEntryRemoval(repository, key);
+
+                ChunkGenerationTicket newTicket =
+                        repository.beginGeneration(
+                                key, ChunkGenerationMode.INITIAL);
+                assertEquals(
+                        ChunkGenerationResult.Status.COMMITTED,
+                        repository
+                                .commitGeneration(
+                                        newTicket,
+                                        filled(key, (byte) 2))
+                                .status());
+                assertTrue(repository.beginUnload(key));
+                assertEquals(
+                        ChunkState.UNLOADING,
+                        repository.state(key));
+            }
+        } finally {
+            releaseEntry.countDown();
+        }
+
+        entryHolder.join(TimeUnit.SECONDS.toMillis(5));
+        oldUnload.join(TimeUnit.SECONDS.toMillis(5));
+        assertFalse(entryHolder.isAlive(), "Entry holder did not finish");
+        assertFalse(oldUnload.isAlive(), "Old unload did not finish");
+        if (asynchronousFailure.get() != null) {
+            throw new AssertionError(
+                    "Asynchronous coordination failed",
+                    asynchronousFailure.get());
+        }
+
+        assertTrue(oldUnloadCompleted.get());
+        assertTrue(repository.contains(key));
+        assertEquals(ChunkState.UNLOADING, repository.state(key));
+        assertEquals(
+                ChunkGenerationStatus.COMMITTED,
+                repository.generationStatus(key));
+        assertEquals(1, generationAttemptCount(repository));
+        assertEquals(2, repository.getBlock(1, 4, 1));
+
+        assertTrue(repository.completeUnload(key));
+        assertEquals(
+                ChunkGenerationStatus.IDLE,
+                repository.generationStatus(key));
+    }
+
+    @Test
     void transactionApiRejectsNulls() {
         ChunkRepository repository = repository();
         ChunkKey key = new ChunkKey(0, 0);
@@ -608,5 +720,60 @@ class ChunkRepositoryGenerationTransactionTest {
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError(failure);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Object capturedEntry(
+            ChunkRepository repository, ChunkKey key) {
+        try {
+            Field entriesField =
+                    ChunkRepository.class.getDeclaredField("entries");
+            entriesField.setAccessible(true);
+            Map<ChunkKey, ?> entries =
+                    (Map<ChunkKey, ?>) entriesField.get(repository);
+            return entries.get(key);
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError(failure);
+        }
+    }
+
+    private static Object generationAttemptsMonitor(
+            ChunkRepository repository) {
+        try {
+            Field attemptsField =
+                    ChunkRepository.class.getDeclaredField(
+                            "generationAttempts");
+            attemptsField.setAccessible(true);
+            return attemptsField.get(repository);
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError(failure);
+        }
+    }
+
+    private static void awaitEntryRemoval(
+            ChunkRepository repository, ChunkKey key) {
+        long deadline =
+                System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (repository.contains(key)
+                && System.nanoTime() < deadline) {
+            Thread.onSpinWait();
+        }
+        assertFalse(
+                repository.contains(key),
+                "Old entry was not removed before cleanup");
+    }
+
+    private static void awaitBlocked(
+            Thread thread, String failureMessage) {
+        long deadline =
+                System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (thread.getState() != Thread.State.BLOCKED
+                && System.nanoTime() < deadline) {
+            Thread.onSpinWait();
+        }
+        assertEquals(
+                Thread.State.BLOCKED,
+                thread.getState(),
+                failureMessage);
     }
 }

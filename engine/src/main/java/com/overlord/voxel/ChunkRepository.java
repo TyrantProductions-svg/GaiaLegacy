@@ -582,9 +582,12 @@ public final class ChunkRepository {
 
     public boolean completeUnload(ChunkKey key) {
         Objects.requireNonNull(key, "key");
+        GenerationAttempt expectedAttempt =
+                generationAttempt(key);
         Entry entry = entries.get(key);
         if (entry == null) {
-            return clearGenerationAfterUnload(key);
+            return clearGenerationAfterUnload(
+                    key, expectedAttempt);
         }
         boolean removed;
         synchronized (entry) {
@@ -595,7 +598,8 @@ public final class ChunkRepository {
             removed = entries.remove(key, entry);
         }
         if (removed) {
-            clearGenerationAfterUnload(key);
+            clearGenerationAfterUnload(
+                    key, expectedAttempt);
         }
         return removed;
     }
@@ -742,11 +746,19 @@ public final class ChunkRepository {
         }
     }
 
-    private boolean clearGenerationAfterUnload(ChunkKey key) {
+    private GenerationAttempt generationAttempt(ChunkKey key) {
+        synchronized (generationAttempts) {
+            return generationAttempts.byKey.get(key);
+        }
+    }
+
+    private boolean clearGenerationAfterUnload(
+            ChunkKey key, GenerationAttempt expectedAttempt) {
         synchronized (generationAttempts) {
             GenerationAttempt attempt =
                     generationAttempts.byKey.get(key);
-            if (attempt == null
+            if (attempt != expectedAttempt
+                    || attempt == null
                     || (!attempt.unloading
                             && attempt.status
                                     != ChunkGenerationStatus.COMMITTED)) {
