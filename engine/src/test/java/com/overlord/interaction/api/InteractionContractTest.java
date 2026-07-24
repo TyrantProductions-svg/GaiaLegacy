@@ -13,8 +13,10 @@ import com.overlord.interaction.testing.StubInteractionViewModel;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class InteractionContractTest {
@@ -371,6 +373,26 @@ class InteractionContractTest {
     }
 
     @Test
+    void interactionViewModelDeclaresOnlyTheSixApprovedReadOnlyMethods() {
+        assertEquals(
+                Set.of(
+                        new MethodSignature("target", Optional.class, 0),
+                        new MethodSignature("hitFace", Optional.class, 0),
+                        new MethodSignature("progress", double.class, 0),
+                        new MethodSignature("mode", InteractionMode.class, 0),
+                        new MethodSignature("activeItem", Optional.class, 0),
+                        new MethodSignature("failureReason", Optional.class, 0)),
+                Arrays.stream(InteractionViewModel.class.getDeclaredMethods())
+                        .map(
+                                method ->
+                                        new MethodSignature(
+                                                method.getName(),
+                                                method.getReturnType(),
+                                                method.getParameterCount()))
+                        .collect(java.util.stream.Collectors.toSet()));
+    }
+
+    @Test
     void stubInteractionViewModelAcceptsEmptyIdleState() {
         StubInteractionViewModel viewModel =
                 new StubInteractionViewModel(
@@ -441,6 +463,51 @@ class InteractionContractTest {
     }
 
     @Test
+    void stubInteractionViewModelRejectsNullHitFaceContainer() {
+        NullPointerException failure = assertThrows(
+                NullPointerException.class,
+                () ->
+                        new StubInteractionViewModel(
+                                Optional.empty(),
+                                null,
+                                0.0,
+                                InteractionMode.NONE,
+                                Optional.empty(),
+                                Optional.empty()));
+        assertEquals("hitFace", failure.getMessage());
+    }
+
+    @Test
+    void stubInteractionViewModelRejectsNullActiveItemContainer() {
+        NullPointerException failure = assertThrows(
+                NullPointerException.class,
+                () ->
+                        new StubInteractionViewModel(
+                                Optional.empty(),
+                                Optional.empty(),
+                                0.0,
+                                InteractionMode.NONE,
+                                null,
+                                Optional.empty()));
+        assertEquals("activeItem", failure.getMessage());
+    }
+
+    @Test
+    void stubInteractionViewModelRejectsNullFailureReasonContainer() {
+        NullPointerException failure = assertThrows(
+                NullPointerException.class,
+                () ->
+                        new StubInteractionViewModel(
+                                Optional.empty(),
+                                Optional.empty(),
+                                0.0,
+                                InteractionMode.NONE,
+                                Optional.empty(),
+                                null));
+        assertEquals("failureReason", failure.getMessage());
+    }
+
+    @Test
     void stubInteractionViewModelRejectsMismatchedTargetAndFacePresence() {
         BlockHitResult hit = hitWithNormal(1, 0, 0);
 
@@ -464,19 +531,17 @@ class InteractionContractTest {
     }
 
     @Test
-    void stubInteractionViewModelRejectsInvalidActiveItemView() {
-        ItemStackView invalidItem =
-                new ItemStackView() {
-                    @Override
-                    public ResourceLocation itemId() {
-                        return null;
-                    }
+    void stubInteractionViewModelRejectsActiveItemViewWithNullIdentity() {
+        ItemStackView invalidItem = itemView(null, 1);
 
-                    @Override
-                    public int count() {
-                        return 0;
-                    }
-                };
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> stub(Optional.empty(), Optional.empty(), Optional.of(invalidItem)));
+    }
+
+    @Test
+    void stubInteractionViewModelRejectsActiveItemViewWithNonPositiveCount() {
+        ItemStackView invalidItem = itemView(STONE, 0);
 
         assertThrows(
                 IllegalArgumentException.class,
@@ -563,8 +628,25 @@ class InteractionContractTest {
                 Optional.empty());
     }
 
+    private static ItemStackView itemView(ResourceLocation itemId, int count) {
+        return new ItemStackView() {
+            @Override
+            public ResourceLocation itemId() {
+                return itemId;
+            }
+
+            @Override
+            public int count() {
+                return count;
+            }
+        };
+    }
+
     private static Type optionalElementType(Method method) {
         ParameterizedType optionalType = (ParameterizedType) method.getGenericReturnType();
         return optionalType.getActualTypeArguments()[0];
     }
+
+    private record MethodSignature(
+            String name, Class<?> returnType, int parameterCount) {}
 }
