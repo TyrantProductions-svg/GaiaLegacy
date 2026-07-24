@@ -1,7 +1,7 @@
 # Interaction and Body Inventory Contract
 
-Status: approved design for Phase 7  
-Date: 2026-07-24  
+Status: approved design for Phase 7
+Date: 2026-07-24
 Branch: `feat/interaction-api-contracts`
 
 ## Purpose and scope
@@ -190,8 +190,9 @@ must not introduce a second block store.
 
 `World.setBlock` remains a low-level engine method for world generation and
 storage. Gameplay code must use `WorldMutationService`. An architecture test
-allows the existing `game/world` generation paths and rejects new direct
-gameplay calls to `World.setBlock`.
+allows only sources under `game/src/main/java/com/gaia/world` to call
+`setBlock` directly and rejects matching calls everywhere else under
+`game/src/main/java`.
 
 ## Events and transaction order
 
@@ -203,7 +204,7 @@ transaction.
 The event values are immutable:
 
 - `BeforeBlockChangedEvent` contains the request and current block;
-- `BlockChangedEvent` contains the request, previous block, and new block;
+- `BlockChangedEvent` contains the request, previous block, and current block;
 - `ChunkDirtyEvent` contains the request and the complete immutable set of
   affected `ChunkKey` values.
 
@@ -239,9 +240,12 @@ through its constructor. A successful call has this exact order:
 
 Rejected requests do not write the world and do not publish success events.
 
-If before-change dispatch throws, the write is not attempted. After a
-successful write, the coordinator attempts both post-change publications
-even if the first one fails. It then throws
+If before-change dispatch throws, the write is not attempted and the
+coordinator throws `BlockChangeDispatchException` with
+`mutationApplied() == false`. If the world write reports that it did not
+change the block, the coordinator returns `CONFLICT` without publishing
+success events. After a successful write, the coordinator attempts both
+post-change publications even if the first one fails. It then throws
 `BlockChangeDispatchException` with `mutationApplied() == true`, preserving
 the first cause and suppressing any additional failure. Callers must not
 blindly retry such a request.

@@ -2,13 +2,13 @@
 
 ## Snapshot
 
-This document describes the final Phase 6 architecture on
-`refactor/physics-foundation`, based on `origin/main` at commit `ad02717`.
-The Phase 6 implementation and review fixes were verified at commit `95d78d0`
-before its handoff documentation commit. Phase 6 preserves the Phase 3 chunk
-mesh lifecycle while replacing the former Camera-owned physics path with
-fixed-step collision, player-controller, raycast, and minimal rigid-body
-foundations.
+This document describes the Phase 7 architecture on
+`feat/interaction-api-contracts`, based on `origin/main` at commit `ed707ec`.
+The reviewed Phase 7 implementation and architecture-guard fixes end at
+commit `efd743f` before the handoff documentation commit. Phase 7 preserves
+the Phase 3 chunk mesh lifecycle and Phase 6 fixed-step physics foundation
+while defining game-neutral block-interaction and three-slot body-inventory
+contracts.
 
 The repository is a two-module Gradle build:
 
@@ -185,6 +185,20 @@ Current boundaries and risks:
   transparent sorting, or automatic streaming.
 
 All future renderer work must remain compatible with OpenGL 4.1 / GLSL 410 and must keep every OpenGL call and GPU resource create/upload/destroy action on the main/context-owning thread.
+
+## Phase 7 contracts
+
+### Interaction and inventory contracts
+
+- Gameplay block writes use the synchronous `WorldMutationService` contract;
+  the standard implementation validates the main thread and emits
+  before-change, changed, and chunk-dirty events in the documented order.
+- `BlockRaycastService` exposes data-driven `ResourceLocation` hits while
+  preserving the Phase 6 raycast as the algorithmic implementation to adapt.
+- `InventoryView`, `ItemStackView`, and `BodyInventoryViewModel` are
+  read-only snapshots; mutations are isolated behind `InventoryService`.
+- Body inventory slots are `LEFT_HAND`, `RIGHT_HAND`, and `MOUTH`.
+- Phase 7 does not wire or implement gameplay, inventory rules, or UI.
 
 ## Physics
 
