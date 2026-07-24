@@ -22,6 +22,10 @@ public final class World {
         return chunks.getBlock(x, y, z);
     }
 
+    public BlockSize getBlockSize(int x, int y, int z) {
+        return chunks.getBlockSize(x, y, z);
+    }
+
     public boolean setBlock(int x, int y, int z, byte blockId) {
         return chunks.setBlock(x, y, z, blockId);
     }

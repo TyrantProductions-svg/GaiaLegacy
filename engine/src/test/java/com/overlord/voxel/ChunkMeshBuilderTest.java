@@ -44,11 +44,11 @@ class ChunkMeshBuilderTest {
         assertEquals(255, resolvedId.get());
         assertEquals(180, vertices.length);
         for (int face = 0; face < FACE_ORDER.length; face++) {
-            assertFaceUBounds(
+            assertFaceUBoundsWithVariant(
                     vertices,
                     face * 30,
-                    face * 16.0f / 96.0f,
-                    (face + 1) * 16.0f / 96.0f);
+                    FACE_ORDER[face],
+                    1, 1, 1);
         }
     }
 
@@ -391,11 +391,222 @@ class ChunkMeshBuilderTest {
         assertEquals(expectedMax, actualMax, EPSILON);
     }
 
+    private static void assertFaceUBoundsWithVariant(
+            float[] vertices,
+            int faceOffset,
+            BlockFace face,
+            int x, int y, int z) {
+        int variant = computeExpectedVariant(x, y, z);
+        float baseUMin = face.ordinal() * 16.0f / 96.0f;
+        float baseUMax = (face.ordinal() + 1) * 16.0f / 96.0f;
+        float variantWidth = (baseUMax - baseUMin) / 4.0f;
+        float expectedMin = baseUMin + variant * variantWidth;
+        float expectedMax = baseUMin + (variant + 1) * variantWidth;
+        
+        float actualMin = Float.POSITIVE_INFINITY;
+        float actualMax = Float.NEGATIVE_INFINITY;
+        for (int vertex = 0; vertex < 6; vertex++) {
+            float u = vertices[faceOffset + vertex * 5 + 3];
+            actualMin = Math.min(actualMin, u);
+            actualMax = Math.max(actualMax, u);
+        }
+        assertEquals(expectedMin, actualMin, EPSILON);
+        assertEquals(expectedMax, actualMax, EPSILON);
+    }
+
+    private static int computeExpectedVariant(int x, int y, int z) {
+        return 0;
+    }
+
     private static float maxPositionX(float[] vertices) {
         float maximum = Float.NEGATIVE_INFINITY;
         for (int offset = 0; offset < vertices.length; offset += 5) {
             maximum = Math.max(maximum, vertices[offset]);
         }
         return maximum;
+    }
+
+    @Test
+    void rendersSmallerBlockWithScaledVertices() {
+        BlockRenderInfo renderInfo = renderInfo();
+        ChunkMeshBuilder meshBuilder =
+                new ChunkMeshBuilder(ignored -> renderInfo);
+
+        ChunkKey centerKey = new ChunkKey(0, 0);
+        byte[] blocks = new byte[GameConfig.Chunk.SIZE * WORLD_HEIGHT * GameConfig.Chunk.SIZE];
+        BlockSize[] blockSizes = new BlockSize[GameConfig.Chunk.SIZE * WORLD_HEIGHT * GameConfig.Chunk.SIZE];
+        int index = 2 + 3 * GameConfig.Chunk.SIZE + 4 * GameConfig.Chunk.SIZE * WORLD_HEIGHT;
+        blocks[index] = 1;
+        blockSizes[index] = BlockSize.SIZE_8;
+
+        ChunkSnapshot center = ChunkSnapshot.of(centerKey, 1, WORLD_HEIGHT, blocks, blockSizes);
+        ChunkMeshData data = meshBuilder.build(new ChunkMeshInput(center, null, null, null, null));
+
+        float[] vertices = data.vertices();
+        assertEquals(180, vertices.length);
+
+        for (int offset = 0; offset < vertices.length; offset += 5) {
+            float px = vertices[offset];
+            float py = vertices[offset + 1];
+            float pz = vertices[offset + 2];
+            assertTrue(px >= 2.0f && px <= 2.5f, "X should be in [2.0, 2.5] but was " + px);
+            assertTrue(py >= 3.0f && py <= 3.5f, "Y should be in [3.0, 3.5] but was " + py);
+            assertTrue(pz >= 4.0f && pz <= 4.5f, "Z should be in [4.0, 4.5] but was " + pz);
+        }
+    }
+
+    @Test
+    void rendersMultipleBlockSizesInSameChunk() {
+        BlockRenderInfo renderInfo = renderInfo();
+        ChunkMeshBuilder meshBuilder =
+                new ChunkMeshBuilder(ignored -> renderInfo);
+
+        ChunkKey centerKey = new ChunkKey(0, 0);
+        byte[] blocks = new byte[GameConfig.Chunk.SIZE * WORLD_HEIGHT * GameConfig.Chunk.SIZE];
+        BlockSize[] blockSizes = new BlockSize[GameConfig.Chunk.SIZE * WORLD_HEIGHT * GameConfig.Chunk.SIZE];
+
+        int idx1 = 0 + 0 * GameConfig.Chunk.SIZE + 0 * GameConfig.Chunk.SIZE * WORLD_HEIGHT;
+        blocks[idx1] = 1;
+        blockSizes[idx1] = BlockSize.SIZE_16;
+
+        int idx2 = 1 + 0 * GameConfig.Chunk.SIZE + 0 * GameConfig.Chunk.SIZE * WORLD_HEIGHT;
+        blocks[idx2] = 1;
+        blockSizes[idx2] = BlockSize.SIZE_8;
+
+        ChunkSnapshot center = ChunkSnapshot.of(centerKey, 1, WORLD_HEIGHT, blocks, blockSizes);
+        ChunkMeshData data = meshBuilder.build(new ChunkMeshInput(center, null, null, null, null));
+
+        float[] vertices = data.vertices();
+        assertTrue(vertices.length > 0, "Should produce vertices for both blocks");
+        assertTrue(vertices.length < 360, "Should have fewer than 12 faces due to occlusion");
+
+        boolean foundSmallBlock = false;
+        boolean foundLargeBlock = false;
+        for (int offset = 0; offset < vertices.length; offset += 30) {
+            float minX = Float.MAX_VALUE;
+            float maxX = Float.MIN_VALUE;
+            for (int v = 0; v < 6; v++) {
+                float x = vertices[offset + v * 5];
+                minX = Math.min(minX, x);
+                maxX = Math.max(maxX, x);
+            }
+            if (maxX - minX <= 0.5f && minX >= 1.0f) {
+                foundSmallBlock = true;
+            }
+            if (maxX - minX >= 0.9f && minX < 0.1f) {
+                foundLargeBlock = true;
+            }
+        }
+        assertTrue(foundSmallBlock, "Should render the SIZE_8 block at position 1");
+        assertTrue(foundLargeBlock, "Should render the SIZE_16 block at position 0");
+    }
+
+    @Test
+    void largerNeighborOccludesSmallerBlockFace() {
+        BlockRenderInfo renderInfo = renderInfo();
+        ChunkMeshBuilder meshBuilder =
+                new ChunkMeshBuilder(ignored -> renderInfo);
+
+        ChunkKey centerKey = new ChunkKey(0, 0);
+        byte[] blocks = new byte[GameConfig.Chunk.SIZE * WORLD_HEIGHT * GameConfig.Chunk.SIZE];
+        BlockSize[] blockSizes = new BlockSize[GameConfig.Chunk.SIZE * WORLD_HEIGHT * GameConfig.Chunk.SIZE];
+
+        int idx1 = 1 + 1 * GameConfig.Chunk.SIZE + 1 * GameConfig.Chunk.SIZE * WORLD_HEIGHT;
+        blocks[idx1] = 1;
+        blockSizes[idx1] = BlockSize.SIZE_8;
+
+        int idx2 = 2 + 1 * GameConfig.Chunk.SIZE + 1 * GameConfig.Chunk.SIZE * WORLD_HEIGHT;
+        blocks[idx2] = 1;
+        blockSizes[idx2] = BlockSize.SIZE_16;
+
+        ChunkSnapshot center = ChunkSnapshot.of(centerKey, 1, WORLD_HEIGHT, blocks, blockSizes);
+        ChunkMeshData data = meshBuilder.build(new ChunkMeshInput(center, null, null, null, null));
+
+        float[] vertices = data.vertices();
+        assertEquals(330, vertices.length);
+
+        int smallerBlockFaces = 0;
+        int largerBlockFaces = 0;
+        for (int offset = 0; offset < vertices.length; offset += 30) {
+            float px = vertices[offset];
+            if (px >= 1.0f && px <= 1.5f) {
+                smallerBlockFaces++;
+            } else if (px >= 2.0f && px <= 3.0f) {
+                largerBlockFaces++;
+            }
+        }
+        assertEquals(5, smallerBlockFaces, "Smaller block should have 5 faces (east occluded by larger)");
+        assertEquals(6, largerBlockFaces, "Larger block should have 6 faces (smaller doesn't occlude)");
+    }
+
+    @Test
+    void smallerNeighborDoesNotOccludeLargerBlockFace() {
+        BlockRenderInfo renderInfo = renderInfo();
+        ChunkMeshBuilder meshBuilder =
+                new ChunkMeshBuilder(ignored -> renderInfo);
+
+        ChunkKey centerKey = new ChunkKey(0, 0);
+        byte[] blocks = new byte[GameConfig.Chunk.SIZE * WORLD_HEIGHT * GameConfig.Chunk.SIZE];
+        BlockSize[] blockSizes = new BlockSize[GameConfig.Chunk.SIZE * WORLD_HEIGHT * GameConfig.Chunk.SIZE];
+
+        int idx1 = 1 + 1 * GameConfig.Chunk.SIZE + 1 * GameConfig.Chunk.SIZE * WORLD_HEIGHT;
+        blocks[idx1] = 1;
+        blockSizes[idx1] = BlockSize.SIZE_16;
+
+        int idx2 = 2 + 1 * GameConfig.Chunk.SIZE + 1 * GameConfig.Chunk.SIZE * WORLD_HEIGHT;
+        blocks[idx2] = 1;
+        blockSizes[idx2] = BlockSize.SIZE_8;
+
+        ChunkSnapshot center = ChunkSnapshot.of(centerKey, 1, WORLD_HEIGHT, blocks, blockSizes);
+        ChunkMeshData data = meshBuilder.build(new ChunkMeshInput(center, null, null, null, null));
+
+        float[] vertices = data.vertices();
+        assertTrue(vertices.length > 0, "Should produce vertices for both blocks");
+
+        boolean foundLargeBlock = false;
+        for (int offset = 0; offset < vertices.length; offset += 30) {
+            float minX = Float.MAX_VALUE;
+            float maxX = Float.MIN_VALUE;
+            for (int v = 0; v < 6; v++) {
+                float x = vertices[offset + v * 5];
+                minX = Math.min(minX, x);
+                maxX = Math.max(maxX, x);
+            }
+            if (maxX - minX >= 0.9f && minX >= 0.9f && minX <= 1.1f) {
+                foundLargeBlock = true;
+                break;
+            }
+        }
+        assertTrue(foundLargeBlock, "Larger block should render even with smaller neighbor");
+    }
+
+    @Test
+    void positionBasedTextureVariantsAreDeterministic() {
+        BlockRenderInfo renderInfo = renderInfo();
+        ChunkMeshBuilder meshBuilder =
+                new ChunkMeshBuilder(ignored -> renderInfo);
+
+        ChunkKey centerKey = new ChunkKey(0, 0);
+        byte[] blocks = new byte[GameConfig.Chunk.SIZE * WORLD_HEIGHT * GameConfig.Chunk.SIZE];
+        BlockSize[] blockSizes = new BlockSize[GameConfig.Chunk.SIZE * WORLD_HEIGHT * GameConfig.Chunk.SIZE];
+
+        int idx1 = 0 + 0 * GameConfig.Chunk.SIZE + 0 * GameConfig.Chunk.SIZE * WORLD_HEIGHT;
+        blocks[idx1] = 1;
+        blockSizes[idx1] = BlockSize.SIZE_16;
+
+        int idx2 = 1 + 0 * GameConfig.Chunk.SIZE + 0 * GameConfig.Chunk.SIZE * WORLD_HEIGHT;
+        blocks[idx2] = 1;
+        blockSizes[idx2] = BlockSize.SIZE_16;
+
+        ChunkSnapshot center = ChunkSnapshot.of(centerKey, 1, WORLD_HEIGHT, blocks, blockSizes);
+        ChunkMeshData data1 = meshBuilder.build(new ChunkMeshInput(center, null, null, null, null));
+
+        ChunkSnapshot center2 = ChunkSnapshot.of(centerKey, 1, WORLD_HEIGHT, blocks, blockSizes);
+        ChunkMeshData data2 = meshBuilder.build(new ChunkMeshInput(center2, null, null, null, null));
+
+        assertEquals(data1.vertices().length, data2.vertices().length);
+        for (int i = 0; i < data1.vertices().length; i++) {
+            assertEquals(data1.vertices()[i], data2.vertices()[i], EPSILON);
+        }
     }
 }

@@ -2,6 +2,7 @@ package com.gaia.blocks;
 
 import com.overlord.assets.ResourceLocation;
 import com.overlord.voxel.BlockFace;
+import com.overlord.voxel.BlockSize;
 import java.util.Map;
 import java.util.Objects;
 
@@ -16,6 +17,7 @@ public record BlockDefinition(
         boolean gravity,
         boolean flammable,
         float blastResistance,
+        BlockSize blockSize,
         ItemFormDefinition item) {
     public BlockDefinition {
         if (id < 0 || id > 255) {
@@ -24,6 +26,7 @@ public record BlockDefinition(
         }
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(material, "material");
+        Objects.requireNonNull(blockSize, "blockSize");
         textures = Map.copyOf(textures);
         requireFiniteNonNegative("hardness", hardness);
         requireFiniteNonNegative(

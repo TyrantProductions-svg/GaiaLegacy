@@ -76,6 +76,23 @@ public final class ChunkRepository {
         }
     }
 
+    public BlockSize getBlockSize(int worldX, int y, int worldZ) {
+        if (y < 0 || y >= worldHeight) {
+            return BlockSize.SIZE_16;
+        }
+        ChunkKey key = ChunkKey.fromWorld(worldX, worldZ);
+        Entry entry = entries.get(key);
+        if (entry == null) {
+            return BlockSize.SIZE_16;
+        }
+        synchronized (entry) {
+            return entry.chunk.getBlockSize(
+                    ChunkKey.localCoordinate(worldX),
+                    y,
+                    ChunkKey.localCoordinate(worldZ));
+        }
+    }
+
     public void generate(
             ChunkKey key, Consumer<Chunk> generator) {
         Objects.requireNonNull(key, "key");
@@ -167,9 +184,19 @@ public final class ChunkRepository {
                                             worldHeight),
                                     GameConfig.Chunk.SIZE)];
             entry.chunk.copyBlocksTo(blocks);
+            
+            BlockSize[] blockSizes =
+                    new BlockSize[
+                            Math.multiplyExact(
+                                    Math.multiplyExact(
+                                            GameConfig.Chunk.SIZE,
+                                            worldHeight),
+                                    GameConfig.Chunk.SIZE)];
+            entry.chunk.copyBlockSizesTo(blockSizes);
+            
             return Optional.of(
                     ChunkSnapshot.of(
-                            key, entry.revision, worldHeight, blocks));
+                            key, entry.revision, worldHeight, blocks, blockSizes));
         }
     }
 

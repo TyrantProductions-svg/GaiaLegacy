@@ -22,6 +22,7 @@ import com.overlord.renderer.texture.TextureImageLoader;
 import com.overlord.renderer.texture.TextureRegion;
 import com.overlord.voxel.BlockFace;
 import com.overlord.voxel.BlockRenderInfo;
+import com.overlord.voxel.BlockSize;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -549,6 +550,7 @@ public final class GaiaResourceLoader {
                 "gravity",
                 "flammable",
                 "blastResistance",
+                "blockSize",
                 "item");
 
         int id = strict.requireInt("id");
@@ -604,6 +606,18 @@ public final class GaiaResourceLoader {
                 "blastResistance",
                 blastResistance);
 
+        String blockSizeString = strict.requireString("blockSize");
+        BlockSize blockSize;
+        try {
+            blockSize = BlockSize.fromSuffix(blockSizeString);
+        } catch (IllegalArgumentException e) {
+            strict.requireSemantic(
+                    "blockSize",
+                    false,
+                    "must be one of: 2, 4, 8, 16");
+            blockSize = BlockSize.SIZE_16;
+        }
+
         return new BlockDefinition(
                 id,
                 name,
@@ -615,6 +629,7 @@ public final class GaiaResourceLoader {
                 strict.requireBoolean("gravity"),
                 strict.requireBoolean("flammable"),
                 blastResistance,
+                blockSize,
                 item);
     }
 

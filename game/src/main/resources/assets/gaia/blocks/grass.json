@@ -13,6 +13,7 @@
   "gravity": false,
   "flammable": false,
   "blastResistance": 1.0,
+  "blockSize": "16",
   "item": {
     "id": "gaia:grass",
     "maxStackSize": 64,

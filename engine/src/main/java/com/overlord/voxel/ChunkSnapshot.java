@@ -9,12 +9,14 @@ public final class ChunkSnapshot {
     private final long revision;
     private final int worldHeight;
     private final byte[] blocks;
+    private final BlockSize[] blockSizes;
 
     private ChunkSnapshot(
             ChunkKey key,
             long revision,
             int worldHeight,
-            byte[] blocks) {
+            byte[] blocks,
+            BlockSize[] blockSizes) {
         this.key = Objects.requireNonNull(key, "key");
         this.revision = revision;
         this.worldHeight = requireValidWorldHeight(worldHeight);
@@ -28,6 +30,9 @@ public final class ChunkSnapshot {
                     "blocks length must be " + expectedLength);
         }
         this.blocks = Arrays.copyOf(blocks, blocks.length);
+        this.blockSizes = (blockSizes != null) 
+                ? Arrays.copyOf(blockSizes, blockSizes.length)
+                : null;
     }
 
     public ChunkKey key() {
@@ -58,12 +63,40 @@ public final class ChunkSnapshot {
         return blocks[index];
     }
 
+    public BlockSize getBlockSize(int localX, int y, int localZ) {
+        if (localX < 0
+                || localX >= GameConfig.Chunk.SIZE
+                || y < 0
+                || y >= worldHeight
+                || localZ < 0
+                || localZ >= GameConfig.Chunk.SIZE) {
+            return BlockSize.SIZE_16;
+        }
+        if (blockSizes == null) {
+            return BlockSize.SIZE_16;
+        }
+        int index =
+                localX
+                        + y * GameConfig.Chunk.SIZE
+                        + localZ * GameConfig.Chunk.SIZE * worldHeight;
+        return blockSizes[index];
+    }
+
     public static ChunkSnapshot of(
             ChunkKey key,
             long revision,
             int worldHeight,
             byte[] blocks) {
-        return new ChunkSnapshot(key, revision, worldHeight, blocks);
+        return new ChunkSnapshot(key, revision, worldHeight, blocks, null);
+    }
+
+    public static ChunkSnapshot of(
+            ChunkKey key,
+            long revision,
+            int worldHeight,
+            byte[] blocks,
+            BlockSize[] blockSizes) {
+        return new ChunkSnapshot(key, revision, worldHeight, blocks, blockSizes);
     }
 
     public static ChunkSnapshot empty(
@@ -78,7 +111,8 @@ public final class ChunkSnapshot {
                                 Math.multiplyExact(
                                         GameConfig.Chunk.SIZE,
                                         validatedHeight),
-                                GameConfig.Chunk.SIZE)]);
+                                GameConfig.Chunk.SIZE)],
+                null);
     }
 
     private static int requireValidWorldHeight(int worldHeight) {

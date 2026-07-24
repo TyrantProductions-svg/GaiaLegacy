@@ -8,5 +8,6 @@
   "tolerance": 0.0,
   "gravity": false,
   "flammable": false,
-  "blastResistance": 0.0
+  "blastResistance": 0.0,
+  "blockSize": "16"
 }

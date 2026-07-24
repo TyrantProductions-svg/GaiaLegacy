@@ -82,10 +82,14 @@ public class PhysicsManager {
         for (int x = minX; x <= maxX; x++) {
             for (int z = minZ; z <= maxZ; z++) {
                 byte blockBelow = world.getBlock(x, feetBlockY, z);
-                if (blockBelow != 0 && feetY < feetBlockY + 1.0f) {
-                    org.joml.Vector3f pos = camera.getPosition();
-                    pos.y = feetBlockY + 1.0f + GameConfig.Player.HEIGHT + GameConfig.Physics.COLLISION_TOLERANCE;
-                    return true;
+                if (blockBelow != 0) {
+                    float blockHeight = getBlockHeight(x, feetBlockY, z);
+                    float blockTop = feetBlockY + blockHeight;
+                    if (feetY < blockTop) {
+                        org.joml.Vector3f pos = camera.getPosition();
+                        pos.y = blockTop + GameConfig.Player.HEIGHT + GameConfig.Physics.COLLISION_TOLERANCE;
+                        return true;
+                    }
                 }
             }
         }
@@ -132,7 +136,11 @@ public class PhysicsManager {
                                      CollisionResult result) {
         byte blockAtFeet = world.getBlock(x, feetBlockY, z);
         if (blockAtFeet != 0) {
-            if (checkAABBOverlap(playerMinX, playerMaxX, playerMinZ, playerMaxZ, x, z)) {
+            float blockHeight = getBlockHeight(x, feetBlockY, z);
+            float blockTop = feetBlockY + blockHeight;
+            float playerFeetY = (float) Math.floor(camera.getPosition().y - GameConfig.Player.HEIGHT);
+            
+            if (playerFeetY < blockTop && checkAABBOverlap(playerMinX, playerMaxX, playerMinZ, playerMaxZ, x, z, blockHeight)) {
                 handleFootLevelCollision(x, feetBlockY, z, playerMinX, playerMaxX, playerMinZ, playerMaxZ, result);
                 return;
             }
@@ -140,7 +148,8 @@ public class PhysicsManager {
         
         byte blockAbove = world.getBlock(x, feetBlockY + 1, z);
         if (blockAbove != 0) {
-            if (checkAABBOverlap(playerMinX, playerMaxX, playerMinZ, playerMaxZ, x, z)) {
+            float blockHeight = getBlockHeight(x, feetBlockY + 1, z);
+            if (checkAABBOverlap(playerMinX, playerMaxX, playerMinZ, playerMaxZ, x, z, blockHeight)) {
                 handleBodyCollision(playerMinX, playerMaxX, playerMinZ, playerMaxZ, x, z, result);
             }
         }
@@ -150,30 +159,41 @@ public class PhysicsManager {
                                           float playerMinX, float playerMaxX,
                                           float playerMinZ, float playerMaxZ,
                                           CollisionResult result) {
-        byte blockAbove = world.getBlock(x, feetBlockY + 1, z);
-        byte blockAbove2 = world.getBlock(x, feetBlockY + 2, z);
+        float blockHeight = getBlockHeight(x, feetBlockY, z);
+        float blockTop = feetBlockY + blockHeight;
         
-        if (blockAbove == 0 && blockAbove2 == 0) {
-            org.joml.Vector3f pos = camera.getPosition();
-            pos.y = (feetBlockY + 1) + GameConfig.Player.HEIGHT + GameConfig.Physics.COLLISION_TOLERANCE;
-            onGround = true;
-            result.steppedUp = true;
-        } else {
-            resolveAxisBlockage(playerMinX, playerMaxX, playerMinZ, playerMaxZ, x, z, result);
+        if (blockHeight <= GameConfig.Player.MAX_STEP_HEIGHT) {
+            float spaceAbove = GameConfig.Player.HEIGHT + GameConfig.Physics.COLLISION_TOLERANCE;
+            int checkY = feetBlockY + 1;
+            float currentHeight = blockHeight;
+            boolean hasSpace = true;
+            
+            while (currentHeight < spaceAbove && checkY < GameConfig.Chunk.MAX_HEIGHT) {
+                byte blockAtCheck = world.getBlock(x, checkY, z);
+                if (blockAtCheck != 0) {
+                    hasSpace = false;
+                    break;
+                }
+                currentHeight += 1.0f;
+                checkY++;
+            }
+            
+            if (hasSpace) {
+                org.joml.Vector3f pos = camera.getPosition();
+                pos.y = blockTop + GameConfig.Player.HEIGHT + GameConfig.Physics.COLLISION_TOLERANCE;
+                onGround = true;
+                result.steppedUp = true;
+                return;
+            }
         }
+        
+        resolveAxisBlockage(playerMinX, playerMaxX, playerMinZ, playerMaxZ, x, z, result);
     }
     
     private void handleBodyCollision(float playerMinX, float playerMaxX,
                                      float playerMinZ, float playerMaxZ,
                                      int x, int z, CollisionResult result) {
         resolveAxisBlockage(playerMinX, playerMaxX, playerMinZ, playerMaxZ, x, z, result);
-    }
-    
-    private boolean checkAABBOverlap(float playerMinX, float playerMaxX,
-                                     float playerMinZ, float playerMaxZ,
-                                     int blockX, int blockZ) {
-        return playerMinX < blockX + 1 && playerMaxX > blockX &&
-               playerMinZ < blockZ + 1 && playerMaxZ > blockZ;
     }
     
     private void resolveAxisBlockage(float playerMinX, float playerMaxX,
@@ -187,6 +207,18 @@ public class PhysicsManager {
         } else {
             result.blockedZ = true;
         }
+    }
+    
+    private float getBlockHeight(int x, int y, int z) {
+        com.overlord.voxel.BlockSize blockSize = world.getBlockSize(x, y, z);
+        return blockSize.units();
+    }
+    
+    private boolean checkAABBOverlap(float playerMinX, float playerMaxX,
+                                     float playerMinZ, float playerMaxZ,
+                                     int blockX, int blockZ, float blockHeight) {
+        return playerMinX < blockX + blockHeight && playerMaxX > blockX &&
+               playerMinZ < blockZ + blockHeight && playerMaxZ > blockZ;
     }
     
     public void jump(float jumpVelocity) {

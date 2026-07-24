@@ -11,6 +11,7 @@
   "gravity": false,
   "flammable": false,
   "blastResistance": 1.0,
+  "blockSize": "16",
   "item": {
     "id": "gaia:dirt",
     "maxStackSize": 64,

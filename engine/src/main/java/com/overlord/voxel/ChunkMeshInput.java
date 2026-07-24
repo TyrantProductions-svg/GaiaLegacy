@@ -59,6 +59,27 @@ public record ChunkMeshInput(
         return center.getBlock(localX, y, localZ);
     }
 
+    public BlockSize getBlockSize(int localX, int y, int localZ) {
+        if (y < 0 || y >= center.worldHeight()) {
+            return BlockSize.SIZE_16;
+        }
+        if (localX < 0) {
+            return west.getBlockSize(
+                    GameConfig.Chunk.SIZE - 1, y, localZ);
+        }
+        if (localX >= GameConfig.Chunk.SIZE) {
+            return east.getBlockSize(0, y, localZ);
+        }
+        if (localZ < 0) {
+            return north.getBlockSize(
+                    localX, y, GameConfig.Chunk.SIZE - 1);
+        }
+        if (localZ >= GameConfig.Chunk.SIZE) {
+            return south.getBlockSize(localX, y, 0);
+        }
+        return center.getBlockSize(localX, y, localZ);
+    }
+
     private static ChunkSnapshot normalizeNeighbor(
             ChunkSnapshot neighbor,
             ChunkKey expectedKey,

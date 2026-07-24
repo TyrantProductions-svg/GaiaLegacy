@@ -1689,6 +1689,7 @@ class GaiaResourceLoaderTest {
                 + "\"name\":\"test:air\","
                 + "\"material\":\"test:opaque\","
                 + "\"textures\":{\"all\":\"test:missing\"},"
+                + "\"blockSize\":\"16\","
                 + "\"hardness\":0,"
                 + "\"structuralIntegrity\":0,"
                 + "\"tolerance\":0,"
@@ -1710,7 +1711,8 @@ class GaiaResourceLoaderTest {
                 + material
                 + "\",\"textures\":"
                 + textures
-                + ",\"hardness\":1.5,"
+                + ",\"blockSize\":\"16\","
+                + "\"hardness\":1.5,"
                 + "\"structuralIntegrity\":50.0,"
                 + "\"tolerance\":2.0,"
                 + "\"gravity\":false,"

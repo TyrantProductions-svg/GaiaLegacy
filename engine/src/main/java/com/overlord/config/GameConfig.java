@@ -19,6 +19,7 @@ public class GameConfig {
         public static final float WIDTH = 0.6f;
         public static final float HEIGHT = 1.8f;
         public static final float EYE_HEIGHT = 1.62f;
+        public static final float MAX_STEP_HEIGHT = 0.5f;
     }
     
     public static final class Physics {

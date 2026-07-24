@@ -13,6 +13,7 @@ import com.overlord.renderer.material.RenderType;
 import com.overlord.renderer.texture.TextureRegion;
 import com.overlord.voxel.BlockFace;
 import com.overlord.voxel.BlockRenderInfo;
+import com.overlord.voxel.BlockSize;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashMap;
@@ -169,6 +170,7 @@ class BlockRegistryTest {
                         false,
                         false,
                         0.0f,
+                        BlockSize.SIZE_16,
                         null);
         ArrayList<BlockDefinition> definitions =
                 new ArrayList<>(
@@ -297,6 +299,7 @@ class BlockRegistryTest {
                 false,
                 false,
                 1.0f,
+                BlockSize.SIZE_16,
                 id == 0
                         ? null
                         : new ItemFormDefinition(
@@ -322,6 +325,7 @@ class BlockRegistryTest {
                 false,
                 false,
                 blastResistance,
+                BlockSize.SIZE_16,
                 new ItemFormDefinition(
                         ResourceLocation.parse("gaia:test"),
                         64,
