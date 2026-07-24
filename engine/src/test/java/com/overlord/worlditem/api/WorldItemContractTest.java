@@ -92,6 +92,15 @@ class WorldItemContractTest {
                         Optional.of(new WorldItemSnapshot(
                                 new WorldItemId(4), STONE, 1, 2, 3, 4, 5, 60, 0)),
                         Optional.empty()));
+        WorldItemSpawnRequest signedZeroRequest = new WorldItemSpawnRequest(
+                STONE, 0.0, 2, 3, 0.0, 5, 6, Optional.empty(), 7);
+        assertEquals(WorldItemSpawnResult.Status.SPAWNED,
+                new WorldItemSpawnResult(
+                        signedZeroRequest,
+                        WorldItemSpawnResult.Status.SPAWNED,
+                        Optional.of(new WorldItemSnapshot(
+                                new WorldItemId(5), STONE, -0.0, 2, 3, -0.0, 5, 6, 0)),
+                        Optional.empty()).status());
         assertEquals(Optional.of(STONE),
                 new WorldItemSpawnResult(request, WorldItemSpawnResult.Status.REJECTED,
                         Optional.empty(), Optional.of(STONE)).remainder());

@@ -29,12 +29,12 @@ public record WorldItemSpawnResult(
     private static void validateSpawnedItem(
             WorldItemSpawnRequest request, WorldItemSnapshot item) {
         if (!item.stack().equals(request.stack())
-                || Double.compare(item.positionX(), request.positionX()) != 0
-                || Double.compare(item.positionY(), request.positionY()) != 0
-                || Double.compare(item.positionZ(), request.positionZ()) != 0
-                || Double.compare(item.velocityX(), request.velocityX()) != 0
-                || Double.compare(item.velocityY(), request.velocityY()) != 0
-                || Double.compare(item.velocityZ(), request.velocityZ()) != 0) {
+                || item.positionX() != request.positionX()
+                || item.positionY() != request.positionY()
+                || item.positionZ() != request.positionZ()
+                || item.velocityX() != request.velocityX()
+                || item.velocityY() != request.velocityY()
+                || item.velocityZ() != request.velocityZ()) {
             throw new IllegalArgumentException(
                     "SPAWNED item must match the request stack, position, and velocity");
         }
