@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class WorldTest {
@@ -33,6 +34,25 @@ class WorldTest {
         assertEquals(
                 ChunkState.DIRTY,
                 repository.state(ChunkKey.fromWorld(18, 3)));
+    }
+
+    @Test
+    void compareAndSetBlockDelegatesExactCommittedOutcome() {
+        ChunkRepository repository = new ChunkRepository();
+        World world = new World(repository);
+        ChunkKey key = ChunkKey.fromWorld(18, -3);
+
+        ChunkMutationOutcome outcome =
+                world.compareAndSetBlock(
+                        18, 5, -3, (byte) 0, (byte) 9);
+
+        assertEquals(ChunkMutationOutcome.Status.APPLIED, outcome.status());
+        assertEquals(0, Byte.toUnsignedInt(outcome.observedBlock()));
+        assertEquals(
+                repository.revision(key),
+                outcome.dirtyRevisions().get(key));
+        assertEquals(Set.of(key), outcome.dirtyChunks());
+        assertEquals(9, Byte.toUnsignedInt(world.getBlock(18, 5, -3)));
     }
 
     @Test

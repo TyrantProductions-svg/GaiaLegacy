@@ -2,13 +2,13 @@
 
 ## Snapshot
 
-This document describes the final Phase 6 architecture on
-`refactor/physics-foundation`, based on `origin/main` at commit `ad02717`.
-The Phase 6 implementation and review fixes were verified at commit `95d78d0`
-before its handoff documentation commit. Phase 6 preserves the Phase 3 chunk
-mesh lifecycle while replacing the former Camera-owned physics path with
-fixed-step collision, player-controller, raycast, and minimal rigid-body
-foundations.
+This document describes the Phase 7 architecture on
+`feat/interaction-api-contracts`, based on `origin/main` at commit `ed707ec`.
+The original reviewed implementation and handoff end at `0f73604`; original
+Phase 7 production hardening continued through `64f1743`. Phase 7 preserves
+the Phase 3 chunk mesh lifecycle and Phase 6 fixed-step physics foundation
+while defining game-neutral block-interaction and three-slot body-inventory
+contracts.
 
 The repository is a two-module Gradle build:
 
@@ -185,6 +185,57 @@ Current boundaries and risks:
   transparent sorting, or automatic streaming.
 
 All future renderer work must remain compatible with OpenGL 4.1 / GLSL 410 and must keep every OpenGL call and GPU resource create/upload/destroy action on the main/context-owning thread.
+
+## Phase 7 contracts
+
+### Interaction, inventory, and world-item contracts
+
+- `ItemStack(ResourceLocation itemId, int count)` is the canonical immutable
+  command value with a positive count. `ItemStackView` is only a read-only
+  snapshot/projection; it is not a second stack domain type. There is no item
+  registry or alternate item identity in this phase.
+- `InventoryService` retains snapshot and optimistic slot replacement and now
+  defines `reserve`, `commit`, and `rollback` for `INSERT` and `EXTRACT`.
+  `InventoryReservation` protects the accepted amount from ordinary later
+  state changes. Full, partial, remainder, explicit failure, terminal
+  conflict, and idempotent repeat semantics are contract values.
+- `WorldItemService` is the single source of truth for stable `WorldItemId`
+  instances, spawn requests/results, revisioned snapshots, partial
+  reservations, commit, and rollback. Q drop, block drops, pickup, and future
+  Phase 11 physics drops must share it.
+- Inventory and world-item stateful implementations remain test-fixture fakes
+  only. No production inventory storage, item entity, physics body, pickup,
+  drop, persistence, or gameplay adapter is wired.
+- `ChunkRepository.compareAndSetBlock` owns the atomic
+  `ChunkMutationOutcome`, dirty propagation, and exact issued
+  `DirtyChunkRevision` values. It reports only actually loaded boundary
+  neighbors. `World` delegates, and the resource-level
+  `BlockWorldMutationOutcome` preserves those facts. Phase 3 stale-result
+  rejection and mesh lifecycle remain authoritative.
+- Gameplay block writes use synchronous `WorldMutationService`.
+  `DefaultWorldMutationService` now takes only `MainThreadGuard`,
+  `BlockWorldAccess`, and `BlockChangeEventPublisher`; it has no
+  `ChunkDirtyTracker` dependency and does not derive invalidation candidates.
+  It publishes `ChunkDirtyEvent` only after an applied repository outcome,
+  using exact committed revisions.
+- Before-event reentrant mutation through the same service is prohibited for
+  every target. Post-Before revalidation remains. A post-write subscriber
+  failure cannot roll back; both post events are attempted, there is no
+  automatic retry, and `mutationApplied() == true` prohibits blind caller
+  retry.
+- `BlockRaycastService` continues to expose data-driven immutable hits while
+  preserving the Phase 6 raycast algorithm. The read-only
+  `InteractionViewModel` adds optional target/face, finite `[0, 1]` progress,
+  mode, active item projection, and resource-coded failure reason. Its
+  implementation is a test fixture, not UI or gameplay.
+- Direct game production calls matching `.setBlock(...)` remain allowlisted
+  only in `WorldLoader.java` and `GaiaWorldGenerator.java`.
+- Remaining unwired adapters are the Gaia raycast mapper, resource-ID
+  `BlockWorldAccess`, production inventory repository, production
+  world-item/ECS/physics adapter, interaction controller, and UI presenter.
+  Phase 7 does not implement breaking, placement, pickup, dropping,
+  production inventory, renderer changes, controller changes, mesh-manager
+  changes, physics drops, or UI.
 
 ## Physics
 

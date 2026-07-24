@@ -1,9 +1,12 @@
 package com.overlord.voxel;
 
 import com.overlord.config.GameConfig;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -106,8 +109,43 @@ public final class ChunkRepository {
 
     public boolean setBlock(
             int worldX, int y, int worldZ, byte blockId) {
+        ChunkMutationOutcome outcome =
+                mutateBlock(
+                        worldX,
+                        y,
+                        worldZ,
+                        (byte) 0,
+                        blockId,
+                        false);
+        return outcome.status() == ChunkMutationOutcome.Status.APPLIED;
+    }
+
+    public ChunkMutationOutcome compareAndSetBlock(
+            int worldX,
+            int y,
+            int worldZ,
+            byte expectedBlockId,
+            byte replacementBlockId) {
+        return mutateBlock(
+                worldX,
+                y,
+                worldZ,
+                expectedBlockId,
+                replacementBlockId,
+                true);
+    }
+
+    private ChunkMutationOutcome mutateBlock(
+            int worldX,
+            int y,
+            int worldZ,
+            byte expectedBlockId,
+            byte replacementBlockId,
+            boolean compareExpected) {
         if (y < 0 || y >= worldHeight) {
-            return false;
+            return unchangedOutcome(
+                    ChunkMutationOutcome.Status.OUT_OF_BOUNDS,
+                    (byte) 0);
         }
 
         ChunkKey key = ChunkKey.fromWorld(worldX, worldZ);
@@ -116,37 +154,80 @@ public final class ChunkRepository {
         while (true) {
             Entry entry = entries.get(key);
             if (entry == null) {
-                if (blockId == 0) {
-                    return false;
+                if (compareExpected && expectedBlockId != 0) {
+                    return unchangedOutcome(
+                            ChunkMutationOutcome.Status.CONFLICT,
+                            (byte) 0);
+                }
+                if (replacementBlockId == 0) {
+                    return unchangedOutcome(
+                            ChunkMutationOutcome.Status.NO_CHANGE,
+                            (byte) 0);
                 }
                 entry =
                         entries.computeIfAbsent(
                                 key, this::newEntry);
             }
 
+            byte observedBlock;
+            long targetRevision;
             synchronized (entry) {
                 if (entries.get(key) != entry) {
                     continue;
                 }
+                observedBlock =
+                        entry.chunk.getBlock(localX, y, localZ);
                 if (entry.state == ChunkState.UNLOADING) {
-                    return false;
+                    return unchangedOutcome(
+                            ChunkMutationOutcome.Status.CONFLICT,
+                            observedBlock);
                 }
-                if (entry.chunk.getBlock(localX, y, localZ) == blockId) {
-                    return false;
+                if (compareExpected
+                        && observedBlock != expectedBlockId) {
+                    return unchangedOutcome(
+                            ChunkMutationOutcome.Status.CONFLICT,
+                            observedBlock);
                 }
-                entry.chunk.setBlock(localX, y, localZ, blockId);
-                entry.revision = nextRevision();
+                if (observedBlock == replacementBlockId) {
+                    return unchangedOutcome(
+                            ChunkMutationOutcome.Status.NO_CHANGE,
+                            observedBlock);
+                }
+                entry.chunk.setBlock(
+                        localX, y, localZ, replacementBlockId);
+                targetRevision = nextRevision();
+                entry.revision = targetRevision;
                 entry.failure = null;
                 entry.state = ChunkState.DIRTY;
             }
+            List<DirtyChunkRevision> dirtiedChunks =
+                    new ArrayList<>();
+            dirtiedChunks.add(
+                    new DirtyChunkRevision(key, targetRevision));
             for (ChunkKey affected :
                     dirtyTracker.affectedByBlock(key, localX, localZ)) {
                 if (!affected.equals(key)) {
-                    dirtyIfPresent(affected);
+                    OptionalLong revision =
+                            dirtyIfPresent(affected);
+                    if (revision.isPresent()) {
+                        dirtiedChunks.add(
+                                new DirtyChunkRevision(
+                                        affected,
+                                        revision.getAsLong()));
+                    }
                 }
             }
-            return true;
+            return new ChunkMutationOutcome(
+                    ChunkMutationOutcome.Status.APPLIED,
+                    observedBlock,
+                    dirtiedChunks);
         }
+    }
+
+    private static ChunkMutationOutcome unchangedOutcome(
+            ChunkMutationOutcome.Status status, byte observedBlock) {
+        return new ChunkMutationOutcome(
+                status, observedBlock, List.of());
     }
 
     public Optional<ChunkSnapshot> snapshot(ChunkKey key) {
@@ -402,22 +483,23 @@ public final class ChunkRepository {
                         && entry.failure == null);
     }
 
-    private void dirtyIfPresent(ChunkKey key) {
+    private OptionalLong dirtyIfPresent(ChunkKey key) {
         Entry entry = entries.get(key);
         if (entry == null) {
-            return;
+            return OptionalLong.empty();
         }
         synchronized (entry) {
             if (entries.get(key) != entry
                     || entry.state == ChunkState.UNLOADING
                     || entry.state == ChunkState.EMPTY) {
-                return;
+                return OptionalLong.empty();
             }
             entry.revision = nextRevision();
             entry.failure = null;
             if (entry.state != ChunkState.GENERATING) {
                 entry.state = ChunkState.DIRTY;
             }
+            return OptionalLong.of(entry.revision);
         }
     }
 

@@ -2,13 +2,16 @@ package com.overlord.voxel;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.config.GameConfig;
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -23,6 +26,336 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class ChunkRepositoryTest {
+    @Test
+    void dirtyChunkRevisionRequiresKeyAndPositiveRevision() {
+        ChunkKey key = new ChunkKey(2, -3);
+
+        assertEquals(key, new DirtyChunkRevision(key, 1).key());
+        assertThrows(
+                NullPointerException.class,
+                () -> new DirtyChunkRevision(null, 1));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new DirtyChunkRevision(key, 0));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new DirtyChunkRevision(key, -1));
+    }
+
+    @Test
+    void mutationOutcomeDefensivelyCopiesImmutableOrderedCollections() {
+        ChunkKey target = new ChunkKey(1, 2);
+        ChunkKey east = target.east();
+        List<DirtyChunkRevision> source = new ArrayList<>();
+        source.add(new DirtyChunkRevision(target, 7));
+        source.add(new DirtyChunkRevision(east, 8));
+        ChunkMutationOutcome outcome =
+                new ChunkMutationOutcome(
+                        ChunkMutationOutcome.Status.APPLIED,
+                        (byte) 3,
+                        source);
+
+        source.clear();
+
+        assertEquals(
+                List.of(
+                        new DirtyChunkRevision(target, 7),
+                        new DirtyChunkRevision(east, 8)),
+                outcome.dirtiedChunks());
+        assertEquals(
+                List.of(target, east),
+                List.copyOf(outcome.dirtyRevisions().keySet()));
+        assertEquals(Map.of(target, 7L, east, 8L), outcome.dirtyRevisions());
+        assertEquals(List.of(target, east), List.copyOf(outcome.dirtyChunks()));
+        assertThrows(
+                UnsupportedOperationException.class,
+                () ->
+                        outcome.dirtiedChunks()
+                                .add(new DirtyChunkRevision(target, 9)));
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> outcome.dirtyRevisions().put(target, 9L));
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> outcome.dirtyChunks().remove(target));
+        assertNotSame(outcome.dirtyRevisions(), outcome.dirtyRevisions());
+        assertNotSame(outcome.dirtyChunks(), outcome.dirtyChunks());
+    }
+
+    @Test
+    void mutationOutcomeRejectsDuplicateKeysAndInvalidStatusContents() {
+        ChunkKey key = new ChunkKey(0, 0);
+        DirtyChunkRevision dirty = new DirtyChunkRevision(key, 1);
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        new ChunkMutationOutcome(
+                                ChunkMutationOutcome.Status.APPLIED,
+                                (byte) 0,
+                                List.of(dirty, new DirtyChunkRevision(key, 2))));
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        new ChunkMutationOutcome(
+                                ChunkMutationOutcome.Status.APPLIED,
+                                (byte) 0,
+                                List.of()));
+        for (ChunkMutationOutcome.Status status :
+                List.of(
+                        ChunkMutationOutcome.Status.NO_CHANGE,
+                        ChunkMutationOutcome.Status.CONFLICT,
+                        ChunkMutationOutcome.Status.OUT_OF_BOUNDS)) {
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () ->
+                            new ChunkMutationOutcome(
+                                    status, (byte) 0, List.of(dirty)));
+        }
+    }
+
+    @Test
+    void compareAndSetInteriorReturnsExactTargetRevisionOnly() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey target = new ChunkKey(0, 0);
+        repository.generate(target, chunk -> {});
+        long previousRevision = repository.revision(target);
+
+        ChunkMutationOutcome outcome =
+                repository.compareAndSetBlock(
+                        2, 4, 3, (byte) 0, (byte) 7);
+
+        assertEquals(ChunkMutationOutcome.Status.APPLIED, outcome.status());
+        assertEquals(0, Byte.toUnsignedInt(outcome.observedBlock()));
+        assertEquals(List.of(target), List.copyOf(outcome.dirtyChunks()));
+        assertEquals(previousRevision + 1, outcome.dirtyRevisions().get(target));
+        assertEquals(repository.revision(target), outcome.dirtyRevisions().get(target));
+        assertEquals(ChunkState.DIRTY, repository.state(target));
+        assertEquals(7, Byte.toUnsignedInt(repository.getBlock(2, 4, 3)));
+    }
+
+    @Test
+    void compareAndSetLoadedCardinalEdgesReturnExactOrderedRevisions() {
+        assertEdgeOutcome(
+                GameConfig.Chunk.SIZE - 1,
+                2,
+                new ChunkKey(0, 0).east());
+        assertEdgeOutcome(0, 2, new ChunkKey(0, 0).west());
+        assertEdgeOutcome(2, 0, new ChunkKey(0, 0).north());
+        assertEdgeOutcome(
+                2,
+                GameConfig.Chunk.SIZE - 1,
+                new ChunkKey(0, 0).south());
+    }
+
+    @Test
+    void compareAndSetCornerReturnsCardinalNeighborsButNoDiagonal() {
+        ChunkKey target = new ChunkKey(0, 0);
+        ChunkKey east = target.east();
+        ChunkKey south = target.south();
+        ChunkKey diagonal = new ChunkKey(1, 1);
+        ChunkRepository repository =
+                generatedChunks(target, east, south, diagonal);
+        long diagonalRevision = repository.revision(diagonal);
+
+        ChunkMutationOutcome outcome =
+                repository.compareAndSetBlock(
+                        GameConfig.Chunk.SIZE - 1,
+                        4,
+                        GameConfig.Chunk.SIZE - 1,
+                        (byte) 0,
+                        (byte) 6);
+
+        assertEquals(
+                List.of(target, east, south),
+                List.copyOf(outcome.dirtyChunks()));
+        assertEquals(
+                repository.revision(target),
+                outcome.dirtyRevisions().get(target));
+        assertEquals(
+                repository.revision(east),
+                outcome.dirtyRevisions().get(east));
+        assertEquals(
+                repository.revision(south),
+                outcome.dirtyRevisions().get(south));
+        assertFalse(outcome.dirtyChunks().contains(diagonal));
+        assertEquals(diagonalRevision, repository.revision(diagonal));
+    }
+
+    @Test
+    void compareAndSetMissingEdgeNeighborsRemainCompletelyAbsent() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey target = new ChunkKey(0, 0);
+        ChunkKey east = target.east();
+        ChunkKey south = target.south();
+        repository.generate(target, chunk -> {});
+
+        ChunkMutationOutcome outcome =
+                repository.compareAndSetBlock(
+                        GameConfig.Chunk.SIZE - 1,
+                        4,
+                        GameConfig.Chunk.SIZE - 1,
+                        (byte) 0,
+                        (byte) 4);
+
+        assertEquals(Set.of(target), repository.keys());
+        assertEquals(List.of(target), List.copyOf(outcome.dirtyChunks()));
+        assertFalse(outcome.dirtyRevisions().containsKey(east));
+        assertFalse(outcome.dirtyRevisions().containsKey(south));
+        assertEquals(0L, repository.revision(east));
+        assertEquals(0L, repository.revision(south));
+        assertTrue(repository.snapshot(east).isEmpty());
+        assertTrue(repository.snapshot(south).isEmpty());
+    }
+
+    @Test
+    void compareAndSetConflictReportsActualWithoutRevisionChange() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey key = new ChunkKey(0, 0);
+        repository.generate(
+                key, chunk -> chunk.setBlock(2, 4, 3, (byte) 5));
+        long revision = repository.revision(key);
+
+        ChunkMutationOutcome outcome =
+                repository.compareAndSetBlock(
+                        2, 4, 3, (byte) 4, (byte) 7);
+
+        assertEquals(ChunkMutationOutcome.Status.CONFLICT, outcome.status());
+        assertEquals(5, Byte.toUnsignedInt(outcome.observedBlock()));
+        assertTrue(outcome.dirtiedChunks().isEmpty());
+        assertEquals(revision, repository.revision(key));
+        assertEquals(5, Byte.toUnsignedInt(repository.getBlock(2, 4, 3)));
+    }
+
+    @Test
+    void compareAndSetNoChangeAndOutOfBoundsDoNotIssueRevisions() {
+        ChunkRepository repository =
+                new ChunkRepository(32, new ChunkDirtyTracker());
+        ChunkKey key = new ChunkKey(0, 0);
+        repository.generate(
+                key, chunk -> chunk.setBlock(2, 4, 3, (byte) 5));
+        long revision = repository.revision(key);
+
+        ChunkMutationOutcome noChange =
+                repository.compareAndSetBlock(
+                        2, 4, 3, (byte) 5, (byte) 5);
+        ChunkMutationOutcome below =
+                repository.compareAndSetBlock(
+                        2, -1, 3, (byte) 0, (byte) 7);
+        ChunkMutationOutcome above =
+                repository.compareAndSetBlock(
+                        2, 32, 3, (byte) 0, (byte) 7);
+
+        assertEquals(ChunkMutationOutcome.Status.NO_CHANGE, noChange.status());
+        assertEquals(5, Byte.toUnsignedInt(noChange.observedBlock()));
+        assertTrue(noChange.dirtiedChunks().isEmpty());
+        for (ChunkMutationOutcome outcome : List.of(below, above)) {
+            assertEquals(
+                    ChunkMutationOutcome.Status.OUT_OF_BOUNDS,
+                    outcome.status());
+            assertEquals(0, Byte.toUnsignedInt(outcome.observedBlock()));
+            assertTrue(outcome.dirtiedChunks().isEmpty());
+        }
+        assertEquals(revision, repository.revision(key));
+    }
+
+    @Test
+    void compareAndSetAbsentChunkSupportsAirCreationAndConflictWithoutAllocation() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey conflictKey = ChunkKey.fromWorld(34, -3);
+
+        ChunkMutationOutcome conflict =
+                repository.compareAndSetBlock(
+                        34, 5, -3, (byte) 2, (byte) 7);
+
+        assertEquals(ChunkMutationOutcome.Status.CONFLICT, conflict.status());
+        assertEquals(0, Byte.toUnsignedInt(conflict.observedBlock()));
+        assertTrue(conflict.dirtiedChunks().isEmpty());
+        assertFalse(repository.contains(conflictKey));
+
+        ChunkMutationOutcome noChange =
+                repository.compareAndSetBlock(
+                        34, 5, -3, (byte) 0, (byte) 0);
+
+        assertEquals(ChunkMutationOutcome.Status.NO_CHANGE, noChange.status());
+        assertFalse(repository.contains(conflictKey));
+
+        ChunkMutationOutcome applied =
+                repository.compareAndSetBlock(
+                        34, 5, -3, (byte) 0, (byte) 7);
+
+        assertEquals(ChunkMutationOutcome.Status.APPLIED, applied.status());
+        assertEquals(List.of(conflictKey), List.copyOf(applied.dirtyChunks()));
+        assertEquals(
+                repository.revision(conflictKey),
+                applied.dirtyRevisions().get(conflictKey));
+        assertEquals(7, Byte.toUnsignedInt(repository.getBlock(34, 5, -3)));
+    }
+
+    @Test
+    void compareAndSetNegativeWorldCornerUsesFloorBoundaryMapping() {
+        int worldX = -1;
+        int worldZ = -GameConfig.Chunk.SIZE - 1;
+        ChunkKey target = new ChunkKey(-1, -2);
+        ChunkKey east = target.east();
+        ChunkKey south = target.south();
+        ChunkRepository repository = generatedChunks(target, east, south);
+
+        ChunkMutationOutcome outcome =
+                repository.compareAndSetBlock(
+                        worldX,
+                        4,
+                        worldZ,
+                        (byte) 0,
+                        (byte) 3);
+
+        assertEquals(
+                List.of(target, east, south),
+                List.copyOf(outcome.dirtyChunks()));
+        assertEquals(3, Byte.toUnsignedInt(repository.getBlock(worldX, 4, worldZ)));
+    }
+
+    @Test
+    void compareAndSetInvalidatesPreviouslyClaimedReadyRevision() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey key = new ChunkKey(0, 0);
+        repository.generate(key, chunk -> {});
+        long claimedRevision =
+                repository.claimMeshing(key).orElseThrow().center().revision();
+        assertTrue(repository.markReadyForUpload(key, claimedRevision));
+
+        ChunkMutationOutcome outcome =
+                repository.compareAndSetBlock(
+                        1, 1, 1, (byte) 0, (byte) 1);
+
+        assertEquals(ChunkMutationOutcome.Status.APPLIED, outcome.status());
+        assertEquals(ChunkState.DIRTY, repository.state(key));
+        assertFalse(repository.isReadyForUpload(key, claimedRevision));
+        assertFalse(repository.markRenderable(key, claimedRevision));
+        assertTrue(outcome.dirtyRevisions().get(key) > claimedRevision);
+    }
+
+    @Test
+    void compareAndSetUnloadingTargetConflictsWithoutRevisionChange() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey key = new ChunkKey(0, 0);
+        repository.generate(
+                key, chunk -> chunk.setBlock(1, 1, 1, (byte) 2));
+        assertTrue(repository.beginUnload(key));
+        long revision = repository.revision(key);
+
+        ChunkMutationOutcome outcome =
+                repository.compareAndSetBlock(
+                        1, 1, 1, (byte) 2, (byte) 3);
+
+        assertEquals(ChunkMutationOutcome.Status.CONFLICT, outcome.status());
+        assertEquals(2, Byte.toUnsignedInt(outcome.observedBlock()));
+        assertTrue(outcome.dirtiedChunks().isEmpty());
+        assertEquals(revision, repository.revision(key));
+        assertEquals(2, Byte.toUnsignedInt(repository.getBlock(1, 1, 1)));
+        assertEquals(ChunkState.UNLOADING, repository.state(key));
+    }
+
     @Test
     void eastEdgeChangeDirtiesOnlyTargetAndEastNeighbor() {
         ChunkRepository repository = generatedPairEastWest();
@@ -984,6 +1317,35 @@ class ChunkRepositoryTest {
 
     private static ChunkRepository generatedPairEastWest() {
         return generatedPair(new ChunkKey(0, 0), new ChunkKey(1, 0));
+    }
+
+    private static void assertEdgeOutcome(
+            int localX, int localZ, ChunkKey neighbor) {
+        ChunkKey target = new ChunkKey(0, 0);
+        ChunkRepository repository = generatedChunks(target, neighbor);
+        long targetRevision = repository.revision(target);
+        long neighborRevision = repository.revision(neighbor);
+
+        ChunkMutationOutcome outcome =
+                repository.compareAndSetBlock(
+                        localX,
+                        4,
+                        localZ,
+                        (byte) 0,
+                        (byte) 9);
+
+        assertEquals(ChunkMutationOutcome.Status.APPLIED, outcome.status());
+        assertEquals(
+                List.of(target, neighbor),
+                List.copyOf(outcome.dirtyChunks()));
+        assertTrue(outcome.dirtyRevisions().get(target) > targetRevision);
+        assertTrue(outcome.dirtyRevisions().get(neighbor) > neighborRevision);
+        assertEquals(
+                repository.revision(target),
+                outcome.dirtyRevisions().get(target));
+        assertEquals(
+                repository.revision(neighbor),
+                outcome.dirtyRevisions().get(neighbor));
     }
 
     private static ChunkRepository generatedPair(
