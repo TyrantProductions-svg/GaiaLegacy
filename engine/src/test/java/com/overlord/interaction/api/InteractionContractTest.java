@@ -55,6 +55,46 @@ class InteractionContractTest {
     }
 
     @Test
+    void blockHitRejectsAdjacentCoordinatesThatOnlyMatchAfterIntegerOverflow() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        new BlockHitResult(
+                                Integer.MAX_VALUE,
+                                0,
+                                0,
+                                Integer.MIN_VALUE,
+                                0,
+                                0,
+                                STONE,
+                                1,
+                                0,
+                                0,
+                                0.5f,
+                                0.5f,
+                                0.5f,
+                                1.0f));
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        new BlockHitResult(
+                                Integer.MIN_VALUE,
+                                0,
+                                0,
+                                Integer.MAX_VALUE,
+                                0,
+                                0,
+                                STONE,
+                                -1,
+                                0,
+                                0,
+                                0.5f,
+                                0.5f,
+                                0.5f,
+                                1.0f));
+    }
+
+    @Test
     void blockHitAcceptsExactlyTheSixAxisFaceNormals() {
         int[][] normals = {
             {1, 0, 0},

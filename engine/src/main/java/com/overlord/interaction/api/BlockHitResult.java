@@ -38,9 +38,9 @@ public record BlockHitResult(
         if (!(xFace || yFace || zFace)) {
             throw new IllegalArgumentException("normal must identify one axis-aligned face");
         }
-        if (adjacentX != blockX + normalX
-                || adjacentY != blockY + normalY
-                || adjacentZ != blockZ + normalZ) {
+        if ((long) adjacentX != (long) blockX + normalX
+                || (long) adjacentY != (long) blockY + normalY
+                || (long) adjacentZ != (long) blockZ + normalZ) {
             throw new IllegalArgumentException("adjacent coordinates must follow the hit normal");
         }
         if (!Float.isFinite(pointX)
