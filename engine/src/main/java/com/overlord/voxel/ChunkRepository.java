@@ -119,6 +119,9 @@ public final class ChunkRepository {
                 || data.worldHeight() != worldHeight) {
             return terminalConflict(ticket);
         }
+        if (!isLiveAttempt(ticket)) {
+            return conflictResult(key);
+        }
 
         Chunk detached =
                 Chunk.fromCanonicalBytes(
@@ -198,7 +201,7 @@ public final class ChunkRepository {
         synchronized (generationAttempts) {
             GenerationAttempt attempt =
                     generationAttempts.byKey.get(key);
-            if (attempt == null) {
+            if (attempt == null || attempt.unloading) {
                 return ChunkGenerationStatus.IDLE;
             }
             return attempt.status;
@@ -211,6 +214,7 @@ public final class ChunkRepository {
             GenerationAttempt attempt =
                     generationAttempts.byKey.get(key);
             if (attempt == null
+                    || attempt.unloading
                     || attempt.status
                             != ChunkGenerationStatus.FAILED) {
                 return Optional.empty();
@@ -555,14 +559,16 @@ public final class ChunkRepository {
 
     public boolean beginUnload(ChunkKey key) {
         Objects.requireNonNull(key, "key");
+        boolean generationCancelled =
+                beginGenerationUnload(key);
         Entry entry = entries.get(key);
         if (entry == null) {
-            return false;
+            return generationCancelled;
         }
         synchronized (entry) {
             if (entries.get(key) != entry
                     || entry.state == ChunkState.UNLOADING) {
-                return false;
+                return generationCancelled;
             }
             entry.failure = null;
             entry.revision = nextRevision();
@@ -578,15 +584,20 @@ public final class ChunkRepository {
         Objects.requireNonNull(key, "key");
         Entry entry = entries.get(key);
         if (entry == null) {
-            return false;
+            return clearGenerationAfterUnload(key);
         }
+        boolean removed;
         synchronized (entry) {
             if (entries.get(key) != entry
                     || entry.state != ChunkState.UNLOADING) {
                 return false;
             }
-            return entries.remove(key, entry);
+            removed = entries.remove(key, entry);
         }
+        if (removed) {
+            clearGenerationAfterUnload(key);
+        }
+        return removed;
     }
 
     public void markMeshingFailure(
@@ -695,17 +706,54 @@ public final class ChunkRepository {
         }
     }
 
+    private boolean isLiveAttempt(
+            ChunkGenerationTicket ticket) {
+        synchronized (generationAttempts) {
+            return liveAttempt(ticket) != null;
+        }
+    }
+
     private GenerationAttempt liveAttempt(
             ChunkGenerationTicket ticket) {
         GenerationAttempt attempt =
                 generationAttempts.byKey.get(ticket.key());
         if (attempt == null
+                || attempt.unloading
                 || attempt.status
                         != ChunkGenerationStatus.GENERATING
-                || !attempt.ticket.equals(ticket)) {
+                || attempt.ticket != ticket) {
             return null;
         }
         return attempt;
+    }
+
+    private boolean beginGenerationUnload(ChunkKey key) {
+        synchronized (generationAttempts) {
+            GenerationAttempt attempt =
+                    generationAttempts.byKey.get(key);
+            if (attempt == null
+                    || attempt.unloading
+                    || attempt.status
+                            != ChunkGenerationStatus.GENERATING) {
+                return false;
+            }
+            attempt.unloading = true;
+            return true;
+        }
+    }
+
+    private boolean clearGenerationAfterUnload(ChunkKey key) {
+        synchronized (generationAttempts) {
+            GenerationAttempt attempt =
+                    generationAttempts.byKey.get(key);
+            if (attempt == null
+                    || (!attempt.unloading
+                            && attempt.status
+                                    != ChunkGenerationStatus.COMMITTED)) {
+                return false;
+            }
+            return generationAttempts.byKey.remove(key, attempt);
+        }
     }
 
     private ChunkGenerationResult conflictResult(ChunkKey key) {
@@ -730,6 +778,7 @@ public final class ChunkRepository {
         private ChunkGenerationStatus status =
                 ChunkGenerationStatus.GENERATING;
         private Throwable failure;
+        private boolean unloading;
 
         private GenerationAttempt(ChunkGenerationTicket ticket) {
             this.ticket = ticket;

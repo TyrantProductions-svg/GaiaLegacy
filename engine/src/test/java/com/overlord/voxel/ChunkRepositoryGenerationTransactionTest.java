@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.config.GameConfig;
+import java.lang.reflect.Field;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
@@ -356,6 +358,145 @@ class ChunkRepositoryGenerationTransactionTest {
     }
 
     @Test
+    void unloadingPendingInitialAttemptPreventsLateCommit() {
+        ChunkRepository repository = repository();
+        ChunkKey key = new ChunkKey(0, 0);
+        ChunkGenerationTicket ticket =
+                repository.beginGeneration(
+                        key, ChunkGenerationMode.INITIAL);
+
+        assertTrue(repository.beginUnload(key));
+        assertEquals(
+                ChunkGenerationStatus.IDLE,
+                repository.generationStatus(key));
+        assertThrows(
+                IllegalStateException.class,
+                () ->
+                        repository.beginGeneration(
+                                key, ChunkGenerationMode.INITIAL));
+        assertTrue(repository.completeUnload(key));
+
+        ChunkGenerationResult result =
+                repository.commitGeneration(
+                        ticket, filled(key, (byte) 3));
+
+        assertEquals(
+                ChunkGenerationResult.Status.CONFLICT,
+                result.status());
+        assertFalse(repository.contains(key));
+        assertEquals(
+                ChunkGenerationStatus.IDLE,
+                repository.generationStatus(key));
+    }
+
+    @Test
+    void unloadedAlternateIncarnationInvalidatesPendingInitialTicket() {
+        ChunkRepository repository = repository();
+        ChunkKey key = new ChunkKey(0, 0);
+        ChunkGenerationTicket ticket =
+                repository.beginGeneration(
+                        key, ChunkGenerationMode.INITIAL);
+        repository.generate(
+                key,
+                chunk -> chunk.setBlock(1, 4, 1, (byte) 7));
+
+        assertTrue(repository.beginUnload(key));
+        assertTrue(repository.completeUnload(key));
+
+        ChunkGenerationResult result =
+                repository.commitGeneration(
+                        ticket, filled(key, (byte) 3));
+
+        assertEquals(
+                ChunkGenerationResult.Status.CONFLICT,
+                result.status());
+        assertFalse(repository.contains(key));
+        assertEquals(0, repository.getBlock(1, 4, 1));
+    }
+
+    @Test
+    void ticketOwnershipIsIsolatedBetweenRepositories() {
+        ChunkRepository first = repository();
+        ChunkRepository second = repository();
+        ChunkKey key = new ChunkKey(0, 0);
+        ChunkGenerationTicket firstTicket =
+                first.beginGeneration(
+                        key, ChunkGenerationMode.INITIAL);
+        ChunkGenerationTicket secondTicket =
+                second.beginGeneration(
+                        key, ChunkGenerationMode.INITIAL);
+        assertEquals(firstTicket, secondTicket);
+
+        assertEquals(
+                ChunkGenerationResult.Status.CONFLICT,
+                second
+                        .commitGeneration(
+                                firstTicket, filled(key, (byte) 1))
+                        .status());
+        assertEquals(
+                ChunkGenerationResult.Status.CONFLICT,
+                first
+                        .commitGeneration(
+                                secondTicket, filled(key, (byte) 2))
+                        .status());
+
+        assertEquals(
+                ChunkGenerationResult.Status.COMMITTED,
+                first
+                        .commitGeneration(
+                                firstTicket, filled(key, (byte) 3))
+                        .status());
+        assertEquals(
+                ChunkGenerationResult.Status.COMMITTED,
+                second
+                        .commitGeneration(
+                                secondTicket, filled(key, (byte) 4))
+                        .status());
+        assertEquals(3, first.getBlock(1, 4, 1));
+        assertEquals(4, second.getBlock(1, 4, 1));
+    }
+
+    @Test
+    void completeUnloadClearsCommittedGenerationMetadata() {
+        ChunkRepository repository = repository();
+        ChunkKey key = new ChunkKey(0, 0);
+        commitInitial(
+                repository, key, filled(key, (byte) 1));
+
+        assertEquals(
+                ChunkGenerationStatus.COMMITTED,
+                repository.generationStatus(key));
+        assertEquals(1, generationAttemptCount(repository));
+        assertTrue(repository.beginUnload(key));
+        assertEquals(
+                ChunkGenerationStatus.COMMITTED,
+                repository.generationStatus(key));
+
+        assertTrue(repository.completeUnload(key));
+
+        assertEquals(
+                ChunkGenerationStatus.IDLE,
+                repository.generationStatus(key));
+        assertEquals(0, generationAttemptCount(repository));
+    }
+
+    @Test
+    void unloadingManyTransactionChunksRetainsNoAttemptTombstones() {
+        ChunkRepository repository = repository();
+
+        for (int index = 0; index < 100; index++) {
+            ChunkKey key = new ChunkKey(index, -index);
+            commitInitial(
+                    repository, key, filled(key, (byte) 1));
+            assertTrue(repository.beginUnload(key));
+            assertTrue(repository.completeUnload(key));
+        }
+
+        assertTrue(repository.keys().isEmpty());
+        assertEquals(0, generationAttemptCount(repository));
+    }
+
+    @Test
     void transactionApiRejectsNulls() {
         ChunkRepository repository = repository();
         ChunkKey key = new ChunkKey(0, 0);
@@ -447,5 +588,25 @@ class ChunkRepositoryGenerationTransactionTest {
             long previousRevision) {
         assertEquals(ChunkState.DIRTY, repository.state(key));
         assertTrue(repository.revision(key) > previousRevision);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static int generationAttemptCount(
+            ChunkRepository repository) {
+        try {
+            Field attemptsField =
+                    ChunkRepository.class.getDeclaredField(
+                            "generationAttempts");
+            attemptsField.setAccessible(true);
+            Object attempts = attemptsField.get(repository);
+            Field byKeyField =
+                    attempts.getClass().getDeclaredField("byKey");
+            byKeyField.setAccessible(true);
+            Map<ChunkKey, ?> byKey =
+                    (Map<ChunkKey, ?>) byKeyField.get(attempts);
+            return byKey.size();
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError(failure);
+        }
     }
 }
