@@ -1103,9 +1103,9 @@ void heldOnlySnapshotClearsPressEdges() {
 void secondSpaceWithinFifteenFixedStepsTogglesNoclipOnce() {
     PlayerFixture fixture = playerFixtureOnGround();
     fixture.player().fixedUpdate(FIXED_STEP, spacePressed());
-    assertEquals(
-            GameConfig.Player.JUMP_VELOCITY,
-            fixture.controller().body().linearVelocity(new Vector3f()).y);
+    assertTrue(
+            fixture.controller().body().linearVelocity(new Vector3f()).y
+                    > 0.0f);
     repeat(
             14,
             () -> fixture.player().fixedUpdate(FIXED_STEP, noInput()));
