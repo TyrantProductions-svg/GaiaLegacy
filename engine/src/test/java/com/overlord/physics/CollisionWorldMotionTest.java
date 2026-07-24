@@ -59,6 +59,49 @@ class CollisionWorldMotionTest {
     }
 
     @Test
+    void oneIterationStopsAfterTheFirstCornerResponse() {
+        World world = worldWithBlock(2, 1, 1);
+        setBlock(world, 1, 1, 2);
+
+        MotionResult result =
+                fullCubeWorld(world)
+                        .moveAndSlide(
+                                PLAYER_BOX,
+                                new Vector3f(1.5f, 1, 1.5f),
+                                new Vector3f(2, 0, 2),
+                                1);
+
+        assertEquals(1, result.contacts().size());
+        assertEquals(-1.0f, result.contacts().get(0).normalX());
+        assertEquals(0.0f, result.contacts().get(0).normalZ());
+        assertTrue(result.appliedX() > 0);
+        assertEquals(result.appliedX(), result.appliedZ(), 0.000001f);
+        assertTrue(result.z() < 2.0f - PLAYER_HALF_WIDTH);
+    }
+
+    @Test
+    void zeroIterationsApplyNoMotionAndProduceNoContacts() {
+        World world = worldWithBlock(2, 1, 1);
+        Vector3f position = new Vector3f(1.5f, 1, 1.5f);
+
+        MotionResult result =
+                fullCubeWorld(world)
+                        .moveAndSlide(
+                                PLAYER_BOX,
+                                position,
+                                new Vector3f(2, 0, 2),
+                                0);
+
+        assertEquals(position.x, result.x());
+        assertEquals(position.y, result.y());
+        assertEquals(position.z, result.z());
+        assertEquals(0.0f, result.appliedX());
+        assertEquals(0.0f, result.appliedY());
+        assertEquals(0.0f, result.appliedZ());
+        assertTrue(result.contacts().isEmpty());
+    }
+
+    @Test
     void zeroDisplacementLeavesPositionUnchangedWithoutContacts() {
         Vector3f position = new Vector3f(1.5f, 2, -3.5f);
 
@@ -80,7 +123,7 @@ class CollisionWorldMotionTest {
     }
 
     @Test
-    void motionNeverExceedsConfiguredFourContacts() {
+    void fourIterationsResolveThreeOrderedSurfaceContacts() {
         World world = worldWithBlock(2, 1, 1);
         setBlock(world, 1, 1, 2);
         setBlock(world, 1, 0, 1);
@@ -93,11 +136,31 @@ class CollisionWorldMotionTest {
                                 new Vector3f(2, -2, 2),
                                 4);
 
-        assertTrue(result.contacts().size() <= 4);
         assertEquals(3, result.contacts().size());
         assertEquals(-1.0f, result.contacts().get(0).normalX());
         assertEquals(-1.0f, result.contacts().get(1).normalZ());
         assertEquals(1.0f, result.contacts().get(2).normalY());
+    }
+
+    @Test
+    void fractionZeroContactRemovesInwardMotionAndPreservesTangent() {
+        CollisionWorld collisions =
+                fullCubeWorld(worldWithBlock(2, 1, 0));
+
+        MotionResult result =
+                collisions.moveAndSlide(
+                        PLAYER_BOX,
+                        new Vector3f(2.0f - PLAYER_HALF_WIDTH, 1, 0.5f),
+                        new Vector3f(1, 0, 2),
+                        4);
+
+        assertEquals(1, result.contacts().size());
+        assertEquals(0.0f, result.contacts().get(0).fraction());
+        assertEquals(-1.0f, result.contacts().get(0).normalX());
+        assertEquals(2.0f - PLAYER_HALF_WIDTH, result.x());
+        assertEquals(0.0f, result.appliedX());
+        assertEquals(2.5f, result.z());
+        assertEquals(2.0f, result.appliedZ());
     }
 
     @Test
@@ -138,7 +201,7 @@ class CollisionWorldMotionTest {
     }
 
     @Test
-    void depenetrationReturnsEmptyWhenBoundCannotClearOverlap() {
+    void depenetrationReturnsEmptyOnlyWhileIterationBoundIsExhausted() {
         World world = worldWithBlock(0, 0, 0);
         setBlock(world, 0, 1, 0);
         CollisionWorld collisions = fullCubeWorld(world);
@@ -152,6 +215,14 @@ class CollisionWorldMotionTest {
                                 new Vector3f(0.5f, 0.5f, 0.5f),
                                 1)
                         .isEmpty());
+        Vector3f recovered =
+                collisions
+                        .depenetrate(
+                                centeredCube,
+                                new Vector3f(0.5f, 0.5f, 0.5f),
+                                2)
+                        .orElseThrow();
+        assertFalse(collisions.overlapsSolid(centeredCube.translated(recovered)));
     }
 
     @Test
