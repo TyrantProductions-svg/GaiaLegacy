@@ -149,6 +149,41 @@ class ChunkMeshManagerTest {
     }
 
     @Test
+    void discardsStaleWorkerFailureWithoutDiagnosingNewerClaim() {
+        ChunkRepository repository = generatedRepository();
+        ManualExecutor executor = new ManualExecutor();
+        AtomicInteger attempts = new AtomicInteger();
+        ChunkMeshManager manager =
+                new ChunkMeshManager(
+                        repository,
+                        input -> {
+                            if (attempts.incrementAndGet() == 1) {
+                                throw new IllegalStateException(
+                                        "stale failure");
+                            }
+                            return meshFor(input);
+                        },
+                        executor,
+                        failOnBackendCall(new AtomicInteger()),
+                        MainThreadGuard.captureCurrentThread(),
+                        2);
+        manager.scheduleEligible();
+        executor.runNext();
+        repository.setBlock(1, 1, 1, (byte) 2);
+        manager.scheduleEligible();
+
+        assertEquals(1, manager.drainCompletedCpuWork());
+        assertEquals(ChunkState.MESHING, repository.state(KEY));
+        assertTrue(manager.pollFailure().isEmpty());
+
+        executor.runNext();
+        assertEquals(1, manager.drainCompletedCpuWork());
+        assertEquals(
+                ChunkState.READY_FOR_UPLOAD,
+                repository.state(KEY));
+    }
+
+    @Test
     void rejectsMesherResultWithWrongChunkIdentity() {
         ChunkRepository repository = generatedRepository();
         ManualExecutor executor = new ManualExecutor();

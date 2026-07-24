@@ -62,11 +62,12 @@ public final class ChunkMeshManager implements AutoCloseable {
                 meshExecutor.execute(() -> buildMesh(input));
                 scheduled++;
             } catch (RuntimeException | Error failure) {
-                repository.markMeshingFailure(
+                if (repository.markMeshingFailureIfCurrent(
                         input.center().key(),
                         input.center().revision(),
-                        failure);
-                reportedFailures.add(failure);
+                        failure)) {
+                    reportedFailures.add(failure);
+                }
             }
         }
         return scheduled;
@@ -87,11 +88,12 @@ public final class ChunkMeshManager implements AutoCloseable {
         MeshingFailure failure;
         while ((failure = failed.poll()) != null) {
             drained++;
-            repository.markMeshingFailure(
+            if (repository.markMeshingFailureIfCurrent(
                     failure.key(),
                     failure.revision(),
-                    failure.cause());
-            reportedFailures.add(failure.cause());
+                    failure.cause())) {
+                reportedFailures.add(failure.cause());
+            }
         }
         return drained;
     }

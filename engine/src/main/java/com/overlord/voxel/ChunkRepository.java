@@ -246,7 +246,8 @@ public final class ChunkRepository {
                     || center.isEmpty()
                     || center.orElseThrow().revision()
                             != claimedRevision) {
-                if (entry.state != ChunkState.UNLOADING) {
+                if (entry.state == ChunkState.MESHING
+                        && entry.revision == claimedRevision) {
                     entry.state = ChunkState.DIRTY;
                 }
                 return Optional.empty();
@@ -283,21 +284,28 @@ public final class ChunkRepository {
 
     public void markMeshingFailure(
             ChunkKey key, long revision, Throwable failure) {
+        markMeshingFailureIfCurrent(key, revision, failure);
+    }
+
+    boolean markMeshingFailureIfCurrent(
+            ChunkKey key, long revision, Throwable failure) {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(failure, "failure");
         Entry entry = entries.get(key);
         if (entry == null) {
-            return;
+            return false;
         }
         synchronized (entry) {
             if (entries.get(key) != entry) {
-                return;
+                return false;
             }
             if (entry.state == ChunkState.MESHING
                     && entry.revision == revision) {
                 entry.failure = failure;
                 entry.state = ChunkState.DIRTY;
+                return true;
             }
+            return false;
         }
     }
 

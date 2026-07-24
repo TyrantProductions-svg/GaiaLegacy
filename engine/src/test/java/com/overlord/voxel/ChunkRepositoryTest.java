@@ -622,6 +622,77 @@ class ChunkRepositoryTest {
     }
 
     @Test
+    void staleClaimRecheckDoesNotDemoteNewerMeshingClaim()
+            throws Exception {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey center = new ChunkKey(0, 0);
+        ChunkKey east = center.east();
+        repository.generate(
+                center, chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
+        repository.generate(
+                east, chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
+        Object centerEntry = capturedEntry(repository, center);
+        Object eastEntry = capturedEntry(repository, east);
+        CountDownLatch oldClaimStarted = new CountDownLatch(1);
+        CountDownLatch newerClaimOwnsTarget = new CountDownLatch(1);
+        AtomicReference<Thread> oldClaimThread = new AtomicReference<>();
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        try {
+            Future<Optional<ChunkMeshInput>> oldClaim;
+            Future<Optional<ChunkMeshInput>> newerClaim;
+            synchronized (eastEntry) {
+                oldClaim =
+                        executor.submit(
+                                () -> {
+                                    oldClaimThread.set(
+                                            Thread.currentThread());
+                                    oldClaimStarted.countDown();
+                                    return repository.claimMeshing(center);
+                                });
+                assertTrue(
+                        oldClaimStarted.await(5, TimeUnit.SECONDS),
+                        "old claim task did not start");
+                awaitBlocked(
+                        oldClaimThread.get(),
+                        "old claim did not block while capturing east");
+
+                newerClaim =
+                        executor.submit(
+                                () -> {
+                                    synchronized (centerEntry) {
+                                        newerClaimOwnsTarget.countDown();
+                                        repository.setBlock(
+                                                center.worldOriginX() + 1,
+                                                1,
+                                                center.worldOriginZ() + 1,
+                                                (byte) 2);
+                                        return repository.claimMeshing(
+                                                center);
+                                    }
+                                });
+                assertTrue(
+                        newerClaimOwnsTarget.await(
+                                5, TimeUnit.SECONDS),
+                        "newer claim did not acquire the target");
+            }
+
+            ChunkMeshInput newerInput =
+                    newerClaim.get(5, TimeUnit.SECONDS).orElseThrow();
+            assertTrue(
+                    oldClaim.get(5, TimeUnit.SECONDS).isEmpty(),
+                    "old claim unexpectedly survived revision change");
+            assertEquals(
+                    newerInput.center().revision(),
+                    repository.revision(center));
+            assertEquals(ChunkState.MESHING, repository.state(center));
+        } finally {
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
     void staleReadyResultLeavesMutatedTargetDirty() {
         ChunkRepository repository = new ChunkRepository();
         ChunkKey key = new ChunkKey(0, 0);
@@ -766,5 +837,18 @@ class ChunkRepositoryTest {
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError(failure);
         }
+    }
+
+    private static void awaitBlocked(
+            Thread thread, String failureMessage) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (thread.getState() != Thread.State.BLOCKED
+                && System.nanoTime() < deadline) {
+            Thread.onSpinWait();
+        }
+        assertEquals(
+                Thread.State.BLOCKED,
+                thread.getState(),
+                failureMessage);
     }
 }
