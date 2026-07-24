@@ -1527,7 +1527,6 @@ git commit -m "feat(api): enforce transactional block mutation order"
 - Create: `engine/src/testFixtures/java/com/overlord/inventory/testing/TestInventoryView.java`
 - Create: `engine/src/testFixtures/java/com/overlord/inventory/testing/StubInventoryService.java`
 - Create: `engine/src/testFixtures/java/com/overlord/inventory/testing/StubBodyInventoryViewModel.java`
-- Test: `engine/src/test/java/com/overlord/interaction/testing/SharedFixtureTest.java`
 - Test: `game/src/test/java/com/gaia/contracts/EngineContractFixtureSmokeTest.java`
 
 **Interfaces:**
@@ -1865,162 +1864,21 @@ public final class RecordingBlockChangeEventPublisher
 }
 ```
 
-- [ ] **Step 5: Add an engine fixture behavior test**
-
-Create:
-
-```java
-package com.overlord.interaction.testing;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
-import com.overlord.assets.ResourceLocation;
-import com.overlord.interaction.api.BlockChangeDecision;
-import com.overlord.interaction.api.BlockChangeRequest;
-import com.overlord.interaction.api.BlockHitResult;
-import com.overlord.interaction.api.BeforeBlockChangedEvent;
-import com.overlord.interaction.api.EntityRef;
-import com.overlord.interaction.api.InteractionAction;
-import com.overlord.interaction.api.ItemUseContext;
-import com.overlord.inventory.api.BodySlot;
-import com.overlord.inventory.api.InventoryChangeRequest;
-import com.overlord.inventory.api.InventoryChangeResult;
-import com.overlord.inventory.testing.StubBodyInventoryViewModel;
-import com.overlord.inventory.testing.StubInventoryService;
-import com.overlord.inventory.testing.TestInventoryView;
-import com.overlord.inventory.testing.TestItemStackView;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import org.joml.Vector3f;
-import org.junit.jupiter.api.Test;
-
-class SharedFixtureTest {
-    @Test
-    void fakeWorldAndEventRecorderAreConfigurable() {
-        ResourceLocation air =
-                ResourceLocation.parse("gaia:air");
-        ResourceLocation stone =
-                ResourceLocation.parse("gaia:stone");
-        FakeBlockWorldAccess world =
-                new FakeBlockWorldAccess(
-                        stone, Set.of(air, stone));
-        RecordingBlockChangeEventPublisher events =
-                new RecordingBlockChangeEventPublisher();
-        events.setDecision(BlockChangeDecision.CANCEL);
-        BlockChangeRequest request =
-                new BlockChangeRequest(
-                        new ItemUseContext(
-                                new EntityRef(2),
-                                BodySlot.RIGHT_HAND,
-                                Optional.empty(),
-                                Optional.empty(),
-                                InteractionAction.PRIMARY,
-                                1,
-                                10),
-                        2,
-                        3,
-                        4,
-                        stone,
-                        air);
-
-        assertTrue(world.isKnownBlock(air));
-        assertEquals(
-                BlockChangeDecision.CANCEL,
-                events.beforeChange(
-                        new BeforeBlockChangedEvent(request, stone)));
-        assertEquals(1, events.events().size());
-    }
-
-    @Test
-    void raycastStubSupportsHitsAndMisses() {
-        BlockHitResult hit =
-                new BlockHitResult(
-                        1,
-                        2,
-                        3,
-                        2,
-                        2,
-                        3,
-                        ResourceLocation.parse("gaia:stone"),
-                        1,
-                        0,
-                        0,
-                        2.0f,
-                        2.5f,
-                        3.5f,
-                        1.0f);
-        StubBlockRaycastService hitService =
-                new StubBlockRaycastService(Optional.of(hit));
-        StubBlockRaycastService missService =
-                new StubBlockRaycastService(Optional.empty());
-
-        assertEquals(
-                Optional.of(hit),
-                hitService.raycast(
-                        new Vector3f(),
-                        new Vector3f(1, 0, 0),
-                        5));
-        assertEquals(
-                Optional.empty(),
-                missService.raycast(
-                        new Vector3f(),
-                        new Vector3f(1, 0, 0),
-                        5));
-        assertEquals(1, hitService.calls());
-        assertEquals(1, missService.calls());
-    }
-
-    @Test
-    void inventoryStubRecordsMutationWithoutImplementingRules() {
-        EntityRef owner = new EntityRef(8);
-        TestItemStackView stack =
-                new TestItemStackView(
-                        ResourceLocation.parse("gaia:stone"), 2);
-        TestInventoryView view =
-                new TestInventoryView(
-                        owner,
-                        4,
-                        Map.of(BodySlot.LEFT_HAND, stack));
-        InventoryChangeResult configured =
-                new InventoryChangeResult(
-                        InventoryChangeResult.Status.APPLIED, view);
-        StubInventoryService service =
-                new StubInventoryService(view, configured);
-        InventoryChangeRequest request =
-                new InventoryChangeRequest(
-                        owner,
-                        BodySlot.MOUTH,
-                        4,
-                        Optional.of(stack));
-        StubBodyInventoryViewModel model =
-                new StubBodyInventoryViewModel(
-                        owner, BodySlot.LEFT_HAND, view);
-
-        assertEquals(view, service.snapshot(owner));
-        assertEquals(configured, service.replaceSlot(request));
-        assertEquals(request, service.lastRequest());
-        assertEquals(view, model.inventory());
-    }
-}
-```
-
-- [ ] **Step 6: Run engine fixture and game consumption tests**
+- [ ] **Step 5: Compile all fixtures and run the game consumption test**
 
 Run:
 
 ```powershell
-.\gradlew.bat :engine:test --tests com.overlord.interaction.testing.SharedFixtureTest
+.\gradlew.bat :engine:testFixturesClasses
 .\gradlew.bat :game:test --tests com.gaia.contracts.EngineContractFixtureSmokeTest
 ```
 
 Expected: both commands report `BUILD SUCCESSFUL`.
 
-- [ ] **Step 7: Commit shared test support**
+- [ ] **Step 6: Commit shared test support**
 
 ```powershell
-git add engine/src/testFixtures engine/src/test/java/com/overlord/interaction/testing game/build.gradle game/src/test/java/com/gaia/contracts
+git add engine/src/testFixtures game/build.gradle game/src/test/java/com/gaia/contracts
 git commit -m "test(api): share interaction contract fixtures"
 ```
 
