@@ -222,6 +222,20 @@ class CollisionWorldSweepTest {
     }
 
     @Test
+    void zeroDurationEdgeContactIsNotASweepHit() {
+        Aabb moving =
+                new Aabb(0, 0.5f, 0, 1, 1.5f, 1);
+
+        assertFalse(
+                fullCubeWorld(worldWithBlock(2, 1, 0))
+                        .sweep(
+                                moving,
+                                new Vector3f(),
+                                new Vector3f(2, -1, 0))
+                        .isPresent());
+    }
+
+    @Test
     void tiedEntryAxesPreferYThenXThenZ() {
         Aabb halfCube =
                 new Aabb(-0.25f, 0, -0.25f, 0.25f, 0.5f, 0.25f);

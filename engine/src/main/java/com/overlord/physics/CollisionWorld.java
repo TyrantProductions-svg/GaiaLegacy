@@ -142,7 +142,7 @@ public final class CollisionWorld {
 
         float entry = Math.max(x.entry(), Math.max(y.entry(), z.entry()));
         float exit = Math.min(x.exit(), Math.min(y.exit(), z.exit()));
-        if (entry > exit || entry < 0 || entry > 1 || exit < 0) {
+        if (entry >= exit || entry < 0 || entry > 1 || exit < 0) {
             return null;
         }
 
