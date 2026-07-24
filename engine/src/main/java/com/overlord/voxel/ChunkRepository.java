@@ -105,27 +105,32 @@ public final class ChunkRepository {
         }
 
         ChunkKey key = ChunkKey.fromWorld(worldX, worldZ);
-        Entry entry = entries.get(key);
-        if (entry == null) {
-            if (blockId == 0) {
-                return false;
-            }
-            entry =
-                    entries.computeIfAbsent(
-                            key, ignored -> new Entry(worldHeight));
-        }
-
         int localX = ChunkKey.localCoordinate(worldX);
         int localZ = ChunkKey.localCoordinate(worldZ);
-        synchronized (entry) {
-            if (entry.chunk.getBlock(localX, y, localZ) == blockId) {
-                return false;
+        while (true) {
+            Entry entry = entries.get(key);
+            if (entry == null) {
+                if (blockId == 0) {
+                    return false;
+                }
+                entry =
+                        entries.computeIfAbsent(
+                                key, ignored -> new Entry(worldHeight));
             }
-            entry.chunk.setBlock(localX, y, localZ, blockId);
-            entry.revision++;
-            entry.failure = null;
-            entry.state = ChunkState.DIRTY;
-            return true;
+
+            synchronized (entry) {
+                if (entries.get(key) != entry) {
+                    continue;
+                }
+                if (entry.chunk.getBlock(localX, y, localZ) == blockId) {
+                    return false;
+                }
+                entry.chunk.setBlock(localX, y, localZ, blockId);
+                entry.revision++;
+                entry.failure = null;
+                entry.state = ChunkState.DIRTY;
+                return true;
+            }
         }
     }
 

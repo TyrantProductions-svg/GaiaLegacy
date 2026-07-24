@@ -7,6 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class ChunkRepositoryTest {
@@ -111,6 +118,85 @@ class ChunkRepositoryTest {
         assertEquals(ChunkState.EMPTY, repository.state(key));
         assertEquals(0L, repository.revision(key));
         assertTrue(repository.snapshot(key).isEmpty());
+    }
+
+    @Test
+    void mutationRetriesWhenGenerationFailureRemovesCapturedEntry()
+            throws Exception {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey key = new ChunkKey(0, 0);
+        CountDownLatch generationStarted = new CountDownLatch(1);
+        CountDownLatch failGeneration = new CountDownLatch(1);
+        CountDownLatch mutationStarted = new CountDownLatch(1);
+        AtomicReference<Thread> mutationThread = new AtomicReference<>();
+        IllegalStateException generationFailure =
+                new IllegalStateException("generation failed");
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        try {
+            Future<?> generation =
+                    executor.submit(
+                            () ->
+                                    repository.generate(
+                                            key,
+                                            chunk -> {
+                                                generationStarted.countDown();
+                                                try {
+                                                    if (!failGeneration.await(
+                                                            5,
+                                                            TimeUnit.SECONDS)) {
+                                                        throw new AssertionError(
+                                                                "generation release timed out");
+                                                    }
+                                                } catch (InterruptedException failure) {
+                                                    Thread.currentThread().interrupt();
+                                                    throw new AssertionError(failure);
+                                                }
+                                                throw generationFailure;
+                                            }));
+            assertTrue(
+                    generationStarted.await(5, TimeUnit.SECONDS),
+                    "generation did not acquire the entry monitor");
+
+            Future<Boolean> mutation =
+                    executor.submit(
+                            () -> {
+                                mutationThread.set(Thread.currentThread());
+                                mutationStarted.countDown();
+                                return repository.setBlock(
+                                        1, 2, 3, (byte) 7);
+                            });
+            assertTrue(
+                    mutationStarted.await(5, TimeUnit.SECONDS),
+                    "mutation task did not start");
+
+            long blockedDeadline =
+                    System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (mutationThread.get().getState() != Thread.State.BLOCKED
+                    && System.nanoTime() < blockedDeadline) {
+                Thread.onSpinWait();
+            }
+            assertEquals(
+                    Thread.State.BLOCKED,
+                    mutationThread.get().getState(),
+                    "mutation did not block on the generation entry monitor");
+
+            failGeneration.countDown();
+
+            ExecutionException actualFailure =
+                    assertThrows(
+                            ExecutionException.class,
+                            () -> generation.get(5, TimeUnit.SECONDS));
+            assertSame(generationFailure, actualFailure.getCause());
+            assertTrue(mutation.get(5, TimeUnit.SECONDS));
+            assertEquals(ChunkState.DIRTY, repository.state(key));
+            assertEquals(1L, repository.revision(key));
+            assertEquals(7, Byte.toUnsignedInt(repository.getBlock(1, 2, 3)));
+        } finally {
+            failGeneration.countDown();
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        }
     }
 
     @Test
