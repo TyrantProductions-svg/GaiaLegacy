@@ -304,8 +304,10 @@ public final class ChunkMeshManager implements AutoCloseable {
                             "render backend upload result");
         } catch (RuntimeException | Error failure) {
             if (closed) {
-                if (failure == closeFailure) {
-                    rethrow(failure);
+                if (closeFailure != null) {
+                    addSuppressedIfDistinct(
+                            closeFailure, failure);
+                    rethrow(closeFailure);
                 }
                 return;
             }
@@ -315,7 +317,19 @@ public final class ChunkMeshManager implements AutoCloseable {
         }
 
         if (closed) {
-            renderBackend.release(replacement);
+            try {
+                renderBackend.release(replacement);
+            } catch (RuntimeException | Error cleanupFailure) {
+                if (closeFailure == null) {
+                    rethrow(cleanupFailure);
+                } else {
+                    addSuppressedIfDistinct(
+                            closeFailure, cleanupFailure);
+                }
+            }
+            if (closeFailure != null) {
+                rethrow(closeFailure);
+            }
             return;
         }
 
@@ -365,11 +379,16 @@ public final class ChunkMeshManager implements AutoCloseable {
             if (firstFailure == null) {
                 return failure;
             }
-            if (failure != firstFailure) {
-                firstFailure.addSuppressed(failure);
-            }
+            addSuppressedIfDistinct(firstFailure, failure);
         }
         return firstFailure;
+    }
+
+    private static void addSuppressedIfDistinct(
+            Throwable primary, Throwable secondary) {
+        if (secondary != primary) {
+            primary.addSuppressed(secondary);
+        }
     }
 
     private static void rethrow(Throwable failure) {

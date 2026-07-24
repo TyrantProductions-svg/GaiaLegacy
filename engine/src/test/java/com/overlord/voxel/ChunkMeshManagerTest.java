@@ -814,6 +814,30 @@ class ChunkMeshManagerTest {
     }
 
     @Test
+    void replacementCleanupFailureAfterSuccessfulReentrantCloseIsSurfaced() {
+        UploadFixture fixture = readyFixture(1, 1);
+        IllegalStateException expected =
+                new IllegalStateException("replacement cleanup failed");
+        fixture.backend.beforeUpload = fixture.manager::close;
+        fixture.backend.releaseFailures.add(expected);
+
+        IllegalStateException actual =
+                assertThrows(
+                        IllegalStateException.class,
+                        fixture.manager::processMainThreadWork);
+
+        assertSame(expected, actual);
+        ChunkRenderObject returned = fixture.backend.uploaded.get(0);
+        assertEquals(List.of(returned), fixture.backend.released);
+        assertTrue(fixture.manager.renderObjects().isEmpty());
+        assertEquals(
+                ChunkState.READY_FOR_UPLOAD,
+                fixture.repository.state(KEY));
+        fixture.manager.close();
+        assertEquals(List.of(returned), fixture.backend.released);
+    }
+
+    @Test
     void closeReleaseFailureDuringUploadIsSurfacedAndLeavesNoReplacement() {
         UploadFixture fixture = uploadedFixture();
         ChunkRenderObject installed =
@@ -839,6 +863,62 @@ class ChunkMeshManagerTest {
         fixture.manager.close();
         assertEquals(List.of(installed), fixture.backend.released);
         assertEquals(0, fixture.manager.processMainThreadWork());
+    }
+
+    @Test
+    void wrappedCloseFailureDuringUploadPreservesRecordedCloseFailure() {
+        UploadFixture fixture = uploadedFixture();
+        ChunkRenderObject installed =
+                fixture.manager.renderObjects().iterator().next();
+        dirtyBuild(fixture, KEY);
+        IllegalStateException closeFailure =
+                new IllegalStateException("close release failed");
+        IllegalArgumentException wrapper =
+                new IllegalArgumentException(
+                        "backend wrapped close failure",
+                        closeFailure);
+        AtomicReference<Throwable> caughtByBackend =
+                new AtomicReference<>();
+        fixture.backend.beforeUpload =
+                () -> {
+                    try {
+                        fixture.manager.close();
+                    } catch (RuntimeException | Error failure) {
+                        caughtByBackend.set(failure);
+                        throw wrapper;
+                    }
+                };
+        fixture.backend.releaseFailures.add(closeFailure);
+
+        IllegalStateException actual =
+                assertThrows(
+                        IllegalStateException.class,
+                        fixture.manager::processMainThreadWork);
+
+        assertSame(closeFailure, caughtByBackend.get());
+        assertSame(closeFailure, actual);
+        assertEquals(List.of(wrapper), List.of(actual.getSuppressed()));
+        assertEquals(List.of(installed), fixture.backend.released);
+        assertEquals(1, fixture.backend.uploaded.size());
+        assertTrue(fixture.manager.renderObjects().isEmpty());
+        assertEquals(
+                ChunkState.READY_FOR_UPLOAD,
+                fixture.repository.state(KEY));
+        assertTrue(fixture.manager.pollFailure().isEmpty());
+        fixture.manager.close();
+        assertEquals(List.of(installed), fixture.backend.released);
+    }
+
+    @Test
+    void returnedReplacementAfterCloseFailureIsReleasedBeforePrimaryRethrow() {
+        assertReturnedReplacementPreservesCloseFailure(null);
+    }
+
+    @Test
+    void replacementReleaseFailureDoesNotMaskReentrantCloseFailure() {
+        assertReturnedReplacementPreservesCloseFailure(
+                new IllegalArgumentException(
+                        "replacement release failed"));
     }
 
     @Test
@@ -1075,6 +1155,60 @@ class ChunkMeshManagerTest {
         assertTrue(fixture.manager.renderObjects().isEmpty());
         fixture.manager.close();
         assertEquals(3, fixture.backend.released.size());
+    }
+
+    private static void assertReturnedReplacementPreservesCloseFailure(
+            Throwable cleanupFailure) {
+        UploadFixture fixture = uploadedFixture();
+        ChunkRenderObject installed =
+                fixture.manager.renderObjects().iterator().next();
+        dirtyBuild(fixture, KEY);
+        IllegalStateException closeFailure =
+                new IllegalStateException("close release failed");
+        AtomicReference<Throwable> caughtByBackend =
+                new AtomicReference<>();
+        fixture.backend.beforeUpload =
+                () -> {
+                    try {
+                        fixture.manager.close();
+                    } catch (RuntimeException | Error failure) {
+                        caughtByBackend.set(failure);
+                    }
+                };
+        fixture.backend.releaseFailures.add(closeFailure);
+        if (cleanupFailure != null) {
+            fixture.backend.releaseFailures.add(cleanupFailure);
+        }
+
+        IllegalStateException actual =
+                assertThrows(
+                        IllegalStateException.class,
+                        fixture.manager::processMainThreadWork);
+
+        assertSame(closeFailure, caughtByBackend.get());
+        assertSame(closeFailure, actual);
+        if (cleanupFailure == null) {
+            assertEquals(0, actual.getSuppressed().length);
+        } else {
+            assertEquals(
+                    List.of(cleanupFailure),
+                    List.of(actual.getSuppressed()));
+        }
+        ChunkRenderObject replacement = fixture.backend.uploaded.get(1);
+        assertEquals(
+                List.of(installed, replacement),
+                fixture.backend.released);
+        assertEquals(2, fixture.backend.uploaded.size());
+        assertTrue(fixture.manager.renderObjects().isEmpty());
+        assertEquals(
+                ChunkState.READY_FOR_UPLOAD,
+                fixture.repository.state(KEY));
+        assertTrue(fixture.manager.pollFailure().isEmpty());
+        fixture.manager.close();
+        assertEquals(
+                List.of(installed, replacement),
+                fixture.backend.released);
+        assertEquals(0, fixture.manager.processMainThreadWork());
     }
 
     private static void assertWorkerRejected(Runnable action)
