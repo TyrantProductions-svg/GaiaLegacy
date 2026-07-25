@@ -206,14 +206,24 @@ manufactured. If no valid candidate exists, initial loading fails explicitly.
 The debug rebuild lifecycle is programmatic only. `WorldLoader.rebuildRegion`
 is a package-private orchestration helper behind public
 `rebuildRegionAsync`. Both rebuild and initial `loadAsync` execute on one
-constructor-injected executor; `GameBootstrap` owns one dedicated
+constructor-injected `ExecutorService`; `GameBootstrap` owns one dedicated
 `Gaia-World-Loader` executor, injects it into `WorldLoader`, and shuts it down
-through the existing barrier. Rebuild sorts requested keys, starts repository
-`REBUILD` tickets, continues across independent keys, and returns per-key
-`COMMITTED`, `FAILED`, or `CONFLICT` outcomes. A successful replacement
-remains `DIRTY`; Phase 3 revision/dirty/stale authority rejects old CPU mesh
-or upload work and preserves the installed render object until a current
-replacement succeeds.
+through the existing barrier. Each public `CompletableFuture` retains the
+exact submitted `Future`; cancellation signals the generation operation and
+propagates `cancel(true)` to the owned task. The loader checks that signal
+before every initial publication and rebuild commit.
+
+`loadAsync` reserves the load lifecycle synchronously before submission.
+Duplicate calls reject before enqueue, a rejected submission rolls the
+reservation back to `IDLE`, queued cancellation becomes `CANCELLED` without
+running a Provider, and running cancellation retains exclusive ownership until
+the worker and live ticket are terminal. Rebuild snapshots, null-validates,
+and sorts its requested keys before crossing the asynchronous boundary.
+Rebuild then starts repository `REBUILD` tickets, continues across independent
+keys, and returns per-key `COMMITTED`, `FAILED`, or `CONFLICT` outcomes. A
+successful replacement remains `DIRTY`; Phase 3 revision/dirty/stale
+authority rejects old CPU mesh or upload work and preserves the installed
+render object until a current replacement succeeds.
 
 Phase 7 gameplay mutation exclusion remains authoritative: detached generation
 does not call `WorldMutationService`, publish `BeforeBlockChangedEvent` or
@@ -407,9 +417,11 @@ objects, and only then tears down Engine/OpenGL. Explicit per-key unload uses
 the same main-thread manager boundary. Phase 3 deliberately adds no automatic
 streaming or culling policy.
 
-The Game-owner review fixes at `349c81c` added an end-to-end default loader
-snapshot, asynchronous executor ownership/rejection checks, strict biome math,
-and Stage-cancellation propagation coverage. The locked aggregate remains
+The Game-owner review fixes at `349c81c` and async-contract follow-up at
+`9f18cf6` added an end-to-end default loader snapshot, strict biome math,
+Stage-cancellation propagation, cancellable submitted-task bridging,
+synchronous lifecycle reservation, active cancellation exclusivity, and
+immutable rebuild-request coverage. The locked aggregate remains
 `161f6c10773c8dfd84e6961183e8706d5a0ec00750e727e83c4a08afcfbd5ce8`.
 The Phase 4 work did not launch the interactive Windows game and had no native
 macOS environment; neither interactive behavior nor native macOS verification

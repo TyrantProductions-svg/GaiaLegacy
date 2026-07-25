@@ -31,7 +31,10 @@ completion order therefore do not affect the result.
 `WorldLoader` returns this exact canonical region identity through
 `WorldGenerationHasher.hashRegion`; it does not maintain a second loader-local
 hash format. Public initial load and debug rebuild calls enqueue onto the one
-injected world-generation executor owned by `GameBootstrap`. The synchronous
+injected world-generation `ExecutorService` owned by `GameBootstrap`. Each
+public future is bridged to the exact submitted task, so `cancel(true)` signals
+the generation loops and interrupts that task. Initial and rebuild paths check
+the signal before every publication/commit boundary. The synchronous
 orchestration helpers are not public API.
 
 ## Version 1 configuration

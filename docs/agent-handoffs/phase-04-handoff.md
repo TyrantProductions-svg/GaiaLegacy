@@ -6,7 +6,7 @@ Base: `origin/main` at
 `f1ca80beb47616025bea21615d7e3fccaa5b31c6`
 
 Reviewed implementation and architecture-guard HEAD:
-`349c81c627e9492fae5a60322228c0a81edd77cb`
+`9f18cf614de6e1bacbd3d72ab004e594842e7ec9`
 
 ## Completed work
 
@@ -52,6 +52,16 @@ Reviewed implementation and architecture-guard HEAD:
 - Made `StagedWorldGenerator` rethrow `CancellationException`, allowing the
   loader to enter `CANCELLED`, terminally fail the live ticket, publish no
   partial Chunk, and skip every later Stage.
+- Replaced plain async supply with a cancellable submitted-task bridge backed
+  by the injected `ExecutorService`. Public future cancellation signals the
+  generation loops, interrupts the exact task, terminally fails active tickets,
+  and prevents initial publication or post-cancel rebuild commit.
+- Reserved load lifecycle state synchronously before enqueue. Duplicate loads
+  reject immediately, rejected submission rolls back to `IDLE`, queued
+  cancellation completes as `CANCELLED` without running a Provider, and a
+  cancelled running load remains exclusive until its worker is terminal.
+- Snapshotted, null-validated, and sorted rebuild keys before the async
+  boundary so caller mutation cannot change an accepted request.
 - Preserved Phase 7 gameplay mutation exclusion: generation never uses
   `WorldMutationService`, block-change events, inventory, world items, or
   live-world block mutation.
@@ -151,9 +161,10 @@ manual checklist, and intentional-update rules are in
   Genuine repository conflicts remain conflicts and are not rewritten as
   failures.
 - Public initial load and debug rebuild are asynchronous and use the same
-  injected world-generation executor. Their synchronous orchestration is not
-  exposed outside the loader package, and `GameBootstrap` remains the
-  executor lifecycle owner.
+  injected world-generation `ExecutorService`. Their public futures cancel
+  the exact submitted task, their synchronous orchestration is not exposed
+  outside the loader package, and `GameBootstrap` remains the executor
+  lifecycle owner.
 - A committed rebuild is left `DIRTY`; the Phase 3 mesh lifecycle schedules a
   current revision and rejects all stale CPU/upload work.
 
@@ -271,8 +282,8 @@ tracked branch changes.
 
 ## Test commands and results
 
-The final Game-owner fix verification was run on Windows against implementation
-commit `349c81c627e9492fae5a60322228c0a81edd77cb`.
+The final Game-owner async-contract verification was run on Windows against
+implementation commit `9f18cf614de6e1bacbd3d72ab004e594842e7ec9`.
 
 Game-owner fix integration:
 
@@ -280,9 +291,11 @@ Game-owner fix integration:
 .\gradlew.bat :game:test --rerun-tasks --console=plain --no-daemon
 ```
 
-- Passed: 27 suites, 220 tests, 0 failures, 0 errors, 0 skipped.
+- Passed: 27 suites, 226 tests, 0 failures, 0 errors, 0 skipped.
 - Includes the canonical 81-Chunk default loader, async load/rebuild executor,
-  exact exceptional/rejection behavior, `StrictMath.exp`, unchanged locked
+  running and queued cancellation, duplicate lifecycle reservation,
+  submission rollback, immutable rebuild requests, exact
+  exceptional/rejection behavior, `StrictMath.exp`, unchanged locked
   snapshots, and Stage-cancellation propagation.
 
 Focused determinism, boundary, and architecture:
@@ -317,8 +330,8 @@ Full Windows automated verification:
 
 - Passed: `BUILD SUCCESSFUL`; all 18 Gradle tasks passed.
 - Engine JUnit XML: 50 suites, 526 tests, 0 failures, 0 errors, 0 skipped.
-- Game JUnit XML: 27 suites, 220 tests, 0 failures, 0 errors, 0 skipped.
-- Total: 77 suites, 746 tests, 0 failures, 0 errors, 0 skipped.
+- Game JUnit XML: 27 suites, 226 tests, 0 failures, 0 errors, 0 skipped.
+- Total: 77 suites, 752 tests, 0 failures, 0 errors, 0 skipped.
 - The clean build included packaged-resource verification.
 
 Standalone packaged-resource verification:
@@ -368,6 +381,13 @@ material findings:
   `349c81c` resolved all four through separate RED/GREEN regressions. The
   resulting default aggregate is still
   `161f6c10773c8dfd84e6961183e8706d5a0ec00750e727e83c4a08afcfbd5ce8`.
+- Follow-up Game-owner review found two remaining Important async-contract
+  issues: public future cancellation did not interrupt the submitted task, and
+  load lifecycle/key ownership crossed the enqueue boundary unsafely.
+  `9f18cf6` resolved both through separate RED/GREEN cycles. Mandatory
+  read-only race review then found and fixed one related exclusivity gap:
+  running cancellation now retains the reservation until the old worker and
+  ticket are terminal.
 
 Final branch-wide Engine-owner and Game/shared-owner review verdict:
 **PENDING ROOT ORCHESTRATION**. No final phase approval is claimed here.
@@ -419,8 +439,12 @@ Final branch-wide Engine-owner and Game/shared-owner review verdict:
 - Preserve the debug rebuild lifecycle and exact per-key
   `COMMITTED`/`FAILED`/`CONFLICT` meaning.
 - Preserve the injected single-executor `loadAsync`/`rebuildRegionAsync`
-  boundary. Do not restore public caller-thread generation, nested submission,
-  or per-call world-generation pools.
+  boundary and its exact submitted-task cancellation bridge. Do not restore
+  public caller-thread generation, plain `supplyAsync`, nested submission, or
+  per-call world-generation pools.
+- Preserve synchronous load reservation/rejection/rollback and snapshot
+  rebuild keys before enqueue. Running cancellation must retain exclusive load
+  ownership until terminal cleanup.
 - Preserve `CancellationException` as cancellation across Stage, loader,
   future, ticket, and no-publication boundaries.
 - Preserve Phase 7 gameplay mutation exclusion. Generation must not emit
@@ -442,7 +466,7 @@ Final `git diff --stat origin/main` including the Game-owner fixes and updated
 handoff:
 
 ```text
-73 files changed, 11580 insertions(+), 264 deletions(-)
+73 files changed, 12156 insertions(+), 266 deletions(-)
 ```
 
 Suggested overall commit message:
@@ -482,7 +506,7 @@ Suggested pull request description:
 
 - focused determinism/boundary/architecture suite: 17/17
 - locked snapshot suite: 2/2 in repeated separate Gradle processes
-- Windows clean test/build at Game-owner fix HEAD: 746/746, zero
+- Windows clean test/build at async-contract fix HEAD: 752/752, zero
   failure/error/skip
 - standalone packaged-resource verification passed
 - final branch-wide owner re-review remains pending root orchestration
