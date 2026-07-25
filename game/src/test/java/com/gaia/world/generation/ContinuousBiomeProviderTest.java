@@ -1,16 +1,35 @@
 package com.gaia.world.generation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.voxel.ChunkKey;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.EnumSet;
 import org.junit.jupiter.api.Test;
 
 class ContinuousBiomeProviderTest {
     private final ContinuousBiomeProvider provider =
             new ContinuousBiomeProvider();
+
+    @Test
+    void normalizationUsesPlatformStableStrictExponential()
+            throws IOException {
+        String source =
+                Files.readString(
+                        Path.of(
+                                "src/main/java/com/gaia/world/generation/"
+                                        + "ContinuousBiomeProvider.java"));
+
+        assertTrue(source.contains("StrictMath.exp("));
+        assertFalse(
+                source.matches(
+                        "(?s).*(?<!Strict)Math\\.exp\\(.*"));
+    }
 
     @Test
     void biomeWeightsAreNormalizedAtChunkBoundary() {

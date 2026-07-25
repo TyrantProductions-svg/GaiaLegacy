@@ -138,13 +138,6 @@ public final class GameBootstrap {
                                             2),
                             ChunkMeshManager::close);
 
-            WorldLoader worldLoader =
-                    new WorldLoader(
-                            generator,
-                            blocks,
-                            worldGenerationConfig,
-                            new SafeSpawnSelector());
-
             ExecutorService worldExecutor =
                     Executors.newSingleThreadExecutor(
                             runnable -> {
@@ -156,10 +149,16 @@ public final class GameBootstrap {
             shutdownBarrier.registerWorldExecutor(
                     shutdownCoordinator, worldExecutor);
 
-            CompletableFuture<WorldLoadResult> worldLoad =
-                    CompletableFuture.supplyAsync(
-                            () -> worldLoader.load(engine.getWorld()),
+            WorldLoader worldLoader =
+                    new WorldLoader(
+                            generator,
+                            blocks,
+                            worldGenerationConfig,
+                            new SafeSpawnSelector(),
                             worldExecutor);
+
+            CompletableFuture<WorldLoadResult> worldLoad =
+                    worldLoader.loadAsync(engine.getWorld());
             shutdownCoordinator.register(
                     "world-load", () -> worldLoad.cancel(true));
 

@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
 
 public final class StagedWorldGenerator
         implements WorldGenerator {
@@ -86,6 +87,8 @@ public final class StagedWorldGenerator
                                 + result.stageId());
             }
             return result;
+        } catch (CancellationException cancellation) {
+            throw cancellation;
         } catch (Throwable failure) {
             return new GenerationStageResult(
                     stage.id(),

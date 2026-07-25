@@ -122,7 +122,8 @@ class GameBootstrapStructureTest {
         assertTrue(source.contains("new ChunkMeshBuilder("));
         assertTrue(
                 source.contains(
-                        "() -> worldLoader.load(engine.getWorld())"));
+                        "worldLoader.loadAsync(engine.getWorld())"));
+        assertFalse(source.contains("CompletableFuture.supplyAsync("));
         assertFalse(
                 source.contains(
                         "BlockRegistry." + "init()"));

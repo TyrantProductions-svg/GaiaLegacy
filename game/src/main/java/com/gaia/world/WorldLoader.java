@@ -6,6 +6,7 @@ import com.gaia.world.generation.GenerationBlockPalette;
 import com.gaia.world.generation.GenerationContext;
 import com.gaia.world.generation.GenerationStageResult;
 import com.gaia.world.generation.WorldGenerationConfig;
+import com.gaia.world.generation.WorldGenerationHasher;
 import com.gaia.world.generation.WorldGenerationResult;
 import com.gaia.world.generation.WorldGenerator;
 import com.overlord.assets.ResourceLocation;
@@ -17,7 +18,6 @@ import com.overlord.voxel.ChunkGenerationTicket;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkRepository;
 import com.overlord.voxel.World;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -31,6 +31,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import org.joml.Vector3f;
 
 public final class WorldLoader {
@@ -45,6 +47,7 @@ public final class WorldLoader {
     private final BlockRegistry blocks;
     private final WorldGenerationConfig config;
     private final SafeSpawnSelector spawnSelector;
+    private final Executor executor;
     private volatile WorldLoadState state = WorldLoadState.IDLE;
     private volatile WorldLoadFailure failure;
 
@@ -52,16 +55,23 @@ public final class WorldLoader {
             WorldGenerator generator,
             BlockRegistry blocks,
             WorldGenerationConfig config,
-            SafeSpawnSelector spawnSelector) {
+            SafeSpawnSelector spawnSelector,
+            Executor executor) {
         this.generator = Objects.requireNonNull(generator, "generator");
         this.blocks = Objects.requireNonNull(blocks, "blocks");
         this.config = Objects.requireNonNull(config, "config");
         this.spawnSelector =
                 Objects.requireNonNull(spawnSelector, "spawnSelector");
+        this.executor = Objects.requireNonNull(executor, "executor");
         validateInclusiveArea(config.chunkRadius());
     }
 
-    public WorldLoadResult load(World world) {
+    public CompletableFuture<WorldLoadResult> loadAsync(World world) {
+        Objects.requireNonNull(world, "world");
+        return CompletableFuture.supplyAsync(() -> load(world), executor);
+    }
+
+    WorldLoadResult load(World world) {
         Objects.requireNonNull(world, "world");
         beginLoad();
         LinkedHashSet<ChunkKey> completed = new LinkedHashSet<>();
@@ -93,10 +103,7 @@ public final class WorldLoader {
             checkCancelled();
             String configFingerprint = configFingerprint(config);
             String generationHash =
-                    generationHash(
-                            config,
-                            configFingerprint,
-                            generatedData);
+                    WorldGenerationHasher.hashRegion(config, generatedData);
             checkCancelled();
             markSucceeded();
             return new WorldLoadResult(
@@ -123,7 +130,19 @@ public final class WorldLoader {
         }
     }
 
-    public WorldRebuildResult rebuildRegion(
+    public CompletableFuture<WorldRebuildResult> rebuildRegionAsync(
+            World world,
+            Set<ChunkKey> keys,
+            WorldGenerationConfig config) {
+        Objects.requireNonNull(world, "world");
+        Objects.requireNonNull(keys, "keys");
+        Objects.requireNonNull(config, "config");
+        return CompletableFuture.supplyAsync(
+                () -> rebuildRegion(world, keys, config),
+                executor);
+    }
+
+    WorldRebuildResult rebuildRegion(
             World world,
             Set<ChunkKey> keys,
             WorldGenerationConfig config) {
@@ -437,30 +456,6 @@ public final class WorldLoader {
                 config.canonicalFingerprintInput()
                         .getBytes(StandardCharsets.UTF_8));
         return hex(digest.digest());
-    }
-
-    private static String generationHash(
-            WorldGenerationConfig config,
-            String configFingerprint,
-            List<ChunkGenerationData> generatedData) {
-        MessageDigest digest = sha256();
-        updateInt(digest, config.algorithmVersion());
-        digest.update(
-                configFingerprint.getBytes(StandardCharsets.UTF_8));
-        for (ChunkGenerationData data : generatedData) {
-            updateInt(digest, data.key().x());
-            updateInt(digest, data.key().z());
-            digest.update(data.copyBlocks());
-        }
-        return hex(digest.digest());
-    }
-
-    private static void updateInt(
-            MessageDigest digest, int value) {
-        digest.update(
-                ByteBuffer.allocate(Integer.BYTES)
-                        .putInt(value)
-                        .array());
     }
 
     private static MessageDigest sha256() {

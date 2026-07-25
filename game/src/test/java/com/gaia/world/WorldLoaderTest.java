@@ -12,9 +12,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.gaia.assets.GaiaAssetCatalog;
 import com.gaia.assets.GaiaResourceLoader;
 import com.gaia.blocks.BlockRegistry;
+import com.gaia.world.generation.GenerationContext;
+import com.gaia.world.generation.GenerationRegion;
 import com.gaia.world.generation.GenerationStageResult;
+import com.gaia.world.generation.StagedWorldGenerator;
 import com.gaia.world.generation.WorldGenerationConfig;
 import com.gaia.world.generation.WorldGenerationResult;
+import com.gaia.world.generation.WorldGenerationStage;
 import com.gaia.world.generation.WorldGenerator;
 import com.overlord.assets.AssetManager;
 import com.overlord.assets.ResourceLocation;
@@ -41,10 +45,14 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
@@ -54,6 +62,38 @@ class WorldLoaderTest {
     private static final BlockRegistry BLOCKS = CATALOG.blockRegistry();
     private static final byte STONE =
             BLOCKS.requireStoredId(ResourceLocation.parse("gaia:stone"));
+
+    @Test
+    void defaultPipelineLoadPublishesCanonicalWorldAndSafeSpawn() {
+        WorldGenerationConfig config = WorldGenerationConfig.defaults();
+        WorldLoader loader =
+                loader(GaiaWorldGenerator.createDefault(), config);
+        World world = new World();
+
+        WorldLoadResult result = loader.load(world);
+
+        assertEquals(81, result.initialChunks().size());
+        assertEquals(
+                "161f6c10773c8dfd84e6961183e8706d5a0ec00750e727e83c4a08afcfbd5ce8",
+                result.generationHash());
+        assertTrue(
+                result.initialChunks().stream()
+                        .allMatch(
+                                key ->
+                                        world.chunks().contains(key)
+                                                && world.chunks()
+                                                        .snapshot(key)
+                                                        .isPresent()));
+
+        Vector3f spawn = result.playerFeetPosition();
+        int x = (int) StrictMath.floor(spawn.x);
+        int y = (int) StrictMath.floor(spawn.y);
+        int z = (int) StrictMath.floor(spawn.z);
+        assertNotEquals(0, world.getBlock(x, y - 1, z));
+        assertEquals(0, world.getBlock(x, y, z));
+        assertEquals(0, world.getBlock(x, y + 1, z));
+        assertEquals(WorldLoadState.SUCCEEDED, loader.state());
+    }
 
     @Test
     void defaultLoadCommitsInclusiveRadiusFourInDeterministicOrder() {
@@ -116,27 +156,98 @@ class WorldLoaderTest {
     }
 
     @Test
-    void loadRunsOnCallingWorkerAndPublishesOnlyTransactions()
+    void asyncLoadAndRebuildUseTheSameInjectedWorkerOffCaller()
             throws Exception {
         Thread testThread = Thread.currentThread();
-        AtomicReference<Thread> generatorThread = new AtomicReference<>();
+        List<Thread> generatorThreads = new ArrayList<>();
+        ChunkKey key = new ChunkKey(0, 0);
+        ExecutorService worker =
+                Executors.newSingleThreadExecutor(
+                        runnable ->
+                                new Thread(
+                                        runnable,
+                                        "test-world-generation"));
+        WorldLoader loader =
+                loader(
+                        (context, generatedKey) -> {
+                            generatorThreads.add(Thread.currentThread());
+                            return succeededGeneration(
+                                    flatData(generatedKey, STONE));
+                        },
+                        withRadius(WorldGenerationConfig.defaults(), 0),
+                        worker);
+        World world = new World();
+        try {
+            loader.loadAsync(world).get();
+            loader.rebuildRegionAsync(
+                            world,
+                            Set.of(key),
+                            WorldGenerationConfig.defaults())
+                    .get();
+        } finally {
+            worker.shutdownNow();
+            assertTrue(
+                    worker.awaitTermination(5, TimeUnit.SECONDS));
+        }
+
+        assertEquals(2, generatorThreads.size());
+        assertTrue(
+                generatorThreads.stream()
+                        .allMatch(
+                                thread ->
+                                        thread != testThread
+                                                && thread.getName()
+                                                        .equals(
+                                                                "test-world-generation")));
+    }
+
+    @Test
+    void asyncLoadPreservesFailureCauseAndTerminalState() {
+        AssertionError cause = new AssertionError("async generator exploded");
+        ExecutorService worker = Executors.newSingleThreadExecutor();
         WorldLoader loader =
                 loader(
                         (context, key) -> {
-                            generatorThread.set(Thread.currentThread());
-                            return succeededGeneration(flatData(key, STONE));
+                            throw cause;
                         },
-                        withRadius(WorldGenerationConfig.defaults(), 0));
-        ExecutorService worker = Executors.newSingleThreadExecutor();
+                        withRadius(WorldGenerationConfig.defaults(), 0),
+                        worker);
         try {
-            Future<WorldLoadResult> future =
-                    worker.submit(() -> loader.load(new World()));
-            future.get();
+            CompletionException thrown =
+                    assertThrows(
+                            CompletionException.class,
+                            () -> loader.loadAsync(new World()).join());
+
+            WorldLoadException loadFailure =
+                    assertInstanceOf(
+                            WorldLoadException.class, thrown.getCause());
+            assertSame(cause, loadFailure.failure().cause());
+            assertSame(cause, loadFailure.getCause());
+            assertEquals(WorldLoadState.FAILED, loader.state());
         } finally {
             worker.shutdownNow();
         }
+    }
 
-        assertNotEquals(testThread, generatorThread.get());
+    @Test
+    void shutDownGenerationExecutorRejectsWithoutRunningProvider() {
+        AtomicInteger calls = new AtomicInteger();
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        WorldLoader loader =
+                loader(
+                        (context, key) -> {
+                            calls.incrementAndGet();
+                            return succeededGeneration(flatData(key, STONE));
+                        },
+                        withRadius(WorldGenerationConfig.defaults(), 0),
+                        worker);
+        worker.shutdownNow();
+
+        assertThrows(
+                RejectedExecutionException.class,
+                () -> loader.loadAsync(new World()));
+        assertEquals(0, calls.get());
+        assertEquals(WorldLoadState.IDLE, loader.state());
     }
 
     @Test
@@ -351,6 +462,50 @@ class WorldLoaderTest {
                 WorldLoadState.CANCELLED,
                 observedLoader.get().state());
         assertEquals(Optional.empty(), observedLoader.get().failure());
+    }
+
+    @Test
+    void cancellationThrownByStageCancelsLoadWithoutPublishingOrContinuing() {
+        ChunkKey key = new ChunkKey(0, 0);
+        CancellationException cancellation =
+                new CancellationException("stage cancelled");
+        AtomicInteger laterStageCalls = new AtomicInteger();
+        WorldGenerationStage cancellingStage =
+                stage(
+                        "gaia:cancelling_stage",
+                        (context, region) -> {
+                            throw cancellation;
+                        });
+        WorldGenerationStage laterStage =
+                stage(
+                        "gaia:later_stage",
+                        (context, region) -> {
+                            laterStageCalls.incrementAndGet();
+                            return succeededStage("gaia:later_stage");
+                        });
+        WorldLoader loader =
+                loader(
+                        new StagedWorldGenerator(
+                                List.of(cancellingStage, laterStage)),
+                        withRadius(WorldGenerationConfig.defaults(), 0));
+        World world = new World();
+
+        CancellationException thrown =
+                assertThrows(
+                        CancellationException.class,
+                        () -> loader.load(world));
+
+        assertSame(cancellation, thrown);
+        assertEquals(WorldLoadState.CANCELLED, loader.state());
+        assertEquals(Optional.empty(), loader.failure());
+        assertFalse(world.chunks().contains(key));
+        assertEquals(
+                ChunkGenerationStatus.FAILED,
+                world.chunks().generationStatus(key));
+        assertSame(
+                cancellation,
+                world.chunks().generationFailure(key).orElseThrow());
+        assertEquals(0, laterStageCalls.get());
     }
 
     @Test
@@ -573,8 +728,19 @@ class WorldLoaderTest {
 
     private static WorldLoader loader(
             WorldGenerator generator, WorldGenerationConfig config) {
+        return loader(generator, config, Runnable::run);
+    }
+
+    private static WorldLoader loader(
+            WorldGenerator generator,
+            WorldGenerationConfig config,
+            java.util.concurrent.Executor executor) {
         return new WorldLoader(
-                generator, BLOCKS, config, new SafeSpawnSelector());
+                generator,
+                BLOCKS,
+                config,
+                new SafeSpawnSelector(),
+                executor);
     }
 
     private static WorldGenerator flatGenerator(byte support) {
@@ -602,6 +768,33 @@ class WorldLoaderTest {
                                 0,
                                 0,
                                 Optional.of(failure))));
+    }
+
+    private static WorldGenerationStage stage(
+            String id, StageBody body) {
+        ResourceLocation stageId = ResourceLocation.parse(id);
+        return new WorldGenerationStage() {
+            @Override
+            public ResourceLocation id() {
+                return stageId;
+            }
+
+            @Override
+            public GenerationStageResult generate(
+                    GenerationContext context,
+                    GenerationRegion region) {
+                return body.generate(context, region);
+            }
+        };
+    }
+
+    private static GenerationStageResult succeededStage(String id) {
+        return new GenerationStageResult(
+                ResourceLocation.parse(id),
+                GenerationStageResult.Status.SUCCEEDED,
+                0,
+                0,
+                Optional.empty());
     }
 
     private static ChunkGenerationData flatData(
@@ -660,6 +853,12 @@ class WorldLoaderTest {
                 config.surface(),
                 config.decoration(),
                 config.spawn());
+    }
+
+    @FunctionalInterface
+    private interface StageBody {
+        GenerationStageResult generate(
+                GenerationContext context, GenerationRegion region);
     }
 
     private static GaiaAssetCatalog productionCatalog() {

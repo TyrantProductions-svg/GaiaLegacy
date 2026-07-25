@@ -74,9 +74,9 @@ public final class ContinuousBiomeProvider implements BiomeProvider {
             double highlandsLogit) {
         double maximum = Math.max(
                 plainsLogit, Math.max(hillsLogit, highlandsLogit));
-        double plains = Math.exp(plainsLogit - maximum);
-        double hills = Math.exp(hillsLogit - maximum);
-        double highlands = Math.exp(highlandsLogit - maximum);
+        double plains = StrictMath.exp(plainsLogit - maximum);
+        double hills = StrictMath.exp(hillsLogit - maximum);
+        double highlands = StrictMath.exp(highlandsLogit - maximum);
         double total = plains + hills + highlands;
         return new BiomeSample(
                 plains / total, hills / total, highlands / total);
