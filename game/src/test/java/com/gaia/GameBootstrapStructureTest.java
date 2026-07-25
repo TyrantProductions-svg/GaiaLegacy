@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 class GameBootstrapStructureTest {
@@ -219,8 +221,77 @@ class GameBootstrapStructureTest {
                 buildScript.contains(
                         "assets/overlord/shaders/world.frag"));
         assertTrue(
-                buildScript.contains("dependsOn tasks.named("
-                        + "'verifyInstalledShaderResources')"));
-        assertTrue(buildScript.contains("tasks.named('check')"));
+                taskBlockDependsOn(
+                        buildScript,
+                        "check",
+                        "verifyInstalledShaderResources"));
+    }
+
+    @Test
+    void installedShaderDependencyMustAppearInsideCheckBlock() {
+        String script =
+                "tasks.named('check') { dependsOn tasks.named('other') }\n"
+                        + "dependsOn tasks.named('verifyInstalledShaderResources')";
+
+        assertFalse(
+                taskBlockDependsOn(
+                        script,
+                        "check",
+                        "verifyInstalledShaderResources"));
+    }
+
+    @Test
+    void installedShaderDependencyMayAppearInALaterCheckBlock() {
+        String script =
+                "tasks.named('check') { dependsOn tasks.named('other') }\n"
+                        + "tasks.named('check') { "
+                        + "dependsOn tasks.named('verifyInstalledShaderResources') }";
+
+        assertTrue(
+                taskBlockDependsOn(
+                        script,
+                        "check",
+                        "verifyInstalledShaderResources"));
+    }
+
+    private static boolean taskBlockDependsOn(
+            String script, String taskName, String dependencyName) {
+        Matcher taskBlock =
+                Pattern.compile(
+                                "tasks\\.named\\(\\s*['\"]"
+                                        + Pattern.quote(taskName)
+                                        + "['\"]\\s*\\)\\s*\\{")
+                        .matcher(script);
+        Pattern dependency =
+                Pattern.compile(
+                        "dependsOn\\s+tasks\\.named\\(\\s*['\"]"
+                                + Pattern.quote(dependencyName)
+                                + "['\"]\\s*\\)");
+        while (taskBlock.find()) {
+            int openingBrace = script.indexOf('{', taskBlock.start());
+            String body =
+                    script.substring(
+                            openingBrace + 1,
+                            matchingDelimiter(script, openingBrace, '{', '}'));
+            if (dependency.matcher(body).find()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static int matchingDelimiter(
+            String source, int openingIndex, char opening, char closing) {
+        int depth = 0;
+        for (int index = openingIndex; index < source.length(); index++) {
+            char current = source.charAt(index);
+            if (current == opening) {
+                depth++;
+            } else if (current == closing && --depth == 0) {
+                return index;
+            }
+        }
+        throw new AssertionError(
+                "Unclosed delimiter starting at " + openingIndex);
     }
 }
