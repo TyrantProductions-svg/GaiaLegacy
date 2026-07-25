@@ -16,7 +16,6 @@ public class GaiaWorldGenerator {
     private static final int OCTAVES = 4;
     private static final double PERSISTENCE = 0.5;
     private static final double SCALE = 0.02;
-    private static final int GRID_SCALE = 8;
     
     private static final PerlinNoise perlinNoise = new PerlinNoise(SEED);
 
@@ -43,24 +42,28 @@ public class GaiaWorldGenerator {
         Objects.requireNonNull(world, "world")
                 .generate(
                         Objects.requireNonNull(key, "key"),
-                        chunk -> generateTerrain(chunk, key.x(), key.z()));
+                        chunk -> generateTerrain(chunk, key));
     }
 
-    private void generateTerrain(Chunk chunk, int chunkX, int chunkZ) {
-        double[][] heightMap = computeHeightMap(chunkX, chunkZ);
+    private void generateTerrain(Chunk chunk, ChunkKey key) {
+        // Compute heightmap at world-space resolution
+        int chunkOriginX = key.worldOriginX();
+        int chunkOriginZ = key.worldOriginZ();
         
-        generateBaseLayer(chunk, heightMap, chunkX, chunkZ);
+        double[][] heightMap = computeHeightMap(chunkOriginX, chunkOriginZ);
         
-        generateDetailLayer(chunk, heightMap, chunkX, chunkZ);
+        generateBaseLayer(chunk, heightMap, chunkOriginX, chunkOriginZ);
+        
+        generateDetailLayer(chunk, heightMap, chunkOriginX, chunkOriginZ);
     }
 
-    private double[][] computeHeightMap(int chunkX, int chunkZ) {
+    private double[][] computeHeightMap(int chunkOriginX, int chunkOriginZ) {
         double[][] heights = new double[GameConfig.Chunk.SIZE][GameConfig.Chunk.SIZE];
         
         for (int x = 0; x < GameConfig.Chunk.SIZE; x++) {
             for (int z = 0; z < GameConfig.Chunk.SIZE; z++) {
-                int worldX = chunkX * GameConfig.Chunk.SIZE + x;
-                int worldZ = chunkZ * GameConfig.Chunk.SIZE + z;
+                int worldX = chunkOriginX + x;
+                int worldZ = chunkOriginZ + z;
                 
                 double noiseValue = perlinNoise.octaveNoise2D(
                         worldX * SCALE, 
@@ -77,7 +80,7 @@ public class GaiaWorldGenerator {
         return heights;
     }
 
-    private void generateBaseLayer(Chunk chunk, double[][] heightMap, int chunkX, int chunkZ) {
+    private void generateBaseLayer(Chunk chunk, double[][] heightMap, int chunkOriginX, int chunkOriginZ) {
         for (int x = 0; x < GameConfig.Chunk.SIZE; x++) {
             for (int z = 0; z < GameConfig.Chunk.SIZE; z++) {
                 double exactHeight = heightMap[x][z];
@@ -92,7 +95,7 @@ public class GaiaWorldGenerator {
         }
     }
 
-    private void generateDetailLayer(Chunk chunk, double[][] heightMap, int chunkX, int chunkZ) {
+    private void generateDetailLayer(Chunk chunk, double[][] heightMap, int chunkOriginX, int chunkOriginZ) {
         for (int x = 0; x < GameConfig.Chunk.SIZE; x++) {
             for (int z = 0; z < GameConfig.Chunk.SIZE; z++) {
                 double exactHeight = heightMap[x][z];
@@ -103,15 +106,12 @@ public class GaiaWorldGenerator {
                     continue;
                 }
                 
-                int worldX = chunkX * GameConfig.Chunk.SIZE + x;
-                int worldZ = chunkZ * GameConfig.Chunk.SIZE + z;
-                
-                fillTransition(chunk, x, z, baseHeight, fractionalPart, worldX, worldZ);
+                fillTransition(chunk, x, z, baseHeight, fractionalPart);
             }
         }
     }
 
-    private void fillTransition(Chunk chunk, int x, int z, int baseY, double fraction, int worldX, int worldZ) {
+    private void fillTransition(Chunk chunk, int x, int z, int baseY, double fraction) {
         byte surfaceBlock = chunk.getBlock(x, baseY - 1, z);
         if (surfaceBlock == airId) {
             surfaceBlock = grassId;
@@ -121,7 +121,6 @@ public class GaiaWorldGenerator {
         double[] thresholds = {0.5, 0.25, 0.125};
         
         for (int i = 0; i < sizes.length; i++) {
-            double sizeInUnits = sizes[i].units();
             double threshold = thresholds[i];
             
             if (fraction >= threshold) {
