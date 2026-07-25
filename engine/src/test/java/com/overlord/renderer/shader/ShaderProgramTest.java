@@ -2,6 +2,7 @@ package com.overlord.renderer.shader;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -71,6 +72,7 @@ class ShaderProgramTest {
     void rejectsMissingRequiredUniformAndDeletesProgram() {
         FakeShaderBackend backend = new FakeShaderBackend();
         backend.uniformLocation("projection", -1);
+        backend.uniformLocation("view", -1);
 
         ShaderProgramException failure =
                 assertThrows(
@@ -79,12 +81,16 @@ class ShaderProgramTest {
                                 new ShaderProgram(
                                         MainThreadGuard.captureCurrentThread(),
                                         sources(),
-                                        List.of("projection"),
+                                        List.of("projection", "view"),
                                         backend));
 
         assertTrue(failure.getMessage().contains("world"));
         assertTrue(failure.getMessage().contains("projection"));
+        assertFalse(failure.getMessage().contains("view"));
+        assertTrue(failure.getMessage().contains("overlord:shaders/world.vert"));
+        assertTrue(failure.getMessage().contains("overlord:shaders/world.frag"));
         assertEquals(1, backend.uniformLocationCalls("projection"));
+        assertEquals(0, backend.uniformLocationCalls("view"));
         assertEquals(List.of(101, 102), backend.deletedShaders());
         assertEquals(List.of(201), backend.deletedPrograms());
     }

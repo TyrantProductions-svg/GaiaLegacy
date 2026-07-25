@@ -63,7 +63,7 @@ public final class ShaderProgram implements ShaderBinding, AutoCloseable {
                                 + "): "
                                 + backend.programInfoLog(createdProgram));
             }
-            locations = resolveUniformLocations(createdProgram, uniforms, sources.label());
+            locations = resolveUniformLocations(createdProgram, uniforms, sources);
         } catch (RuntimeException | Error caught) {
             failure = caught;
         }
@@ -136,13 +136,21 @@ public final class ShaderProgram implements ShaderBinding, AutoCloseable {
     }
 
     private Map<String, Integer> resolveUniformLocations(
-            int createdProgram, List<String> uniforms, String label) {
+            int createdProgram, List<String> uniforms, ShaderSourceSet sources) {
         Map<String, Integer> locations = new LinkedHashMap<>();
         for (String uniform : uniforms) {
             int location = backend.uniformLocation(createdProgram, uniform);
             if (location < 0) {
                 throw new ShaderProgramException(
-                        "Required uniform '" + uniform + "' is missing from shader program '" + label + "'");
+                        "Required uniform '"
+                                + uniform
+                                + "' is missing from shader program '"
+                                + sources.label()
+                                + "' ("
+                                + sources.vertexResource()
+                                + ", "
+                                + sources.fragmentResource()
+                                + ")");
             }
             locations.put(uniform, location);
         }
