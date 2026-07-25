@@ -432,6 +432,281 @@ class WorldLoaderTest {
     }
 
     @Test
+    void cancellationWinningPreCommitGatePreventsInitialPublication()
+            throws Exception {
+        ChunkKey key = new ChunkKey(0, 0);
+        CountDownLatch beforeCommit = new CountDownLatch(1);
+        CountDownLatch releaseCommit = new CountDownLatch(1);
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        WorldLoader loader =
+                loader(
+                        flatGenerator(STONE),
+                        withRadius(WorldGenerationConfig.defaults(), 0),
+                        worker,
+                        new WorldLoader.OperationObserver() {
+                            @Override
+                            public void beforeCommit(
+                                    ChunkKey observedKey,
+                                    ChunkGenerationMode mode) {
+                                assertEquals(key, observedKey);
+                                assertEquals(
+                                        ChunkGenerationMode.INITIAL, mode);
+                                beforeCommit.countDown();
+                                awaitAfterInterruption(
+                                        releaseCommit,
+                                        new CountDownLatch(0));
+                            }
+                        });
+        World world = new World();
+        java.util.concurrent.CompletableFuture<WorldLoadResult> future =
+                loader.loadAsync(world);
+        try {
+            assertTrue(beforeCommit.await(5, TimeUnit.SECONDS));
+
+            assertTrue(future.cancel(true));
+            releaseCommit.countDown();
+
+            awaitGenerationTerminal(world, key);
+            assertThrows(CancellationException.class, future::join);
+            assertEquals(WorldLoadState.CANCELLED, loader.state());
+            assertFalse(world.chunks().contains(key));
+            assertEquals(
+                    ChunkGenerationStatus.FAILED,
+                    world.chunks().generationStatus(key));
+            assertInstanceOf(
+                    CancellationException.class,
+                    world.chunks().generationFailure(key).orElseThrow());
+        } finally {
+            releaseCommit.countDown();
+            worker.shutdownNow();
+            assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void cancellationWinningLaterRebuildCommitPreservesPriorKey()
+            throws Exception {
+        ChunkKey first = new ChunkKey(0, 0);
+        ChunkKey second = new ChunkKey(1, 0);
+        World world = loadedWorld(first, flatData(first, STONE));
+        commitInitial(world, second, flatData(second, STONE));
+        CountDownLatch beforeSecondCommit = new CountDownLatch(1);
+        CountDownLatch releaseSecondCommit = new CountDownLatch(1);
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        WorldLoader loader =
+                loader(
+                        flatGenerator((byte) (STONE + 1)),
+                        withRadius(WorldGenerationConfig.defaults(), 0),
+                        worker,
+                        new WorldLoader.OperationObserver() {
+                            @Override
+                            public void beforeCommit(
+                                    ChunkKey key,
+                                    ChunkGenerationMode mode) {
+                                if (key.equals(second)) {
+                                    beforeSecondCommit.countDown();
+                                    awaitAfterInterruption(
+                                            releaseSecondCommit,
+                                            new CountDownLatch(0));
+                                }
+                            }
+                        });
+        java.util.concurrent.CompletableFuture<WorldRebuildResult> future =
+                loader.rebuildRegionAsync(
+                        world,
+                        new LinkedHashSet<>(List.of(first, second)),
+                        WorldGenerationConfig.defaults());
+        try {
+            assertTrue(beforeSecondCommit.await(5, TimeUnit.SECONDS));
+            assertEquals(
+                    (byte) (STONE + 1),
+                    world.getBlock(0, 0, 0));
+            long secondRevisionBeforeCancellation =
+                    world.chunks().revision(second);
+
+            assertTrue(future.cancel(true));
+            releaseSecondCommit.countDown();
+
+            awaitGenerationTerminal(world, second);
+            assertThrows(CancellationException.class, future::join);
+            assertEquals(
+                    (byte) (STONE + 1),
+                    world.getBlock(0, 0, 0));
+            assertEquals(
+                    STONE,
+                    world.getBlock(second.worldOriginX(), 0, 0));
+            assertEquals(
+                    secondRevisionBeforeCancellation,
+                    world.chunks().revision(second));
+            assertEquals(
+                    ChunkGenerationStatus.FAILED,
+                    world.chunks().generationStatus(second));
+            assertInstanceOf(
+                    CancellationException.class,
+                    world.chunks().generationFailure(second).orElseThrow());
+        } finally {
+            releaseSecondCommit.countDown();
+            worker.shutdownNow();
+            assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void cancellationWinningPreSuccessGatePreventsSucceededState()
+            throws Exception {
+        CountDownLatch beforeSuccess = new CountDownLatch(1);
+        CountDownLatch releaseSuccess = new CountDownLatch(1);
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        WorldLoader loader =
+                loader(
+                        flatGenerator(STONE),
+                        withRadius(WorldGenerationConfig.defaults(), 0),
+                        worker,
+                        new WorldLoader.OperationObserver() {
+                            @Override
+                            public void beforeSuccess() {
+                                beforeSuccess.countDown();
+                                awaitAfterInterruption(
+                                        releaseSuccess,
+                                        new CountDownLatch(0));
+                            }
+                        });
+        java.util.concurrent.CompletableFuture<WorldLoadResult> future =
+                loader.loadAsync(new World());
+        try {
+            assertTrue(beforeSuccess.await(5, TimeUnit.SECONDS));
+
+            assertTrue(future.cancel(true));
+            releaseSuccess.countDown();
+
+            assertThrows(CancellationException.class, future::join);
+            worker.shutdown();
+            assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
+            assertEquals(WorldLoadState.CANCELLED, loader.state());
+            assertEquals(Optional.empty(), loader.failure());
+        } finally {
+            releaseSuccess.countDown();
+            worker.shutdownNow();
+        }
+    }
+
+    @Test
+    void commitGateWinningRaceRejectsCancelAndLoadCompletes()
+            throws Exception {
+        CountDownLatch commitGateAcquired = new CountDownLatch(1);
+        CountDownLatch releaseCommit = new CountDownLatch(1);
+        CountDownLatch beforeCancel = new CountDownLatch(1);
+        CountDownLatch beforeSuccess = new CountDownLatch(1);
+        CountDownLatch releaseSuccess = new CountDownLatch(1);
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        ExecutorService canceller = Executors.newSingleThreadExecutor();
+        WorldLoader loader =
+                loader(
+                        flatGenerator(STONE),
+                        withRadius(WorldGenerationConfig.defaults(), 0),
+                        worker,
+                        new WorldLoader.OperationObserver() {
+                            @Override
+                            public void commitGateAcquired(
+                                    ChunkKey key,
+                                    ChunkGenerationMode mode) {
+                                commitGateAcquired.countDown();
+                                awaitAfterInterruption(
+                                        releaseCommit,
+                                        new CountDownLatch(0));
+                            }
+
+                            @Override
+                            public void beforeCancel() {
+                                beforeCancel.countDown();
+                            }
+
+                            @Override
+                            public void beforeSuccess() {
+                                beforeSuccess.countDown();
+                                awaitAfterInterruption(
+                                        releaseSuccess,
+                                        new CountDownLatch(0));
+                            }
+                        });
+        World world = new World();
+        java.util.concurrent.CompletableFuture<WorldLoadResult> future =
+                loader.loadAsync(world);
+        try {
+            assertTrue(commitGateAcquired.await(5, TimeUnit.SECONDS));
+            Future<Boolean> cancellation =
+                    canceller.submit(() -> future.cancel(true));
+            assertTrue(beforeCancel.await(5, TimeUnit.SECONDS));
+
+            releaseCommit.countDown();
+            assertFalse(cancellation.get(5, TimeUnit.SECONDS));
+            assertTrue(beforeSuccess.await(5, TimeUnit.SECONDS));
+            assertFalse(future.isDone());
+
+            releaseSuccess.countDown();
+            assertEquals(Set.of(new ChunkKey(0, 0)),
+                    future.join().initialChunks());
+            assertEquals(WorldLoadState.SUCCEEDED, loader.state());
+            assertTrue(world.chunks().contains(new ChunkKey(0, 0)));
+        } finally {
+            releaseCommit.countDown();
+            releaseSuccess.countDown();
+            worker.shutdownNow();
+            canceller.shutdownNow();
+            assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
+            assertTrue(canceller.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void successGateWinningRaceRejectsCancelAndReturnsResult()
+            throws Exception {
+        CountDownLatch successGateAcquired = new CountDownLatch(1);
+        CountDownLatch releaseSuccess = new CountDownLatch(1);
+        CountDownLatch beforeCancel = new CountDownLatch(1);
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        ExecutorService canceller = Executors.newSingleThreadExecutor();
+        WorldLoader loader =
+                loader(
+                        flatGenerator(STONE),
+                        withRadius(WorldGenerationConfig.defaults(), 0),
+                        worker,
+                        new WorldLoader.OperationObserver() {
+                            @Override
+                            public void successGateAcquired() {
+                                successGateAcquired.countDown();
+                                awaitAfterInterruption(
+                                        releaseSuccess,
+                                        new CountDownLatch(0));
+                            }
+
+                            @Override
+                            public void beforeCancel() {
+                                beforeCancel.countDown();
+                            }
+                        });
+        java.util.concurrent.CompletableFuture<WorldLoadResult> future =
+                loader.loadAsync(new World());
+        try {
+            assertTrue(successGateAcquired.await(5, TimeUnit.SECONDS));
+            Future<Boolean> cancellation =
+                    canceller.submit(() -> future.cancel(true));
+            assertTrue(beforeCancel.await(5, TimeUnit.SECONDS));
+
+            releaseSuccess.countDown();
+            assertFalse(cancellation.get(5, TimeUnit.SECONDS));
+            assertEquals(1, future.join().initialChunks().size());
+            assertEquals(WorldLoadState.SUCCEEDED, loader.state());
+        } finally {
+            releaseSuccess.countDown();
+            worker.shutdownNow();
+            canceller.shutdownNow();
+            assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
+            assertTrue(canceller.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
     void duplicateAsyncLoadRejectsBeforeEnqueueAndPreservesFirstSuccess()
             throws Exception {
         CountDownLatch executorOccupied = new CountDownLatch(1);
@@ -1044,12 +1319,25 @@ class WorldLoaderTest {
             WorldGenerator generator,
             WorldGenerationConfig config,
             ExecutorService executor) {
+        return loader(
+                generator,
+                config,
+                executor,
+                WorldLoader.OperationObserver.NONE);
+    }
+
+    private static WorldLoader loader(
+            WorldGenerator generator,
+            WorldGenerationConfig config,
+            ExecutorService executor,
+            WorldLoader.OperationObserver observer) {
         return new WorldLoader(
                 generator,
                 BLOCKS,
                 config,
                 new SafeSpawnSelector(),
-                executor);
+                executor,
+                observer);
     }
 
     private static WorldGenerator flatGenerator(byte support) {
