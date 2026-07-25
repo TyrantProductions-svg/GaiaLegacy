@@ -1,8 +1,10 @@
 # Phase 5B Rendering Visual Upgrade Design
 
-Status: approved conversational design, written for repository review  
-Date: 2026-07-26  
-Branch: `feat/rendering-visual-upgrade`  
+Status: approved conversational design, written for repository review
+
+Date: 2026-07-26
+
+Branch: `feat/rendering-visual-upgrade`
 Base: `origin/main` at `438859d722efb58349ada6d2100fc84f1556780c`
 
 ## Goal
