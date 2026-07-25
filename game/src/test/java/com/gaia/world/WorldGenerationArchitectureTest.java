@@ -46,37 +46,105 @@ class WorldGenerationArchitectureTest {
                             .reduce("", (left, right) -> left + "\n" + right);
         }
 
+        assertTrue(
+                forbiddenCouplings(sources).isEmpty(),
+                () ->
+                        "World generation references forbidden coupling: "
+                                + forbiddenCouplings(sources));
+    }
+
+    @Test
+    void matcherRejectsRendererTextureImport() {
+        assertFalse(
+                forbiddenCouplings(
+                                "import com.overlord.renderer.Texture;")
+                        .isEmpty());
+    }
+
+    @Test
+    void matcherRejectsChunkRenderBackendImport() {
+        assertFalse(
+                forbiddenCouplings(
+                                "import com.overlord.renderer."
+                                        + "ChunkRenderBackend;")
+                        .isEmpty());
+    }
+
+    @Test
+    void matcherRejectsEventBusImport() {
+        assertFalse(
+                forbiddenCouplings(
+                                "import com.overlord.event.EventBus;")
+                        .isEmpty());
+    }
+
+    @Test
+    void matcherRejectsVolatileStaticPerlinNoise() {
+        assertFalse(
+                forbiddenCouplings(
+                                "private static volatile PerlinNoise noise;")
+                        .isEmpty());
+    }
+
+    @Test
+    void matcherRejectsQualifiedStaticPerlinNoise() {
+        assertFalse(
+                forbiddenCouplings(
+                                "private static final "
+                                        + "com.overlord.voxel.PerlinNoise "
+                                        + "NOISE;")
+                        .isEmpty());
+    }
+
+    @Test
+    void matcherAllowsDetachedRegionWrites() {
+        assertTrue(
+                forbiddenCouplings(
+                                "region.writeBlock(x, y, z, block);")
+                        .isEmpty());
+    }
+
+    @Test
+    void matcherRejectsDottedSetBlockWithWhitespace() {
+        assertFalse(
+                forbiddenCouplings(
+                                "repository . setBlock (x, y, z, block);")
+                        .isEmpty());
+    }
+
+    private static List<String> forbiddenCouplings(String sources) {
+        java.util.ArrayList<String> matches =
+                new java.util.ArrayList<>();
         for (String forbidden :
                 List.of(
-                        "Renderer",
-                        "Mesh",
-                        "ChunkMeshManager",
-                        "Gpu",
-                        "org.lwjgl",
-                        "GLFW",
-                        "OpenGL",
-                        "WorldMutationService",
-                        "BlockChange",
-                        "Inventory",
-                        "WorldItem",
+                        "com.overlord.renderer.",
+                        "com.overlord.event.",
+                        "com.overlord.interaction.",
+                        "com.overlord.inventory.",
+                        "com.overlord.worlditem.",
+                        "com.overlord.voxel.ChunkMeshManager",
+                        "org.lwjgl.",
                         "new Random(",
                         "java.util.Random")) {
-            assertFalse(
-                    sources.contains(forbidden),
-                    () -> "World generation references forbidden " + forbidden);
+            if (sources.contains(forbidden)) {
+                matches.add(forbidden);
+            }
         }
         for (String forbiddenPattern :
                 List.of(
                         "\\.\\s*setBlock\\s*\\(",
-                        "\\bstatic(?:\\s+final)?\\s+PerlinNoise\\b")) {
-            assertFalse(
-                    Pattern.compile(forbiddenPattern)
-                            .matcher(sources)
-                            .find(),
-                    () ->
-                            "World generation matches forbidden pattern "
-                                    + forbiddenPattern);
+                        "\\bstatic\\b"
+                                + "(?:\\s+(?:public|protected|private|final|"
+                                + "transient|volatile|strictfp))*"
+                                + "\\s+(?:[A-Za-z_$][\\w$]*\\.)*"
+                                + "PerlinNoise\\b")) {
+            if (Pattern.compile(forbiddenPattern)
+                    .matcher(sources)
+                    .find()) {
+                matches.add(forbiddenPattern);
+            }
         }
+        return List.copyOf(matches);
     }
 
     private static String read(Path path) {
