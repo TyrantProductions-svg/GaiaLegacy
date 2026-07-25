@@ -114,8 +114,7 @@ class ChunkMeshBuilderTest {
 
         ChunkMeshData data =
                 meshBuilder.build(
-                        new ChunkMeshInput(
-                                center, null, null, null, east));
+                        meshInput(center, null, east, null, null));
 
         assertEquals(360, data.vertices().length);
     }
@@ -137,8 +136,7 @@ class ChunkMeshBuilderTest {
 
         ChunkMeshData data =
                 builder().build(
-                        new ChunkMeshInput(
-                                center, null, null, null, east));
+                        meshInput(center, null, east, null, null));
 
         assertEquals(300, data.vertices().length);
     }
@@ -160,8 +158,7 @@ class ChunkMeshBuilderTest {
 
         ChunkMeshData data =
                 builder().build(
-                        new ChunkMeshInput(
-                                center, null, null, west, null));
+                        meshInput(center, null, null, null, west));
 
         assertEquals(300, data.vertices().length);
     }
@@ -183,8 +180,7 @@ class ChunkMeshBuilderTest {
 
         ChunkMeshData data =
                 builder().build(
-                        new ChunkMeshInput(
-                                center, north, null, null, null));
+                        meshInput(center, north, null, null, null));
 
         assertEquals(300, data.vertices().length);
     }
@@ -206,8 +202,7 @@ class ChunkMeshBuilderTest {
 
         ChunkMeshData data =
                 builder().build(
-                        new ChunkMeshInput(
-                                center, null, south, null, null));
+                        meshInput(center, null, null, south, null));
 
         assertEquals(300, data.vertices().length);
     }
@@ -225,8 +220,7 @@ class ChunkMeshBuilderTest {
 
         ChunkMeshData data =
                 builder().build(
-                        new ChunkMeshInput(
-                                center, null, null, null, null));
+                        meshInput(center, null, null, null, null));
 
         assertEquals(360, data.vertices().length);
     }
@@ -239,8 +233,7 @@ class ChunkMeshBuilderTest {
 
         ChunkMeshData data =
                 builder().build(
-                        new ChunkMeshInput(
-                                center, null, null, null, null));
+                        meshInput(center, null, null, null, null));
 
         assertTrue(data.isEmpty());
         assertTrue(data.localBounds().isEmpty());
@@ -279,8 +272,7 @@ class ChunkMeshBuilderTest {
 
         ChunkMeshData data =
                 builder().build(
-                        new ChunkMeshInput(
-                                center, null, null, null, null));
+                        meshInput(center, null, null, null, null));
 
         assertEquals(key, data.key());
         assertEquals(42, data.revision());
@@ -291,7 +283,8 @@ class ChunkMeshBuilderTest {
         assertThrows(
                 NullPointerException.class,
                 () -> new ChunkMeshInput(
-                        null, null, null, null, null));
+                        null, null, null, null, null, null, null,
+                        null, null));
     }
 
     @Test
@@ -306,7 +299,8 @@ class ChunkMeshBuilderTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> new ChunkMeshInput(
-                        center, null, null, null, wrongEast));
+                        center, null, null, wrongEast, null, null,
+                        null, null, null));
     }
 
     @Test
@@ -321,7 +315,8 @@ class ChunkMeshBuilderTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> new ChunkMeshInput(
-                        center, null, null, null, east));
+                        center, null, null, east, null, null, null,
+                        null, null));
     }
 
     private static ChunkMeshBuilder builder() {
@@ -333,8 +328,18 @@ class ChunkMeshBuilderTest {
         ChunkSnapshot center =
                 snapshotWithBlock(
                         new ChunkKey(0, 0), 1, x, y, z, block);
+        return meshInput(center, null, null, null, null);
+    }
+
+    private static ChunkMeshInput meshInput(
+            ChunkSnapshot center,
+            ChunkSnapshot north,
+            ChunkSnapshot east,
+            ChunkSnapshot south,
+            ChunkSnapshot west) {
         return new ChunkMeshInput(
-                center, null, null, null, null);
+                center, north, null, east, null, south, null, west,
+                null);
     }
 
     private static ChunkSnapshot snapshotWithBlock(

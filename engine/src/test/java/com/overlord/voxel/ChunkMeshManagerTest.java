@@ -151,6 +151,18 @@ class ChunkMeshManagerTest {
                 1,
                 Byte.toUnsignedInt(
                         observedInput.get().center().getBlock(1, 1, 1)));
+        assertEquals(KEY.north(), observedInput.get().north().key());
+        assertEquals(
+                KEY.north().east(), observedInput.get().northEast().key());
+        assertEquals(KEY.east(), observedInput.get().east().key());
+        assertEquals(
+                KEY.south().east(), observedInput.get().southEast().key());
+        assertEquals(KEY.south(), observedInput.get().south().key());
+        assertEquals(
+                KEY.south().west(), observedInput.get().southWest().key());
+        assertEquals(KEY.west(), observedInput.get().west().key());
+        assertEquals(
+                KEY.north().west(), observedInput.get().northWest().key());
         assertEquals(2, Byte.toUnsignedInt(repository.getBlock(1, 1, 1)));
     }
 

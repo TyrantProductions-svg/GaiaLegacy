@@ -942,24 +942,40 @@ class ChunkRepositoryTest {
     }
 
     @Test
-    void claimMeshingAtomicallyCapturesCenterAndCardinalSnapshots() {
+    void claimMeshingAtomicallyCapturesImmutableThreeByThreeSnapshots() {
         ChunkRepository repository = new ChunkRepository();
         ChunkKey center = new ChunkKey(0, 0);
-        ChunkKey east = center.east();
-        repository.generate(
-                center, chunk -> chunk.setBlock(1, 2, 3, (byte) 4));
-        repository.generate(
-                east, chunk -> chunk.setBlock(0, 2, 3, (byte) 5));
+        generateMarker(repository, center, (byte) 1);
+        generateMarker(repository, center.north(), (byte) 2);
+        generateMarker(repository, center.north().east(), (byte) 3);
+        generateMarker(repository, center.east(), (byte) 4);
+        generateMarker(repository, center.south().east(), (byte) 5);
+        generateMarker(repository, center.south(), (byte) 6);
+        generateMarker(repository, center.south().west(), (byte) 7);
+        generateMarker(repository, center.west(), (byte) 8);
+        generateMarker(repository, center.north().west(), (byte) 9);
 
         Optional<ChunkMeshInput> claimed = repository.claimMeshing(center);
 
         ChunkMeshInput input = claimed.orElseThrow();
         assertEquals(ChunkState.MESHING, repository.state(center));
-        assertEquals(4, Byte.toUnsignedInt(input.center().getBlock(1, 2, 3)));
-        assertEquals(5, Byte.toUnsignedInt(input.east().getBlock(0, 2, 3)));
-        assertEquals(0, input.north().revision());
-        assertEquals(0, input.south().revision());
-        assertEquals(0, input.west().revision());
+        assertEquals(1, Byte.toUnsignedInt(input.center().getBlock(1, 2, 3)));
+        assertEquals(2, Byte.toUnsignedInt(input.north().getBlock(1, 2, 3)));
+        assertEquals(3, Byte.toUnsignedInt(input.northEast().getBlock(1, 2, 3)));
+        assertEquals(4, Byte.toUnsignedInt(input.east().getBlock(1, 2, 3)));
+        assertEquals(5, Byte.toUnsignedInt(input.southEast().getBlock(1, 2, 3)));
+        assertEquals(6, Byte.toUnsignedInt(input.south().getBlock(1, 2, 3)));
+        assertEquals(7, Byte.toUnsignedInt(input.southWest().getBlock(1, 2, 3)));
+        assertEquals(8, Byte.toUnsignedInt(input.west().getBlock(1, 2, 3)));
+        assertEquals(9, Byte.toUnsignedInt(input.northWest().getBlock(1, 2, 3)));
+        assertFalse(
+                Arrays.stream(ChunkMeshInput.class.getDeclaredFields())
+                        .map(Field::getType)
+                        .anyMatch(
+                                type ->
+                                        type == World.class
+                                                || type == Chunk.class
+                                                || type == ChunkRepository.class));
         assertTrue(repository.claimMeshing(center).isEmpty());
     }
 
@@ -1317,6 +1333,12 @@ class ChunkRepositoryTest {
 
     private static ChunkRepository generatedPairEastWest() {
         return generatedPair(new ChunkKey(0, 0), new ChunkKey(1, 0));
+    }
+
+    private static void generateMarker(
+            ChunkRepository repository, ChunkKey key, byte marker) {
+        repository.generate(
+                key, chunk -> chunk.setBlock(1, 2, 3, marker));
     }
 
     private static void assertEdgeOutcome(

@@ -508,12 +508,44 @@ public final class ChunkRepository {
                                                 key.north(),
                                                 0,
                                                 worldHeight));
+        ChunkSnapshot northEast =
+                snapshot(key.north().east())
+                        .orElseGet(
+                                () ->
+                                        ChunkSnapshot.empty(
+                                                key.north().east(),
+                                                0,
+                                                worldHeight));
+        ChunkSnapshot east =
+                snapshot(key.east())
+                        .orElseGet(
+                                () ->
+                                        ChunkSnapshot.empty(
+                                                key.east(),
+                                                0,
+                                                worldHeight));
+        ChunkSnapshot southEast =
+                snapshot(key.south().east())
+                        .orElseGet(
+                                () ->
+                                        ChunkSnapshot.empty(
+                                                key.south().east(),
+                                                0,
+                                                worldHeight));
         ChunkSnapshot south =
                 snapshot(key.south())
                         .orElseGet(
                                 () ->
                                         ChunkSnapshot.empty(
                                                 key.south(),
+                                                0,
+                                                worldHeight));
+        ChunkSnapshot southWest =
+                snapshot(key.south().west())
+                        .orElseGet(
+                                () ->
+                                        ChunkSnapshot.empty(
+                                                key.south().west(),
                                                 0,
                                                 worldHeight));
         ChunkSnapshot west =
@@ -524,12 +556,12 @@ public final class ChunkRepository {
                                                 key.west(),
                                                 0,
                                                 worldHeight));
-        ChunkSnapshot east =
-                snapshot(key.east())
+        ChunkSnapshot northWest =
+                snapshot(key.north().west())
                         .orElseGet(
                                 () ->
                                         ChunkSnapshot.empty(
-                                                key.east(),
+                                                key.north().west(),
                                                 0,
                                                 worldHeight));
 
@@ -552,9 +584,13 @@ public final class ChunkRepository {
                     new ChunkMeshInput(
                             center.orElseThrow(),
                             north,
+                            northEast,
+                            east,
+                            southEast,
                             south,
+                            southWest,
                             west,
-                            east));
+                            northWest));
         }
     }
 

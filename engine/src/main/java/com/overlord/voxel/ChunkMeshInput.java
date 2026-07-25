@@ -6,9 +6,13 @@ import java.util.Objects;
 public record ChunkMeshInput(
         ChunkSnapshot center,
         ChunkSnapshot north,
+        ChunkSnapshot northEast,
+        ChunkSnapshot east,
+        ChunkSnapshot southEast,
         ChunkSnapshot south,
+        ChunkSnapshot southWest,
         ChunkSnapshot west,
-        ChunkSnapshot east) {
+        ChunkSnapshot northWest) {
     public ChunkMeshInput {
         center = Objects.requireNonNull(center, "center");
         int worldHeight = center.worldHeight();
@@ -18,45 +22,99 @@ public record ChunkMeshInput(
                         center.key().north(),
                         worldHeight,
                         "north");
-        south =
+        northEast =
                 normalizeNeighbor(
-                        south,
-                        center.key().south(),
+                        northEast,
+                        center.key().north().east(),
                         worldHeight,
-                        "south");
-        west =
-                normalizeNeighbor(
-                        west,
-                        center.key().west(),
-                        worldHeight,
-                        "west");
+                        "northEast");
         east =
                 normalizeNeighbor(
                         east,
                         center.key().east(),
                         worldHeight,
                         "east");
+        southEast =
+                normalizeNeighbor(
+                        southEast,
+                        center.key().south().east(),
+                        worldHeight,
+                        "southEast");
+        south =
+                normalizeNeighbor(
+                        south,
+                        center.key().south(),
+                        worldHeight,
+                        "south");
+        southWest =
+                normalizeNeighbor(
+                        southWest,
+                        center.key().south().west(),
+                        worldHeight,
+                        "southWest");
+        west =
+                normalizeNeighbor(
+                        west,
+                        center.key().west(),
+                        worldHeight,
+                        "west");
+        northWest =
+                normalizeNeighbor(
+                        northWest,
+                        center.key().north().west(),
+                        worldHeight,
+                        "northWest");
     }
 
     public byte getBlock(int localX, int y, int localZ) {
+        if (localX < -1
+                || localX > GameConfig.Chunk.SIZE
+                || localZ < -1
+                || localZ > GameConfig.Chunk.SIZE) {
+            throw new IllegalArgumentException(
+                    "horizontal coordinates must stay within one-block halo");
+        }
         if (y < 0 || y >= center.worldHeight()) {
             return 0;
         }
-        if (localX < 0) {
-            return west.getBlock(
-                    GameConfig.Chunk.SIZE - 1, y, localZ);
+        int horizontalOffsetX =
+                Math.floorDiv(localX, GameConfig.Chunk.SIZE);
+        int horizontalOffsetZ =
+                Math.floorDiv(localZ, GameConfig.Chunk.SIZE);
+        return snapshotFor(horizontalOffsetX, horizontalOffsetZ)
+                .getBlock(
+                        Math.floorMod(localX, GameConfig.Chunk.SIZE),
+                        y,
+                        Math.floorMod(localZ, GameConfig.Chunk.SIZE));
+    }
+
+    private ChunkSnapshot snapshotFor(
+            int horizontalOffsetX, int horizontalOffsetZ) {
+        if (horizontalOffsetX == -1) {
+            if (horizontalOffsetZ == -1) {
+                return northWest;
+            }
+            if (horizontalOffsetZ == 0) {
+                return west;
+            }
+            return southWest;
         }
-        if (localX >= GameConfig.Chunk.SIZE) {
-            return east.getBlock(0, y, localZ);
+        if (horizontalOffsetX == 0) {
+            if (horizontalOffsetZ == -1) {
+                return north;
+            }
+            if (horizontalOffsetZ == 0) {
+                return center;
+            }
+            return south;
         }
-        if (localZ < 0) {
-            return north.getBlock(
-                    localX, y, GameConfig.Chunk.SIZE - 1);
+        if (horizontalOffsetZ == -1) {
+            return northEast;
         }
-        if (localZ >= GameConfig.Chunk.SIZE) {
-            return south.getBlock(localX, y, 0);
+        if (horizontalOffsetZ == 0) {
+            return east;
         }
-        return center.getBlock(localX, y, localZ);
+        return southEast;
     }
 
     private static ChunkSnapshot normalizeNeighbor(
