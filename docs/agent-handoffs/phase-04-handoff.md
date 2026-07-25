@@ -1,5 +1,8 @@
 # Phase 4 Handoff: Deterministic World-Generation Pipeline
 
+Final delivery HEAD:
+574adb4659197bf70e7f0b7b68ced5f2957e28ef
+
 Branch: `feat/worldgen-pipeline`
 
 Base: `origin/main` at
@@ -143,10 +146,12 @@ Post-review hardening:
 - Final version-2 staged-tree Game/shared-owner review: **APPROVED**, with no
   Critical, Important, or Minor findings after the exact-file inventory,
   snapshot count, screenshot waiver, and v1/v2 outcrop checklist were aligned.
-- The current candidate aggregate after hardening is
-  `9974c7cec96ed503d7e1d21527f80eeac24f892471ca6dd358cd440c12d6f329`;
-  the non-normative config fingerprint remains
-  `b68aebd22b63bdfb0cb1916f4f7041ad17e2ec896b79d281747620d54eb99a86`.
+- The historical pre-promotion candidate aggregate after hardening was
+  9974c7cec96ed503d7e1d21527f80eeac24f892471ca6dd358cd440c12d6f329;
+- the corresponding non-normative candidate fingerprint was
+  b68aebd22b63bdfb0cb1916f4f7041ad17e2ec896b79d281747620d54eb99a86.
+
+The final normative version-2 fingerprint and aggregate are recorded above.
 
 ## Completed work
 
