@@ -29,6 +29,26 @@ class ChunkMeshManagerTest {
     private static final ChunkKey KEY = new ChunkKey(0, 0);
 
     @Test
+    void oneBlockVerticesMetadataMatchesSouthFacingTriangle() {
+        float[] vertices = oneBlockVertices();
+        float expectedFaceLight = VoxelVertexFormat.encodeFaceLight(
+                BlockFace.SOUTH,
+                VoxelVertexFormat.DEFAULT_LIGHT_LEVEL);
+
+        for (int offset = 0;
+                offset < vertices.length;
+                offset += VoxelVertexFormat.FLOATS_PER_VERTEX) {
+            assertEquals(0.0f, vertices[offset + 5]);
+            assertEquals(0.0f, vertices[offset + 6]);
+            assertEquals(1.0f, vertices[offset + 7]);
+            assertEquals(expectedFaceLight, vertices[offset + 8]);
+            assertEquals(
+                    VoxelVertexFormat.DEFAULT_AMBIENT_OCCLUSION,
+                    vertices[offset + 9]);
+        }
+    }
+
+    @Test
     void coalescesRepeatedDirtyStateIntoOneClaimedTask() {
         Fixture fixture = generatedFixture();
 
@@ -1227,14 +1247,14 @@ class ChunkMeshManagerTest {
 
     private static float[] oneBlockVertices() {
         float faceLight = VoxelVertexFormat.encodeFaceLight(
-                BlockFace.UP,
+                BlockFace.SOUTH,
                 VoxelVertexFormat.DEFAULT_LIGHT_LEVEL);
         return new float[] {
-            0, 0, 0, 0, 0, 0, 1, 0, faceLight,
+            0, 0, 0, 0, 0, 0, 0, 1, faceLight,
                     VoxelVertexFormat.DEFAULT_AMBIENT_OCCLUSION,
-            1, 0, 0, 1, 0, 0, 1, 0, faceLight,
+            1, 0, 0, 1, 0, 0, 0, 1, faceLight,
                     VoxelVertexFormat.DEFAULT_AMBIENT_OCCLUSION,
-            0, 1, 0, 0, 1, 0, 1, 0, faceLight,
+            0, 1, 0, 0, 1, 0, 0, 1, faceLight,
                     VoxelVertexFormat.DEFAULT_AMBIENT_OCCLUSION
         };
     }
