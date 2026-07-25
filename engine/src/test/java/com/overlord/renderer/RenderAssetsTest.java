@@ -11,6 +11,7 @@ import com.overlord.core.Engine;
 import com.overlord.core.thread.MainThreadGuard;
 import com.overlord.renderer.material.RenderType;
 import com.overlord.renderer.texture.TextureImage;
+import com.overlord.renderer.visual.RenderVisualSettings;
 import org.junit.jupiter.api.Test;
 
 class RenderAssetsTest {
@@ -77,5 +78,19 @@ class RenderAssetsTest {
                                 MainThreadGuard.class,
                                 RenderAssets.class,
                                 AssetManager.class));
+        assertDoesNotThrow(
+                () ->
+                        Renderer.class.getConstructor(
+                                MainThreadGuard.class,
+                                RenderAssets.class,
+                                AssetManager.class,
+                                RenderVisualSettings.class));
+        assertDoesNotThrow(
+                () ->
+                        Engine.class.getConstructor(
+                                MainThreadGuard.class,
+                                RenderAssets.class,
+                                AssetManager.class,
+                                RenderVisualSettings.class));
     }
 }

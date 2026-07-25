@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import org.joml.Matrix4fc;
+import org.joml.Vector3fc;
 
 public final class ShaderProgram implements ShaderBinding, AutoCloseable {
     private final MainThreadGuard guard;
@@ -103,6 +104,29 @@ public final class ShaderProgram implements ShaderBinding, AutoCloseable {
         guard.assertMainThread("shader program integer uniform upload");
         ensureOpen();
         backend.uploadInt(locationFor(uniform), value);
+    }
+
+    @Override
+    public void setFloat(String uniform, float value) {
+        guard.assertMainThread("shader program float uniform upload");
+        ensureOpen();
+        if (!Float.isFinite(value)) {
+            throw new IllegalArgumentException("float uniform value must be finite");
+        }
+        backend.uploadFloat(locationFor(uniform), value);
+    }
+
+    @Override
+    public void setVector3(String uniform, Vector3fc value) {
+        guard.assertMainThread("shader program vector3 uniform upload");
+        ensureOpen();
+        Vector3fc vector = Objects.requireNonNull(value, "value");
+        if (!Float.isFinite(vector.x())
+                || !Float.isFinite(vector.y())
+                || !Float.isFinite(vector.z())) {
+            throw new IllegalArgumentException("vector3 uniform value must be finite");
+        }
+        backend.uploadVector3(locationFor(uniform), vector.x(), vector.y(), vector.z());
     }
 
     public void cleanup() {

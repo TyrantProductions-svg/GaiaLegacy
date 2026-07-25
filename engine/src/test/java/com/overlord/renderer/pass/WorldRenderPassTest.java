@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
+import org.joml.Vector3fc;
 import org.junit.jupiter.api.Test;
 
 class WorldRenderPassTest {
@@ -127,6 +128,12 @@ class WorldRenderPassTest {
         }
         @Override public void setInt(String uniform, int value) {
             calls.add(name + ".uniform." + uniform + "=" + value);
+        }
+        @Override public void setFloat(String uniform, float value) {
+            calls.add(name + ".uniform." + uniform + "=" + value);
+        }
+        @Override public void setVector3(String uniform, Vector3fc value) {
+            calls.add(name + ".uniform." + uniform);
         }
     }
 

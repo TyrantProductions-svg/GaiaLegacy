@@ -17,6 +17,7 @@ import com.overlord.renderer.shader.ShaderBinding;
 import com.overlord.voxel.ChunkKey;
 import java.util.List;
 import org.joml.Matrix4fc;
+import org.joml.Vector3fc;
 import org.junit.jupiter.api.Test;
 
 class RenderQueueTest {
@@ -94,5 +95,7 @@ class RenderQueueTest {
         @Override public void use() {}
         @Override public void setMatrix4(String uniform, Matrix4fc value) {}
         @Override public void setInt(String uniform, int value) {}
+        @Override public void setFloat(String uniform, float value) {}
+        @Override public void setVector3(String uniform, Vector3fc value) {}
     }
 }

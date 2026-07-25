@@ -17,6 +17,7 @@ import com.overlord.renderer.shader.ShaderProgram;
 import com.overlord.renderer.shader.ShaderResourceLoader;
 import com.overlord.renderer.shader.ShaderSourceSet;
 import com.overlord.renderer.state.OpenGlRenderStateBackend;
+import com.overlord.renderer.visual.RenderVisualSettings;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkMeshData;
 import java.util.Collection;
@@ -28,6 +29,7 @@ public final class Renderer implements ChunkRenderBackend {
     private final MainThreadGuard mainThreadGuard;
     private final RenderAssets renderAssets;
     private final AssetManager assetManager;
+    private final RenderVisualSettings visualSettings;
 
     private ShaderProgram shaderProgram;
     private Camera camera;
@@ -43,13 +45,26 @@ public final class Renderer implements ChunkRenderBackend {
         this(
                 mainThreadGuard,
                 renderAssets,
-                new AssetManager(Renderer.class.getClassLoader()));
+                new AssetManager(Renderer.class.getClassLoader()),
+                RenderVisualSettings.milestoneOneDefaults());
     }
 
     public Renderer(
             MainThreadGuard mainThreadGuard,
             RenderAssets renderAssets,
             AssetManager assetManager) {
+        this(
+                mainThreadGuard,
+                renderAssets,
+                assetManager,
+                RenderVisualSettings.milestoneOneDefaults());
+    }
+
+    public Renderer(
+            MainThreadGuard mainThreadGuard,
+            RenderAssets renderAssets,
+            AssetManager assetManager,
+            RenderVisualSettings visualSettings) {
         this.mainThreadGuard =
                 Objects.requireNonNull(
                         mainThreadGuard, "mainThreadGuard");
@@ -57,6 +72,8 @@ public final class Renderer implements ChunkRenderBackend {
                 Objects.requireNonNull(renderAssets, "renderAssets");
         this.assetManager =
                 Objects.requireNonNull(assetManager, "assetManager");
+        this.visualSettings =
+                Objects.requireNonNull(visualSettings, "visualSettings");
     }
 
     public void init(Camera camera, int width, int height) {

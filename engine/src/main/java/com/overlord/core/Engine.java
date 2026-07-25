@@ -7,6 +7,7 @@ import com.overlord.event.EventBus;
 import com.overlord.renderer.Camera;
 import com.overlord.renderer.RenderAssets;
 import com.overlord.renderer.Renderer;
+import com.overlord.renderer.visual.RenderVisualSettings;
 import com.overlord.voxel.World;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -22,6 +23,7 @@ public class Engine {
     private final MainThreadGuard mainThreadGuard;
     private final RenderAssets renderAssets;
     private final AssetManager assetManager;
+    private final RenderVisualSettings visualSettings;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
@@ -46,19 +48,34 @@ public class Engine {
         this(
                 mainThreadGuard,
                 renderAssets,
-                new AssetManager(Engine.class.getClassLoader()));
+                new AssetManager(Engine.class.getClassLoader()),
+                RenderVisualSettings.milestoneOneDefaults());
     }
 
     public Engine(
             MainThreadGuard mainThreadGuard,
             RenderAssets renderAssets,
             AssetManager assetManager) {
+        this(
+                mainThreadGuard,
+                renderAssets,
+                assetManager,
+                RenderVisualSettings.milestoneOneDefaults());
+    }
+
+    public Engine(
+            MainThreadGuard mainThreadGuard,
+            RenderAssets renderAssets,
+            AssetManager assetManager,
+            RenderVisualSettings visualSettings) {
         this.mainThreadGuard =
                 Objects.requireNonNull(mainThreadGuard, "mainThreadGuard");
         this.renderAssets =
                 Objects.requireNonNull(renderAssets, "renderAssets");
         this.assetManager =
                 Objects.requireNonNull(assetManager, "assetManager");
+        this.visualSettings =
+                Objects.requireNonNull(visualSettings, "visualSettings");
         int maxCores = Runtime.getRuntime().availableProcessors();
         availableCores = Math.min(4, Math.max(1, maxCores));
         taskScheduler = new TaskScheduler(availableCores);
@@ -83,7 +100,8 @@ public class Engine {
                     new Renderer(
                             mainThreadGuard,
                             renderAssets,
-                            assetManager);
+                            assetManager,
+                            visualSettings);
             World initializedWorld = new World();
 
             initializedRenderer.init(

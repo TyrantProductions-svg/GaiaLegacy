@@ -7,6 +7,7 @@ import com.overlord.assets.ResourceLocation;
 import com.overlord.renderer.TextureBinding;
 import com.overlord.renderer.shader.ShaderBinding;
 import org.joml.Matrix4fc;
+import org.joml.Vector3fc;
 import org.junit.jupiter.api.Test;
 
 class MaterialTest {
@@ -52,5 +53,11 @@ class MaterialTest {
 
         @Override
         public void setInt(String uniform, int value) {}
+
+        @Override
+        public void setFloat(String uniform, float value) {}
+
+        @Override
+        public void setVector3(String uniform, Vector3fc value) {}
     }
 }
