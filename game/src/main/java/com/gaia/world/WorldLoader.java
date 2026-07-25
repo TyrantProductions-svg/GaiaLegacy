@@ -32,7 +32,10 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.joml.Vector3f;
 
 public final class WorldLoader {
@@ -47,16 +50,17 @@ public final class WorldLoader {
     private final BlockRegistry blocks;
     private final WorldGenerationConfig config;
     private final SafeSpawnSelector spawnSelector;
-    private final Executor executor;
+    private final ExecutorService executor;
     private volatile WorldLoadState state = WorldLoadState.IDLE;
     private volatile WorldLoadFailure failure;
+    private boolean loadActive;
 
     public WorldLoader(
             WorldGenerator generator,
             BlockRegistry blocks,
             WorldGenerationConfig config,
             SafeSpawnSelector spawnSelector,
-            Executor executor) {
+            ExecutorService executor) {
         this.generator = Objects.requireNonNull(generator, "generator");
         this.blocks = Objects.requireNonNull(blocks, "blocks");
         this.config = Objects.requireNonNull(config, "config");
@@ -68,24 +72,43 @@ public final class WorldLoader {
 
     public CompletableFuture<WorldLoadResult> loadAsync(World world) {
         Objects.requireNonNull(world, "world");
-        return CompletableFuture.supplyAsync(() -> load(world), executor);
+        beginLoad();
+        try {
+            return submitCancellable(
+                    cancellation ->
+                            runLoad(world, cancellation),
+                    this::markCancelled);
+        } catch (RuntimeException | Error submissionFailure) {
+            rollbackLoadReservation();
+            throw submissionFailure;
+        }
     }
 
     WorldLoadResult load(World world) {
         Objects.requireNonNull(world, "world");
         beginLoad();
+        return runLoad(world, new CancellationSignal());
+    }
+
+    private WorldLoadResult runLoad(
+            World world, CancellationSignal cancellation) {
         LinkedHashSet<ChunkKey> completed = new LinkedHashSet<>();
         List<ChunkGenerationData> generatedData = new ArrayList<>();
         try {
             GenerationContext context = contextFor(config);
             for (ChunkKey key : initialKeys(config.chunkRadius())) {
-                checkCancelled();
+                checkCancelled(cancellation);
                 ChunkGenerationData data =
-                        generateInitial(world.chunks(), context, key, completed);
+                        generateInitial(
+                                world.chunks(),
+                                context,
+                                key,
+                                completed,
+                                cancellation);
                 completed.add(key);
                 generatedData.add(data);
             }
-            checkCancelled();
+            checkCancelled(cancellation);
             Vector3f spawn =
                     spawnSelector
                             .find(world, completed, config)
@@ -100,24 +123,30 @@ public final class WorldLoader {
                                                             "No safe spawn "
                                                                     + "exists in the committed "
                                                                     + "initial region")));
-            checkCancelled();
+            checkCancelled(cancellation);
             String configFingerprint = configFingerprint(config);
             String generationHash =
                     WorldGenerationHasher.hashRegion(config, generatedData);
-            checkCancelled();
+            checkCancelled(cancellation);
             markSucceeded();
             return new WorldLoadResult(
                     completed,
                     spawn,
                     configFingerprint,
                     generationHash);
-        } catch (CancellationException cancellation) {
+        } catch (CancellationException cancelled) {
             markCancelled();
-            throw cancellation;
+            throw cancelled;
         } catch (WorldLoadException loadFailure) {
             markFailed(loadFailure.failure());
             throw loadFailure;
         } catch (RuntimeException | Error unexpected) {
+            if (isCancelled(cancellation)) {
+                CancellationException cancelled =
+                        cancellationException();
+                markCancelled();
+                throw cancelled;
+            }
             WorldLoadException loadFailure =
                     loadException(
                             completed,
@@ -137,9 +166,15 @@ public final class WorldLoader {
         Objects.requireNonNull(world, "world");
         Objects.requireNonNull(keys, "keys");
         Objects.requireNonNull(config, "config");
-        return CompletableFuture.supplyAsync(
-                () -> rebuildRegion(world, keys, config),
-                executor);
+        List<ChunkKey> orderedKeys = snapshotRebuildKeys(keys);
+        return submitCancellable(
+                cancellation ->
+                        rebuildRegion(
+                                world,
+                                orderedKeys,
+                                config,
+                                cancellation),
+                () -> {});
     }
 
     WorldRebuildResult rebuildRegion(
@@ -147,31 +182,38 @@ public final class WorldLoader {
             Set<ChunkKey> keys,
             WorldGenerationConfig config) {
         Objects.requireNonNull(world, "world");
-        Objects.requireNonNull(keys, "keys");
         Objects.requireNonNull(config, "config");
+        return rebuildRegion(
+                world,
+                snapshotRebuildKeys(keys),
+                config,
+                new CancellationSignal());
+    }
+
+    private WorldRebuildResult rebuildRegion(
+            World world,
+            List<ChunkKey> orderedKeys,
+            WorldGenerationConfig config,
+            CancellationSignal cancellation) {
         GenerationContext context = contextFor(config);
-        List<ChunkKey> orderedKeys =
-                keys.stream()
-                        .map(
-                                key ->
-                                        Objects.requireNonNull(
-                                                key, "rebuild key"))
-                        .sorted(keyOrder())
-                        .toList();
         LinkedHashSet<ChunkKey> committed = new LinkedHashSet<>();
         LinkedHashMap<ChunkKey, ChunkGenerationResult> outcomes =
                 new LinkedHashMap<>();
         for (ChunkKey key : orderedKeys) {
-            checkCancelled();
+            checkCancelled(cancellation);
             ChunkGenerationResult outcome =
-                    rebuildOne(world.chunks(), context, key);
+                    rebuildOne(
+                            world.chunks(),
+                            context,
+                            key,
+                            cancellation);
             outcomes.put(key, outcome);
             if (outcome.status()
                     == ChunkGenerationResult.Status.COMMITTED) {
                 committed.add(key);
             }
         }
-        checkCancelled();
+        checkCancelled(cancellation);
         return new WorldRebuildResult(committed, outcomes);
     }
 
@@ -187,7 +229,8 @@ public final class WorldLoader {
             ChunkRepository chunks,
             GenerationContext context,
             ChunkKey key,
-            Set<ChunkKey> completed) {
+            Set<ChunkKey> completed,
+            CancellationSignal cancellation) {
         ChunkGenerationTicket ticket;
         try {
             ticket =
@@ -224,7 +267,7 @@ public final class WorldLoader {
                         GENERATION_FAILED,
                         cause);
             }
-            checkCancelled();
+            checkCancelled(cancellation);
             ChunkGenerationData data =
                     generated.chunkData().orElseThrow();
             validateGeneratedData(chunks, key, data);
@@ -246,12 +289,18 @@ public final class WorldLoader {
                         cause);
             }
             return data;
-        } catch (CancellationException cancellation) {
-            failLiveTicket(chunks, ticket, cancellation);
-            throw cancellation;
+        } catch (CancellationException cancelled) {
+            failLiveTicket(chunks, ticket, cancelled);
+            throw cancelled;
         } catch (WorldLoadException loadFailure) {
             throw loadFailure;
         } catch (RuntimeException | Error generationFailure) {
+            if (isCancelled(cancellation)) {
+                CancellationException cancelled =
+                        cancellationException();
+                failLiveTicket(chunks, ticket, cancelled);
+                throw cancelled;
+            }
             failLiveTicket(chunks, ticket, generationFailure);
             throw loadException(
                     completed,
@@ -265,7 +314,8 @@ public final class WorldLoader {
     private ChunkGenerationResult rebuildOne(
             ChunkRepository chunks,
             GenerationContext context,
-            ChunkKey key) {
+            ChunkKey key,
+            CancellationSignal cancellation) {
         ChunkGenerationTicket ticket;
         try {
             ticket =
@@ -292,15 +342,21 @@ public final class WorldLoader {
                                 .orElseThrow();
                 return chunks.failGeneration(ticket, cause);
             }
-            checkCancelled();
+            checkCancelled(cancellation);
             ChunkGenerationData data =
                     generated.chunkData().orElseThrow();
             validateGeneratedData(chunks, key, data);
             return chunks.commitGeneration(ticket, data);
-        } catch (CancellationException cancellation) {
-            failLiveTicket(chunks, ticket, cancellation);
-            throw cancellation;
+        } catch (CancellationException cancelled) {
+            failLiveTicket(chunks, ticket, cancelled);
+            throw cancelled;
         } catch (RuntimeException | Error generationFailure) {
+            if (isCancelled(cancellation)) {
+                CancellationException cancelled =
+                        cancellationException();
+                failLiveTicket(chunks, ticket, cancelled);
+                throw cancelled;
+            }
             ChunkGenerationResult failed =
                     failLiveTicket(chunks, ticket, generationFailure);
             if (failed.status()
@@ -403,6 +459,18 @@ public final class WorldLoader {
                 .thenComparingInt(ChunkKey::z);
     }
 
+    private static List<ChunkKey> snapshotRebuildKeys(
+            Set<ChunkKey> keys) {
+        Objects.requireNonNull(keys, "keys");
+        return keys.stream()
+                .map(
+                        key ->
+                                Objects.requireNonNull(
+                                        key, "rebuild key"))
+                .sorted(keyOrder())
+                .toList();
+    }
+
     private static WorldLoadException loadException(
             Set<ChunkKey> completed,
             Optional<ChunkKey> failedChunk,
@@ -419,33 +487,144 @@ public final class WorldLoader {
     }
 
     private synchronized void beginLoad() {
-        if (state == WorldLoadState.RUNNING) {
+        if (loadActive) {
             throw new IllegalStateException(
                     "World loading is already running");
         }
+        loadActive = true;
         failure = null;
         state = WorldLoadState.RUNNING;
     }
 
     private synchronized void markSucceeded() {
-        state = WorldLoadState.SUCCEEDED;
+        if (loadActive) {
+            state = WorldLoadState.SUCCEEDED;
+            loadActive = false;
+        }
     }
 
     private synchronized void markFailed(
             WorldLoadFailure loadFailure) {
-        failure = Objects.requireNonNull(loadFailure, "loadFailure");
-        state = WorldLoadState.FAILED;
+        if (loadActive) {
+            failure =
+                    Objects.requireNonNull(
+                            loadFailure, "loadFailure");
+            state = WorldLoadState.FAILED;
+            loadActive = false;
+        }
     }
 
     private synchronized void markCancelled() {
-        failure = null;
-        state = WorldLoadState.CANCELLED;
+        if (loadActive) {
+            failure = null;
+            state = WorldLoadState.CANCELLED;
+            loadActive = false;
+        }
     }
 
-    private static void checkCancelled() {
-        if (Thread.currentThread().isInterrupted()) {
-            throw new CancellationException(
-                    "World loading was cancelled");
+    private synchronized void rollbackLoadReservation() {
+        if (loadActive) {
+            failure = null;
+            state = WorldLoadState.IDLE;
+            loadActive = false;
+        }
+    }
+
+    private <T> CompletableFuture<T> submitCancellable(
+            CancellableOperation<T> operation,
+            Runnable cancellationAction) {
+        Objects.requireNonNull(operation, "operation");
+        Objects.requireNonNull(
+                cancellationAction, "cancellationAction");
+        CancellationSignal cancellation = new CancellationSignal();
+        AtomicReference<Future<?>> submittedTask = new AtomicReference<>();
+        AtomicReference<TaskPhase> phase =
+                new AtomicReference<>(TaskPhase.QUEUED);
+        CompletableFuture<T> result =
+                new CompletableFuture<>() {
+                    @Override
+                    public boolean cancel(
+                            boolean mayInterruptIfRunning) {
+                        boolean cancelled =
+                                super.cancel(mayInterruptIfRunning);
+                        if (cancelled) {
+                            cancellation.cancel();
+                            if (phase.compareAndSet(
+                                    TaskPhase.QUEUED,
+                                    TaskPhase.CANCELLED)) {
+                                cancellationAction.run();
+                            }
+                            Future<?> task = submittedTask.get();
+                            if (task != null) {
+                                task.cancel(mayInterruptIfRunning);
+                            }
+                        }
+                        return cancelled;
+                    }
+                };
+        Future<?> task =
+                executor.submit(
+                        () -> {
+                            if (!phase.compareAndSet(
+                                    TaskPhase.QUEUED,
+                                    TaskPhase.RUNNING)) {
+                                return;
+                            }
+                            try {
+                                result.complete(
+                                        operation.run(cancellation));
+                            } catch (Throwable failure) {
+                                result.completeExceptionally(failure);
+                            } finally {
+                                phase.set(TaskPhase.FINISHED);
+                            }
+                        });
+        submittedTask.set(task);
+        if (result.isCancelled()) {
+            task.cancel(true);
+        }
+        return result;
+    }
+
+    private static void checkCancelled(
+            CancellationSignal cancellation) {
+        if (isCancelled(cancellation)) {
+            throw cancellationException();
+        }
+    }
+
+    private static boolean isCancelled(
+            CancellationSignal cancellation) {
+        return cancellation.isCancelled()
+                || Thread.currentThread().isInterrupted();
+    }
+
+    private static CancellationException cancellationException() {
+        return new CancellationException(
+                "World loading was cancelled");
+    }
+
+    @FunctionalInterface
+    private interface CancellableOperation<T> {
+        T run(CancellationSignal cancellation);
+    }
+
+    private enum TaskPhase {
+        QUEUED,
+        RUNNING,
+        CANCELLED,
+        FINISHED
+    }
+
+    private static final class CancellationSignal {
+        private final AtomicBoolean cancelled = new AtomicBoolean();
+
+        void cancel() {
+            cancelled.set(true);
+        }
+
+        boolean isCancelled() {
+            return cancelled.get();
         }
     }
 
