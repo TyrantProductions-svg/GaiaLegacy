@@ -1546,6 +1546,12 @@ git commit -m "test(worldgen): lock deterministic generation snapshots"
 - Documents and protects every approved Phase 4 boundary without changing
   production behavior.
 
+**2026-07-25 execution note:** the documentation delegate completed Steps 3
+and 6 without changing production or test code. The root orchestrator retains
+Steps 1-2, the final branch-wide owner reviews in Step 4, and the post-doc
+clean/package verification in Step 5. Step 7 is complete only after the
+documentation commit and ignored coordination report exist.
+
 - [ ] **Step 1: Add documentation/source assertions before docs**
 
 Extend `WorldGenerationArchitectureTest` to require the final baseline,
@@ -1572,7 +1578,7 @@ snapshot document, and handoff to name:
 Expected: the documentation assertion fails because the handoff and updated
 baseline do not yet contain the required final statements.
 
-- [ ] **Step 3: Write final baseline and handoff**
+- [x] **Step 3: Write final baseline and handoff**
 
 `phase-04-handoff.md` records:
 
@@ -1627,7 +1633,7 @@ Expected: build and packaged verification pass; JUnit reports zero
 failure/error/skip; policy scans produce no prohibited match; the worktree is
 clean after the final commit.
 
-- [ ] **Step 6: Record manual/platform truth**
+- [x] **Step 6: Record manual/platform truth**
 
 Run Windows `.\gradlew.bat :game` only as an interactive developer smoke test.
 Record whether plains, hills, highlands, cave, boundary continuity, spawn,
