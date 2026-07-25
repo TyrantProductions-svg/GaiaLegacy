@@ -48,6 +48,10 @@ public final class ChunkRepository {
         return Set.copyOf(entries.keySet());
     }
 
+    public int worldHeight() {
+        return worldHeight;
+    }
+
     public ChunkState state(ChunkKey key) {
         Entry entry = entries.get(Objects.requireNonNull(key, "key"));
         if (entry == null) {

@@ -5,8 +5,10 @@ import com.gaia.world.generation.GenerationStageResult;
 import com.gaia.world.generation.WorldGenerationResult;
 import com.gaia.world.generation.WorldGenerator;
 import com.overlord.config.GameConfig;
+import com.overlord.voxel.ChunkGenerationData;
 import com.overlord.voxel.ChunkGenerationMode;
 import com.overlord.voxel.ChunkGenerationResult;
+import com.overlord.voxel.ChunkGenerationStatus;
 import com.overlord.voxel.ChunkGenerationTicket;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkRepository;
@@ -76,22 +78,47 @@ public final class WorldLoader {
             if (!generated.succeeded()) {
                 throw stageFailure(key, generated);
             }
+            ChunkGenerationData data =
+                    generated.chunkData().orElseThrow();
+            validateGeneratedData(chunks, key, data);
             ChunkGenerationResult committed =
                     chunks.commitGeneration(
-                            ticket,
-                            generated.chunkData()
-                                    .orElseThrow());
+                            ticket, data);
             if (committed.status()
                     != ChunkGenerationResult.Status.COMMITTED) {
                 throw new IllegalStateException(
-                        "Initial generation commit failed for "
+                        "Initial generation commit conflict for "
                                 + key
                                 + ": "
                                 + committed.status());
             }
         } catch (RuntimeException | Error failure) {
-            chunks.failGeneration(ticket, failure);
+            if (chunks.generationStatus(key)
+                    == ChunkGenerationStatus.GENERATING) {
+                chunks.failGeneration(ticket, failure);
+            }
             throw failure;
+        }
+    }
+
+    private static void validateGeneratedData(
+            ChunkRepository chunks,
+            ChunkKey requestedKey,
+            ChunkGenerationData data) {
+        if (!requestedKey.equals(data.key())) {
+            throw new IllegalStateException(
+                    "World generator returned key "
+                            + data.key()
+                            + " for requested key "
+                            + requestedKey);
+        }
+        int repositoryHeight = chunks.worldHeight();
+        if (data.worldHeight() != repositoryHeight) {
+            throw new IllegalStateException(
+                    "World generator returned world height "
+                            + data.worldHeight()
+                            + " for repository world height "
+                            + repositoryHeight);
         }
     }
 

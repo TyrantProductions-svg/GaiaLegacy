@@ -19,8 +19,12 @@ import com.gaia.world.generation.WorldGenerationResult;
 import com.gaia.world.generation.WorldGenerator;
 import com.overlord.assets.AssetManager;
 import com.overlord.assets.ResourceLocation;
+import com.overlord.config.GameConfig;
+import com.overlord.voxel.ChunkDirtyTracker;
+import com.overlord.voxel.ChunkGenerationData;
 import com.overlord.voxel.ChunkGenerationStatus;
 import com.overlord.voxel.ChunkKey;
+import com.overlord.voxel.ChunkRepository;
 import com.overlord.voxel.ChunkState;
 import com.overlord.voxel.World;
 import java.io.IOException;
@@ -205,6 +209,149 @@ class WorldLoaderTest {
                 world.chunks()
                         .generationFailure(firstKey)
                         .orElseThrow());
+    }
+
+    @Test
+    void mismatchedGeneratedKeyFailsLiveTicket() {
+        ChunkKey requestedKey = new ChunkKey(-2, -2);
+        ChunkKey returnedKey = new ChunkKey(20, 30);
+        World world = new World();
+        IllegalStateException failure =
+                assertRejectedGeneratedData(
+                        world,
+                        (context, key) ->
+                                succeededGeneration(
+                                        emptyData(
+                                                returnedKey,
+                                                GameConfig.Chunk
+                                                        .MAX_HEIGHT)));
+
+        assertFailedWithoutPublication(
+                world, requestedKey, failure);
+        assertTrue(failure.getMessage().contains("key"));
+        assertTrue(
+                failure.getMessage().contains(
+                        requestedKey.toString()));
+        assertTrue(
+                failure.getMessage().contains(
+                        returnedKey.toString()));
+        assertFalse(world.chunks().contains(returnedKey));
+    }
+
+    @Test
+    void mismatchedGeneratedWorldHeightFailsLiveTicket() {
+        int repositoryHeight = 8;
+        int returnedHeight = 9;
+        World world =
+                new World(
+                        new ChunkRepository(
+                                repositoryHeight,
+                                new ChunkDirtyTracker()));
+        ChunkKey requestedKey = new ChunkKey(-2, -2);
+        IllegalStateException failure =
+                assertRejectedGeneratedData(
+                        world,
+                        (context, key) ->
+                                succeededGeneration(
+                                        emptyData(
+                                                key,
+                                                returnedHeight)));
+
+        assertFailedWithoutPublication(
+                world, requestedKey, failure);
+        assertTrue(
+                failure.getMessage().contains(
+                        "world height"));
+        assertTrue(
+                failure.getMessage().contains(
+                        Integer.toString(repositoryHeight)));
+        assertTrue(
+                failure.getMessage().contains(
+                        Integer.toString(returnedHeight)));
+    }
+
+    @Test
+    void commitConflictIsReportedWithoutRunningAttemptLeak() {
+        World world = new World();
+        WorldGenerator conflictingGenerator =
+                (context, key) -> {
+                    assertTrue(
+                            world.chunks().beginUnload(key));
+                    assertTrue(
+                            world.chunks().completeUnload(key));
+                    return succeededGeneration(
+                            emptyData(
+                                    key,
+                                    GameConfig.Chunk
+                                            .MAX_HEIGHT));
+                };
+        WorldLoader loader =
+                new WorldLoader(
+                        conflictingGenerator,
+                        GENERATION_CONTEXT);
+        ChunkKey firstKey = new ChunkKey(-2, -2);
+
+        IllegalStateException failure =
+                assertThrows(
+                        IllegalStateException.class,
+                        () -> loader.load(world));
+
+        assertTrue(failure.getMessage().contains("CONFLICT"));
+        assertFalse(world.chunks().contains(firstKey));
+        assertEquals(
+                ChunkGenerationStatus.IDLE,
+                world.chunks().generationStatus(firstKey));
+        assertTrue(
+                world.chunks()
+                        .generationFailure(firstKey)
+                        .isEmpty());
+    }
+
+    private static IllegalStateException
+            assertRejectedGeneratedData(
+                    World world,
+                    WorldGenerator generator) {
+        WorldLoader loader =
+                new WorldLoader(
+                        generator,
+                        GENERATION_CONTEXT);
+        return assertThrows(
+                IllegalStateException.class,
+                () -> loader.load(world));
+    }
+
+    private static void assertFailedWithoutPublication(
+            World world,
+            ChunkKey requestedKey,
+            IllegalStateException failure) {
+        assertFalse(world.chunks().contains(requestedKey));
+        assertEquals(
+                ChunkGenerationStatus.FAILED,
+                world.chunks().generationStatus(
+                        requestedKey));
+        assertEquals(
+                failure,
+                world.chunks()
+                        .generationFailure(requestedKey)
+                        .orElseThrow());
+    }
+
+    private static WorldGenerationResult
+            succeededGeneration(
+                    ChunkGenerationData data) {
+        return new WorldGenerationResult(
+                Optional.of(data), List.of());
+    }
+
+    private static ChunkGenerationData emptyData(
+            ChunkKey key, int worldHeight) {
+        return new ChunkGenerationData(
+                key,
+                worldHeight,
+                new byte[
+                        GameConfig.Chunk.SIZE
+                                * worldHeight
+                                * GameConfig.Chunk.SIZE]);
     }
 
     private static WorldLoadResult workerLoad(
