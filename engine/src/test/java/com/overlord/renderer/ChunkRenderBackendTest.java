@@ -48,7 +48,8 @@ class ChunkRenderBackendTest {
                         new ChunkKey(0, 0),
                         -1,
                         new float[] {
-                            0.0f, 0.0f, 0.0f, 0.0f, 0.0f
+                            0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                            0.0f, 1.0f, 0.0f, 15.0f, 1.0f
                         });
 
         assertThrows(IllegalArgumentException.class, () -> renderer.upload(data));
@@ -119,8 +120,11 @@ class ChunkRenderBackendTest {
                 9,
                 new float[] {
                     0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                    0.0f, 1.0f, 0.0f, 15.0f, 1.0f,
                     1.0f, 0.0f, 0.0f, 1.0f, 0.0f,
-                    0.0f, 1.0f, 0.0f, 0.0f, 1.0f
+                    0.0f, 1.0f, 0.0f, 15.0f, 1.0f,
+                    0.0f, 1.0f, 0.0f, 0.0f, 1.0f,
+                    0.0f, 1.0f, 0.0f, 15.0f, 1.0f
                 });
     }
 

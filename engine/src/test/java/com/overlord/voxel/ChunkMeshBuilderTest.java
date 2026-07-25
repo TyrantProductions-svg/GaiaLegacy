@@ -26,6 +26,17 @@ class ChunkMeshBuilderTest {
         BlockFace.WEST,
         BlockFace.EAST
     };
+    private static final float[][] FACE_NORMALS = {
+        {0.0f, 0.0f, -1.0f},
+        {0.0f, 0.0f, 1.0f},
+        {0.0f, 1.0f, 0.0f},
+        {0.0f, -1.0f, 0.0f},
+        {-1.0f, 0.0f, 0.0f},
+        {1.0f, 0.0f, 0.0f}
+    };
+    private static final float[] FACE_LIGHTS = {
+        15.0f, 31.0f, 47.0f, 63.0f, 79.0f, 95.0f
+    };
 
     @Test
     void resolvesDistinctAtlasRegionForEachBlockFace() {
@@ -42,13 +53,21 @@ class ChunkMeshBuilderTest {
         float[] vertices = data.vertices();
 
         assertEquals(255, resolvedId.get());
-        assertEquals(180, vertices.length);
+        assertEquals(360, vertices.length);
         for (int face = 0; face < FACE_ORDER.length; face++) {
             assertFaceUBounds(
                     vertices,
-                    face * 30,
+                    face * 60,
                     face * 16.0f / 96.0f,
                     (face + 1) * 16.0f / 96.0f);
+            assertFaceVertexData(
+                    vertices,
+                    face * 60,
+                    FACE_ORDER[face],
+                    FACE_NORMALS[face][0],
+                    FACE_NORMALS[face][1],
+                    FACE_NORMALS[face][2],
+                    FACE_LIGHTS[face]);
         }
     }
 
@@ -98,7 +117,7 @@ class ChunkMeshBuilderTest {
                         new ChunkMeshInput(
                                 center, null, null, null, east));
 
-        assertEquals(180, data.vertices().length);
+        assertEquals(360, data.vertices().length);
     }
 
     @Test
@@ -121,7 +140,7 @@ class ChunkMeshBuilderTest {
                         new ChunkMeshInput(
                                 center, null, null, null, east));
 
-        assertEquals(150, data.vertices().length);
+        assertEquals(300, data.vertices().length);
     }
 
     @Test
@@ -144,7 +163,7 @@ class ChunkMeshBuilderTest {
                         new ChunkMeshInput(
                                 center, null, null, west, null));
 
-        assertEquals(150, data.vertices().length);
+        assertEquals(300, data.vertices().length);
     }
 
     @Test
@@ -167,7 +186,7 @@ class ChunkMeshBuilderTest {
                         new ChunkMeshInput(
                                 center, north, null, null, null));
 
-        assertEquals(150, data.vertices().length);
+        assertEquals(300, data.vertices().length);
     }
 
     @Test
@@ -190,7 +209,7 @@ class ChunkMeshBuilderTest {
                         new ChunkMeshInput(
                                 center, null, south, null, null));
 
-        assertEquals(150, data.vertices().length);
+        assertEquals(300, data.vertices().length);
     }
 
     @Test
@@ -209,7 +228,7 @@ class ChunkMeshBuilderTest {
                         new ChunkMeshInput(
                                 center, null, null, null, null));
 
-        assertEquals(180, data.vertices().length);
+        assertEquals(360, data.vertices().length);
     }
 
     @Test
@@ -383,7 +402,7 @@ class ChunkMeshBuilderTest {
         float actualMin = Float.POSITIVE_INFINITY;
         float actualMax = Float.NEGATIVE_INFINITY;
         for (int vertex = 0; vertex < 6; vertex++) {
-            float u = vertices[faceOffset + vertex * 5 + 3];
+            float u = vertices[faceOffset + vertex * 10 + 3];
             actualMin = Math.min(actualMin, u);
             actualMax = Math.max(actualMax, u);
         }
@@ -393,9 +412,30 @@ class ChunkMeshBuilderTest {
 
     private static float maxPositionX(float[] vertices) {
         float maximum = Float.NEGATIVE_INFINITY;
-        for (int offset = 0; offset < vertices.length; offset += 5) {
+        for (int offset = 0; offset < vertices.length; offset += 10) {
             maximum = Math.max(maximum, vertices[offset]);
         }
         return maximum;
+    }
+
+    private static void assertFaceVertexData(
+            float[] vertices,
+            int faceOffset,
+            BlockFace face,
+            float normalX,
+            float normalY,
+            float normalZ,
+            float faceLight) {
+        for (int vertex = 0; vertex < 6; vertex++) {
+            int offset = faceOffset + vertex * 10;
+            assertEquals(normalX, vertices[offset + 5], EPSILON);
+            assertEquals(normalY, vertices[offset + 6], EPSILON);
+            assertEquals(normalZ, vertices[offset + 7], EPSILON);
+            assertEquals(
+                    faceLight,
+                    vertices[offset + 8],
+                    EPSILON);
+            assertEquals(1.0f, vertices[offset + 9], EPSILON);
+        }
     }
 }

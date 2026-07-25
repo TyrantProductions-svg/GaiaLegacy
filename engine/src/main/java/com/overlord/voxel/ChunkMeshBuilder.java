@@ -52,37 +52,37 @@ public final class ChunkMeshBuilder implements ChunkMesher {
                     if (!isBlockSolid(
                             input.getBlock(x, y, z - 1))) {
                         addFace(
-                                vertices, x, y, z, 0,
+                                vertices, x, y, z, FACES[0],
                                 renderInfo.region(FACES[0]));
                     }
                     if (!isBlockSolid(
                             input.getBlock(x, y, z + 1))) {
                         addFace(
-                                vertices, x, y, z, 1,
+                                vertices, x, y, z, FACES[1],
                                 renderInfo.region(FACES[1]));
                     }
                     if (!isBlockSolid(
                             input.getBlock(x, y + 1, z))) {
                         addFace(
-                                vertices, x, y, z, 2,
+                                vertices, x, y, z, FACES[2],
                                 renderInfo.region(FACES[2]));
                     }
                     if (!isBlockSolid(
                             input.getBlock(x, y - 1, z))) {
                         addFace(
-                                vertices, x, y, z, 3,
+                                vertices, x, y, z, FACES[3],
                                 renderInfo.region(FACES[3]));
                     }
                     if (!isBlockSolid(
                             input.getBlock(x - 1, y, z))) {
                         addFace(
-                                vertices, x, y, z, 4,
+                                vertices, x, y, z, FACES[4],
                                 renderInfo.region(FACES[4]));
                     }
                     if (!isBlockSolid(
                             input.getBlock(x + 1, y, z))) {
                         addFace(
-                                vertices, x, y, z, 5,
+                                vertices, x, y, z, FACES[5],
                                 renderInfo.region(FACES[5]));
                     }
                 }
@@ -115,80 +115,92 @@ public final class ChunkMeshBuilder implements ChunkMesher {
             float x,
             float y,
             float z,
-            int face,
-            TextureRegion region) {
-        float[] faceVerts =
-                getFaceVertices(x, y, z, face, region);
-        for (float v : faceVerts) {
-            vertices.add(v);
-        }
-    }
-    
-    private static float[] getFaceVertices(
-            float x,
-            float y,
-            float z,
-            int face,
+            BlockFace face,
             TextureRegion region) {
         float u = region.uMin();
         float uEnd = region.uMax();
         float v = region.vMin();
         float vEnd = region.vMax();
-        
-        boolean flipV = (face != 2);
+
+        boolean flipV = face != BlockFace.UP;
         float v0 = flipV ? vEnd : v;
         float v1 = flipV ? v : vEnd;
-        
+
         switch (face) {
-            case 0: return new float[] {
-                x, y, z, u, v0,
-                x + 1, y, z, uEnd, v0,
-                x + 1, y + 1, z, uEnd, v1,
-                x + 1, y + 1, z, uEnd, v1,
-                x, y + 1, z, u, v1,
-                x, y, z, u, v0
-            };
-            case 1: return new float[] {
-                x, y, z + 1, u, v0,
-                x + 1, y, z + 1, uEnd, v0,
-                x + 1, y + 1, z + 1, uEnd, v1,
-                x + 1, y + 1, z + 1, uEnd, v1,
-                x, y + 1, z + 1, u, v1,
-                x, y, z + 1, u, v0
-            };
-            case 2: return new float[] {
-                x, y + 1, z + 1, u, v0,
-                x + 1, y + 1, z + 1, uEnd, v0,
-                x + 1, y + 1, z, uEnd, v1,
-                x + 1, y + 1, z, uEnd, v1,
-                x, y + 1, z, u, v1,
-                x, y + 1, z + 1, u, v0
-            };
-            case 3: return new float[] {
-                x, y, z, u, v0,
-                x + 1, y, z, uEnd, v0,
-                x + 1, y, z + 1, uEnd, v1,
-                x + 1, y, z + 1, uEnd, v1,
-                x, y, z + 1, u, v1,
-                x, y, z, u, v0
-            };
-            case 4: return new float[] {
-                x, y, z, u, v0,
-                x, y, z + 1, uEnd, v0,
-                x, y + 1, z + 1, uEnd, v1,
-                x, y + 1, z + 1, uEnd, v1,
-                x, y + 1, z, u, v1,
-                x, y, z, u, v0
-            };
-            case 5: return new float[] {
-                x + 1, y, z + 1, u, v0,
-                x + 1, y, z, uEnd, v0,
-                x + 1, y + 1, z, uEnd, v1,
-                x + 1, y + 1, z, uEnd, v1,
-                x + 1, y + 1, z + 1, u, v1,
-                x + 1, y, z + 1, u, v0
-            };
-            default: return new float[0];
+            case NORTH -> {
+                addVertex(vertices, x, y, z, u, v0, face, 0, 0, -1);
+                addVertex(vertices, x + 1, y, z, uEnd, v0, face, 0, 0, -1);
+                addVertex(vertices, x + 1, y + 1, z, uEnd, v1, face, 0, 0, -1);
+                addVertex(vertices, x + 1, y + 1, z, uEnd, v1, face, 0, 0, -1);
+                addVertex(vertices, x, y + 1, z, u, v1, face, 0, 0, -1);
+                addVertex(vertices, x, y, z, u, v0, face, 0, 0, -1);
+            }
+            case SOUTH -> {
+                addVertex(vertices, x, y, z + 1, u, v0, face, 0, 0, 1);
+                addVertex(vertices, x + 1, y, z + 1, uEnd, v0, face, 0, 0, 1);
+                addVertex(vertices, x + 1, y + 1, z + 1, uEnd, v1, face, 0, 0, 1);
+                addVertex(vertices, x + 1, y + 1, z + 1, uEnd, v1, face, 0, 0, 1);
+                addVertex(vertices, x, y + 1, z + 1, u, v1, face, 0, 0, 1);
+                addVertex(vertices, x, y, z + 1, u, v0, face, 0, 0, 1);
+            }
+            case UP -> {
+                addVertex(vertices, x, y + 1, z + 1, u, v0, face, 0, 1, 0);
+                addVertex(vertices, x + 1, y + 1, z + 1, uEnd, v0, face, 0, 1, 0);
+                addVertex(vertices, x + 1, y + 1, z, uEnd, v1, face, 0, 1, 0);
+                addVertex(vertices, x + 1, y + 1, z, uEnd, v1, face, 0, 1, 0);
+                addVertex(vertices, x, y + 1, z, u, v1, face, 0, 1, 0);
+                addVertex(vertices, x, y + 1, z + 1, u, v0, face, 0, 1, 0);
+            }
+            case DOWN -> {
+                addVertex(vertices, x, y, z, u, v0, face, 0, -1, 0);
+                addVertex(vertices, x + 1, y, z, uEnd, v0, face, 0, -1, 0);
+                addVertex(vertices, x + 1, y, z + 1, uEnd, v1, face, 0, -1, 0);
+                addVertex(vertices, x + 1, y, z + 1, uEnd, v1, face, 0, -1, 0);
+                addVertex(vertices, x, y, z + 1, u, v1, face, 0, -1, 0);
+                addVertex(vertices, x, y, z, u, v0, face, 0, -1, 0);
+            }
+            case WEST -> {
+                addVertex(vertices, x, y, z, u, v0, face, -1, 0, 0);
+                addVertex(vertices, x, y, z + 1, uEnd, v0, face, -1, 0, 0);
+                addVertex(vertices, x, y + 1, z + 1, uEnd, v1, face, -1, 0, 0);
+                addVertex(vertices, x, y + 1, z + 1, uEnd, v1, face, -1, 0, 0);
+                addVertex(vertices, x, y + 1, z, u, v1, face, -1, 0, 0);
+                addVertex(vertices, x, y, z, u, v0, face, -1, 0, 0);
+            }
+            case EAST -> {
+                addVertex(vertices, x + 1, y, z + 1, u, v0, face, 1, 0, 0);
+                addVertex(vertices, x + 1, y, z, uEnd, v0, face, 1, 0, 0);
+                addVertex(vertices, x + 1, y + 1, z, uEnd, v1, face, 1, 0, 0);
+                addVertex(vertices, x + 1, y + 1, z, uEnd, v1, face, 1, 0, 0);
+                addVertex(vertices, x + 1, y + 1, z + 1, u, v1, face, 1, 0, 0);
+                addVertex(vertices, x + 1, y, z + 1, u, v0, face, 1, 0, 0);
+            }
         }
+    }
+
+    private static void addVertex(
+            List<Float> vertices,
+            float x,
+            float y,
+            float z,
+            float u,
+            float v,
+            BlockFace face,
+            float normalX,
+            float normalY,
+            float normalZ) {
+        vertices.add(x);
+        vertices.add(y);
+        vertices.add(z);
+        vertices.add(u);
+        vertices.add(v);
+        vertices.add(normalX);
+        vertices.add(normalY);
+        vertices.add(normalZ);
+        vertices.add(
+                VoxelVertexFormat.encodeFaceLight(
+                        face,
+                        VoxelVertexFormat.DEFAULT_LIGHT_LEVEL));
+        vertices.add(VoxelVertexFormat.DEFAULT_AMBIENT_OCCLUSION);
     }
 }
