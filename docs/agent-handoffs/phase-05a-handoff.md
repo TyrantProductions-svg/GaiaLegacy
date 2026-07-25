@@ -456,10 +456,10 @@ Final committed branch `git diff --stat origin/main...HEAD` at `0ea3fa7`:
 69 files changed, 6686 insertions(+), 331 deletions(-)
 ```
 
-Current final-review documentation correction relative to `origin/main`:
+Final approved closeout relative to `origin/main`:
 
 ```text
-69 files changed, 6755 insertions(+), 331 deletions(-)
+69 files changed, 6757 insertions(+), 331 deletions(-)
 ```
 
 Suggested final implementation commit:
