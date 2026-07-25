@@ -1226,10 +1226,16 @@ class ChunkMeshManagerTest {
     }
 
     private static float[] oneBlockVertices() {
+        float faceLight = VoxelVertexFormat.encodeFaceLight(
+                BlockFace.UP,
+                VoxelVertexFormat.DEFAULT_LIGHT_LEVEL);
         return new float[] {
-            0, 0, 0, 0, 0,
-            1, 0, 0, 1, 0,
-            0, 1, 0, 0, 1
+            0, 0, 0, 0, 0, 0, 1, 0, faceLight,
+                    VoxelVertexFormat.DEFAULT_AMBIENT_OCCLUSION,
+            1, 0, 0, 1, 0, 0, 1, 0, faceLight,
+                    VoxelVertexFormat.DEFAULT_AMBIENT_OCCLUSION,
+            0, 1, 0, 0, 1, 0, 1, 0, faceLight,
+                    VoxelVertexFormat.DEFAULT_AMBIENT_OCCLUSION
         };
     }
 
