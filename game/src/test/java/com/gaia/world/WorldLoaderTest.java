@@ -595,7 +595,7 @@ class WorldLoaderTest {
             throws Exception {
         CountDownLatch commitGateAcquired = new CountDownLatch(1);
         CountDownLatch releaseCommit = new CountDownLatch(1);
-        CountDownLatch beforeCancel = new CountDownLatch(1);
+        CountDownLatch cancelVersionSampled = new CountDownLatch(1);
         CountDownLatch beforeSuccess = new CountDownLatch(1);
         CountDownLatch releaseSuccess = new CountDownLatch(1);
         ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -617,8 +617,8 @@ class WorldLoaderTest {
                             }
 
                             @Override
-                            public void beforeCancel() {
-                                beforeCancel.countDown();
+                            public void cancelVersionSampled() {
+                                cancelVersionSampled.countDown();
                             }
 
                             @Override
@@ -636,7 +636,9 @@ class WorldLoaderTest {
             assertTrue(commitGateAcquired.await(5, TimeUnit.SECONDS));
             Future<Boolean> cancellation =
                     canceller.submit(() -> future.cancel(true));
-            assertTrue(beforeCancel.await(5, TimeUnit.SECONDS));
+            assertTrue(
+                    cancelVersionSampled.await(
+                            5, TimeUnit.SECONDS));
 
             releaseCommit.countDown();
             assertFalse(cancellation.get(5, TimeUnit.SECONDS));
@@ -663,7 +665,7 @@ class WorldLoaderTest {
             throws Exception {
         CountDownLatch successGateAcquired = new CountDownLatch(1);
         CountDownLatch releaseSuccess = new CountDownLatch(1);
-        CountDownLatch beforeCancel = new CountDownLatch(1);
+        CountDownLatch cancelVersionSampled = new CountDownLatch(1);
         ExecutorService worker = Executors.newSingleThreadExecutor();
         ExecutorService canceller = Executors.newSingleThreadExecutor();
         WorldLoader loader =
@@ -681,8 +683,8 @@ class WorldLoaderTest {
                             }
 
                             @Override
-                            public void beforeCancel() {
-                                beforeCancel.countDown();
+                            public void cancelVersionSampled() {
+                                cancelVersionSampled.countDown();
                             }
                         });
         java.util.concurrent.CompletableFuture<WorldLoadResult> future =
@@ -691,7 +693,9 @@ class WorldLoaderTest {
             assertTrue(successGateAcquired.await(5, TimeUnit.SECONDS));
             Future<Boolean> cancellation =
                     canceller.submit(() -> future.cancel(true));
-            assertTrue(beforeCancel.await(5, TimeUnit.SECONDS));
+            assertTrue(
+                    cancelVersionSampled.await(
+                            5, TimeUnit.SECONDS));
 
             releaseSuccess.countDown();
             assertFalse(cancellation.get(5, TimeUnit.SECONDS));

@@ -577,7 +577,6 @@ public final class WorldLoader {
                     @Override
                     public boolean cancel(
                             boolean mayInterruptIfRunning) {
-                        observer.beforeCancel();
                         boolean cancelled =
                                 cancellation.cancel(
                                         () ->
@@ -681,6 +680,7 @@ public final class WorldLoader {
                 Runnable queuedCancellation,
                 boolean mayInterruptIfRunning) {
             long observedVersion = gateVersion;
+            observer.cancelVersionSampled();
             synchronized (gate) {
                 if (phase == TaskPhase.CANCELLED
                         || phase == TaskPhase.FINISHED
@@ -769,7 +769,7 @@ public final class WorldLoader {
 
         default void successGateAcquired() {}
 
-        default void beforeCancel() {}
+        default void cancelVersionSampled() {}
     }
 
     private static String configFingerprint(
