@@ -67,3 +67,36 @@ tasks.register('verifyPackagedResources') {
 tasks.named('check') {
     dependsOn tasks.named('verifyPackagedResources')
 }
+
+tasks.register('verifyInstalledShaderResources') {
+    dependsOn tasks.named('installDist')
+    doLast {
+        def libraryDirectory = file('build/install/game/lib')
+        def engineJars = fileTree(libraryDirectory) {
+            include 'engine-*.jar'
+        }.files.sort()
+        if (engineJars.size() != 1) {
+            throw new GradleException(
+                "Expected exactly one installed engine JAR in "
+                    + "${libraryDirectory}, found ${engineJars}")
+        }
+
+        def engineJar = engineJars[0]
+        def required = [
+            'assets/overlord/shaders/world.vert',
+            'assets/overlord/shaders/world.frag'
+        ]
+        new java.util.zip.ZipFile(engineJar).withCloseable { zip ->
+            required.each { path ->
+                if (zip.getEntry(path) == null) {
+                    throw new GradleException(
+                        "Installed engine JAR is missing ${path}")
+                }
+            }
+        }
+    }
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('verifyInstalledShaderResources')
+}

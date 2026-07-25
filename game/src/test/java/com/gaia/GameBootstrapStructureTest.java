@@ -198,4 +198,29 @@ class GameBootstrapStructureTest {
                     "Missing packaged-resource check for " + required);
         }
     }
+
+    @Test
+    void verifiesShaderResourcesInTheInstalledEngineJar()
+            throws IOException {
+        String buildScript = Files.readString(Path.of("build.gradle"));
+
+        assertTrue(
+                buildScript.contains(
+                        "tasks.register('verifyInstalledShaderResources')"));
+        assertTrue(buildScript.contains("dependsOn tasks.named('installDist')"));
+        assertTrue(
+                buildScript.contains("build/install/game/lib"));
+        assertTrue(buildScript.contains("engine-*.jar"));
+        assertTrue(buildScript.contains("new java.util.zip.ZipFile(engineJar)"));
+        assertTrue(
+                buildScript.contains(
+                        "assets/overlord/shaders/world.vert"));
+        assertTrue(
+                buildScript.contains(
+                        "assets/overlord/shaders/world.frag"));
+        assertTrue(
+                buildScript.contains("dependsOn tasks.named("
+                        + "'verifyInstalledShaderResources')"));
+        assertTrue(buildScript.contains("tasks.named('check')"));
+    }
 }
