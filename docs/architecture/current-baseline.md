@@ -2,15 +2,17 @@
 
 ## Snapshot
 
-This document describes the Phase 4 deterministic world-generation
-architecture on `feat/worldgen-pipeline`, based on `origin/main` at commit
-`f1ca80beb47616025bea21615d7e3fccaa5b31c6`. The implementation and Task 8
-architecture-guard work end at `eea7142f9cca99703e69d9d31b1e1ab9760fa28c`;
-the Phase 4 documentation commit follows that implementation. Phase 4
-preserves the Phase 3 chunk mesh lifecycle, Phase 6 fixed-step physics
-foundation, and Phase 7 interaction/inventory contracts while replacing the
-legacy monolithic terrain generator with deterministic detached CPU
-generation and repository-owned publication.
+This document describes the Phase 5A render-pipeline architecture on
+`feat/render-pipeline-core`, based on `origin/main` at
+`647d91d5fcab15a0acdd60e7898729e35182f71e`. The reviewed Tasks 1 through 8
+implementation ends at `e603946cbb00e42c0dba097796f21f745c4d5683`;
+Task 9 documentation and final controller-supplied manual/owner evidence
+follow that implementation. Phase 5A preserves the Phase 3 independent-Chunk
+mesh lifecycle, approved Phase 4 deterministic world, Phase 6 fixed-step
+physics foundation, and Phase 7 interaction/inventory contracts while
+replacing inline shaders and direct world drawing with JAR-safe shader
+resources, one ten-float voxel vertex format, non-owning runtime materials,
+an ordered render pipeline, and exact OpenGL state scopes.
 
 The repository is a two-module Gradle build:
 
@@ -27,7 +29,13 @@ Both modules target Java 17. The checked-in Gradle 8.5 Wrapper can run on JDK 21
 - creates `TaskScheduler`;
 - registers itself, `EventBus`, `ModuleManager`, and the scheduler in the global `ServiceLocator`.
 
-`Engine.init()` creates `Window`, `Camera`, `Renderer`, and `World`, initializes the renderer, registers those services, starts scheduling, and marks the engine as running. `Engine.shutdown()` stops modules and scheduling, cleans the renderer, destroys the window, and clears global registries.
+`Engine` receives `RenderAssets` and an `AssetManager` through constructor
+injection. `Engine.init()` creates `Window`, `Camera`, `Renderer`, and `World`,
+initializes the renderer with those injected assets, registers the established
+runtime services, starts scheduling, and marks the engine as running.
+`Engine.shutdown()` stops modules and scheduling, cleans the renderer, destroys
+the window, and clears global registries. Phase 5A does not register assets,
+materials, queues, passes, or shader programs in `ServiceLocator`.
 
 Phase 6 does not add physics services to `ServiceLocator`. `GameBootstrap`
 constructs and injects the shared collision resolver, `CollisionWorld`,
@@ -274,14 +282,51 @@ rendering limitations and later confirmed that an entrance was found.
 
 `Window` initializes GLFW, requests an OpenGL 4.1 core forward-compatible
 context, makes it current, then creates LWJGL OpenGL capabilities. `Renderer`
-enables depth testing, compiles GLSL 410 shaders, loads the texture atlas, and
-implements the `ChunkRenderBackend` GPU boundary. `Mesh`, `Shader`, and
-`Texture` directly own OpenGL object IDs and delete them in `cleanup()`.
+remains the frame coordinator and `ChunkRenderBackend` GPU boundary, but no
+longer embeds shader source or owns a direct `clear`/`renderChunks` path.
+It loads `overlord:shaders/world.vert` and
+`overlord:shaders/world.frag` through the injected Phase 2 `AssetManager`,
+creates one guarded `ShaderProgram`, uploads one shared atlas `Texture`,
+creates one non-owning runtime `Material`, and constructs one reusable
+`RenderQueue` plus the immutable pass order `sky`, `world`, `debug`.
+
+The shader resources are GLSL `#version 410 core` JAR entries. The required
+uniform set is `projection`, `view`, `model`, and `textureAtlas`; locations are
+resolved once at successful link and cached. Compile, link, missing-uniform,
+and cleanup failures preserve the program/stage/resource context; a missing
+uniform names both the vertex and fragment `ResourceLocation` values. Partial
+shader/program resources are deleted before failure escapes. `ShaderProgram`,
+`Mesh`, and `Texture` own their OpenGL object IDs. Runtime `Material` only
+references the shared program and texture and has no cleanup/close ownership;
+`Renderer` releases the texture and then the program exactly once.
+
+`VoxelVertexFormat` is the only vertex-layout authority. Every vertex is ten
+floats / 40 bytes: position `vec3` at location 0/offset 0, UV `vec2` at
+location 1/offset 12, normal `vec3` at location 2/offset 20, encoded
+face/light `float` at location 3/offset 32, and ambient occlusion `float` at
+location 4/offset 36. Stable face IDs are NORTH=0, SOUTH=1, UP=2, DOWN=3,
+WEST=4, EAST=5, and `encodedFaceLight = faceId * 16 + lightLevel`. Phase 5A
+emits light level 15 and AO 1.0 while its shaders intentionally consume only
+position and UV to preserve the approved Phase 4 visual result.
+
+Each visible frame submits current independent `ChunkRenderObject` instances
+to the queue, executes `SkyRenderPass`, `WorldRenderPass`, then the disabled
+`DebugRenderPass`, and clears the queue in `finally`. Sky disables depth test,
+keeps depth writes on, disables blend/cull, and clears color/depth. World
+opaque enables depth test/writes and disables blend/cull. The transparent API
+enables depth test, disables depth writes, uses source-alpha blending, and
+keeps culling off. Every state scope captures and restores depth-test
+enablement, depth write mask, blend enablement plus RGB/alpha factors and
+equations, cull enablement, current program, active texture unit, and texture
+unit 0's 2D binding, including exceptional paths. If applying requested pass
+state fails after capture, scope construction immediately restores the
+incoming snapshot before rethrowing the original failure; any rollback failure
+is suppressed without replacing that primary failure.
 
 Terrain rendering uses independent `ChunkRenderObject` instances. Each object
 binds a `ChunkKey`, source revision, owned GPU mesh, chunk-local model
 translation, and world-space bounds. `Renderer.upload`, `release`, and
-`renderChunks` assert the captured `MainThreadGuard`; the renderer no longer
+`renderFrame` assert the captured `MainThreadGuard`; the renderer no longer
 owns or replaces one combined terrain mesh. `ChunkMeshManager` owns the
 main-thread map of installed objects and releases the previous object only
 after a replacement upload succeeds. Empty mesh data reaches `RENDERABLE`
@@ -298,6 +343,11 @@ Current boundaries and risks:
 - CPU generation and immutable-snapshot meshing run on dedicated workers.
   Completion draining, at most two uploads per frame, rendering, replacement,
   explicit unload, and manager close run on the main/context-owning thread.
+- `Renderer.init`, `renderFrame`, framebuffer resize, program/texture
+  creation and cleanup, VAO/VBO upload/draw/release, state capture/apply/
+  restore, and uniform upload all assert the captured `MainThreadGuard`.
+  Workers may produce `ChunkMeshData`; they cannot create or manipulate GPU
+  resources, materials, passes, or state scopes.
 - Failed uploads preserve the installed render object and remain explicit
   failures; stale and unloaded results perform no GPU action.
 - The manager checks `READY_FOR_UPLOAD` state and revision before charging the
@@ -305,10 +355,18 @@ Current boundaries and risks:
   concurrent-mutation window between those checks can consume one frame-budget
   slot without performing a GPU upload; correctness and resource ownership are
   preserved.
-- Phase 3 exposes bounds but does not implement frustum culling, batching, LOD,
-  transparent sorting, or automatic streaming.
+- Phase 3 exposes bounds but Phase 5A still does not implement frustum
+  culling, batching, LOD, transparent sorting, or automatic streaming. The
+  transparent queue API keeps stable insertion order, but production chunks
+  are not split by material and there is no end-to-end transparent geometry
+  path.
 
 All future renderer work must remain compatible with OpenGL 4.1 / GLSL 410 and must keep every OpenGL call and GPU resource create/upload/destroy action on the main/context-owning thread.
+Phase 5B may add deliberate lighting, AO evaluation, sky/fog/gamma, and
+culling only without breaking the vertex layout, shader/material resource
+identity, exact state restoration, pass/queue cleanup, or Phase 3
+revision/dirty/stale ownership documented in
+`docs/architecture/phase-05a-render-contract.md`.
 
 ## Phase 7 contracts
 
@@ -414,8 +472,10 @@ Current boundaries and risks:
 
 ## Current application flow
 
-`GameBootstrap` is the composition root. It loads data-driven assets, starts
-the engine, constructs the current visual-candidate immutable
+`GameBootstrap` is the composition root. It creates one `AssetManager`, uses
+it to load Gaia's data-driven block atlas/material catalog and engine-owned
+shader resources, injects the resulting `RenderAssets` and the same manager
+into `Engine`, starts the engine, constructs the approved version-2 immutable
 world-generation config and six-stage CPU generator, one shared default
 block-shape resolver,
 `CollisionWorld`, `BlockRaycast`, player body, `PlayerController`, and
@@ -434,6 +494,12 @@ eligible per-key CPU meshing, drains completions, and processes up to two
 uploads per frame while continuing clear/swap. It enters `RUNNING` only after
 every initial key is `RENDERABLE`, then renders the manager's independent
 object collection.
+
+`GameLoop` calls exactly one `Renderer.renderFrame` for each visible frame:
+an empty collection while loading and the mesh manager's current independent
+render objects while running. Mesh completion/upload pumping and camera
+interpolation still precede rendering; buffer swap and input polling ownership
+are unchanged.
 
 `RUNNING` uses an exact `1.0 / 60.0` fixed step with an eight-step catch-up
 limit, sufficient for the required 10 FPS case while preserving the existing
@@ -469,4 +535,35 @@ than reusing candidate version-1 values. Its configuration fingerprint is
 `56cb2f243319c7cf275ade89f480f9208ce5c1f85334eb225e6b56ed18e3012a`
 and its 81-Chunk aggregate hash is
 `ec2c76a97f36d34b7360ae9abbb0be60fb8790f275fdaf5227a7daeae9754353`.
-Native macOS verification remains unrun.
+The Phase 5A Windows automated gate at implementation HEAD `e603946` passed
+with 60 Engine suites / 573 tests and 29 Game suites / 249 tests (822 total),
+with zero failures, errors, or skips. Standalone packaged-resource checks also
+confirmed both shader entries in the engine JAR and installed engine JAR.
+
+Owner review found two failure-path gaps. Commit `0fe593b` now restores the
+captured state when `RenderStateScope` pass-state application fails and
+preserves rollback failure as suppressed. Commit `e603946` now includes both
+world shader resource identities in a missing-uniform diagnostic. Both
+findings have focused regression coverage and passed the complete gate above.
+Final Engine-owner re-review confirmed both findings closed and returned
+**APPROVED**, with no remaining Critical, Important, or Minor finding.
+
+The controller's valid serial Windows development run rendered the current
+grass/dirt/stone atlas and approved plains/tree, rolling-hills, and rocky
+highland/outcrop directions without a black-screen or inline-shader
+regression. Movement, jump input, mouse-look, F1 release/recapture, maximize
+resize, focus loss/restore, and Escape shutdown were observed; Gradle ended
+`BUILD SUCCESSFUL` with exit code 0. The installDist launcher rendered the
+same hills/trees/materials, accepted mouse-look, and closed through Escape
+with exit code 0. The cave entrance was not re-navigated under the user's
+earlier explicit waiver that the entrance had already been found. Screenshots
+were inspected in-app only and were not committed.
+
+Both fixes affect failure handling/diagnostics only and do not change normal
+render output, shader source, vertex data, pass state, world generation, or
+input behavior, so the valid serial Windows development and installDist exit-0
+evidence was retained without another GUI run. Final Game/shared-owner
+re-review confirmed the `Renderer.renderFrame` documentation Minor closed and
+returned **APPROVED**, with no remaining Critical, Important, or Minor
+finding. Native macOS clean-build and interactive verification are
+**NOT RUN**; no Windows result is used to infer macOS runtime success.

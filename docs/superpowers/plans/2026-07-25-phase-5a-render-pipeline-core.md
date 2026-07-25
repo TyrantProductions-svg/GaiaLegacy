@@ -1236,7 +1236,7 @@ git commit -m "test(rendering): guard pipeline and packaged shaders"
 - Records exact Windows/macOS/manual status and interfaces Phase 5B must not
   break.
 
-- [ ] **Step 1: Write the render contract**
+- [x] **Step 1: Write the render contract**
 
 Record:
 
@@ -1250,7 +1250,7 @@ Record:
 - transparent-queue limitations;
 - Phase 5B deferred lighting/AO/sky/fog/gamma/culling work.
 
-- [ ] **Step 2: Run the complete Windows automated gate**
+- [x] **Step 2: Run the complete Windows automated gate**
 
 ```powershell
 .\gradlew.bat clean test build --console=plain --no-daemon
@@ -1265,7 +1265,7 @@ Record:
 Parse both module XML directories and record exact suite, test, failure,
 error, and skip counts. Do not infer counts from `BUILD SUCCESSFUL`.
 
-- [ ] **Step 3: Run final hygiene and scope checks**
+- [x] **Step 3: Run final hygiene and scope checks**
 
 ```powershell
 git diff --check origin/main
@@ -1286,7 +1286,7 @@ Also verify:
   `ChunkMeshManager` production diff;
 - both shader files occur in the engine JAR and installed engine JAR.
 
-- [ ] **Step 4: Run Windows development interactive acceptance**
+- [x] **Step 4: Run Windows development interactive acceptance**
 
 Start:
 
@@ -1301,7 +1301,7 @@ movement, jump, and Escape. Record the actual Gradle/game exit code.
 Stop instead of changing worldgen or effects if visual equivalence fails for
 an unexplained reason.
 
-- [ ] **Step 5: Run Windows installDist acceptance**
+- [x] **Step 5: Run Windows installDist acceptance**
 
 Build and launch:
 
@@ -1315,7 +1315,7 @@ If the distribution path differs, inspect Gradle's reported install directory
 and document the actual generated launcher path; do not hard-code a developer
 machine path in source or build files.
 
-- [ ] **Step 6: Record native macOS status**
+- [x] **Step 6: Record native macOS status**
 
 On native macOS run:
 
@@ -1328,7 +1328,7 @@ Confirm GLSL 410 compilation, Retina framebuffer rendering, resize, focus,
 F1, and Escape. If no native macOS environment is available, write
 `macOS NOT RUN` in the handoff; do not claim cross-platform runtime success.
 
-- [ ] **Step 7: Perform branch-wide owner reviews**
+- [x] **Step 7: Perform branch-wide owner reviews**
 
 Request:
 
@@ -1342,7 +1342,7 @@ Resolve every Critical, Important, and Minor finding through a focused
 RED/GREEN cycle or an evidence-based documentation correction. Re-run the
 complete relevant gate after any production change.
 
-- [ ] **Step 8: Create the Phase 5A handoff**
+- [x] **Step 8: Create the Phase 5A handoff**
 
 Include:
 
@@ -1370,7 +1370,7 @@ Suggested PR title:
 refactor(rendering): add cross-platform render pipeline core
 ```
 
-- [ ] **Step 9: Commit Task 9**
+- [x] **Step 9: Commit Task 9**
 
 ```powershell
 git add docs/architecture/phase-05a-render-contract.md `
@@ -1381,7 +1381,7 @@ git diff --cached --check
 git commit -m "docs(rendering): record Phase 5A render contracts"
 ```
 
-- [ ] **Step 10: Final post-commit verification**
+- [x] **Step 10: Final post-commit verification**
 
 ```powershell
 git status --short
@@ -1391,3 +1391,36 @@ git diff --stat origin/main..HEAD
 
 Expected: clean status, a final HEAD on `feat/render-pipeline-core`, and no
 push, pull request, or merge.
+
+#### Task 9 execution status
+
+- Steps 1 through 6 and Step 8 are complete.
+- Post-fix implementation HEAD:
+  `e603946cbb00e42c0dba097796f21f745c4d5683`.
+- Windows automated gate: 60 Engine suites / 573 tests and 29 Game suites /
+  249 tests, totaling 89 suites / 822 tests with 0 failures, 0 errors, and
+  0 skipped.
+- All four required Gradle commands passed, including standalone packaged,
+  engine-JAR shader, and installed-engine-JAR shader checks.
+- Hygiene, JDK-path, game-OpenGL, OpenGL/GLSL-version, compute/SSBO,
+  engine-to-game, and protected production-diff audits found no prohibited
+  match.
+- Valid serial Windows development acceptance passed with
+  `dev-game.exit=0`; the installDist launcher passed with
+  `install-game.exit=0`. Screenshots were inspected in-app only and not
+  committed. Cave entrance re-navigation remained waived by the user.
+- Owner finding `0fe593b` restores the incoming state when pass-state apply
+  fails; owner finding `e603946` adds both shader resource identities to
+  missing-uniform diagnostics. Both are failure-path-only fixes with focused
+  regressions and a complete green post-fix gate. They do not change normal
+  rendering/input behavior, so the valid GUI exit-0 evidence was retained
+  without another GUI run.
+- Native macOS automated and interactive acceptance is **NOT RUN**.
+- Step 7 is complete. Engine-owner and Game/shared-owner final re-reviews are
+  **APPROVED**, each with no remaining Critical, Important, or Minor finding.
+  Engine confirmed the `0fe593b` and `e603946` findings closed; Game/shared
+  confirmed the `Renderer.renderFrame` documentation Minor closed.
+- Task 9 documentation is finalized for the controller's documentation commit.
+- Steps 9 and 10 are completed by that commit and the immediately following
+  clean-status, final-HEAD, and branch-diff verification recorded in the final
+  delivery.
