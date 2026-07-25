@@ -44,15 +44,6 @@ public class GameConfig {
         public static final float FAR_PLANE = 1000.0f;
     }
     
-    public static final class WorldGeneration {
-        public static final int SEED = 12345;
-        public static final int OCTAVES = 4;
-        public static final double PERSISTENCE = 0.5;
-        public static final double SCALE = 0.02;
-        public static final int BASE_HEIGHT = 20;
-        public static final int HEIGHT_VARIATION = 30;
-    }
-    
     public static final class Core {
         public static final int RENDER = 0;
         public static final int PLAYER = 1;

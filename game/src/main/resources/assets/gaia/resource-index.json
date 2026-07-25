@@ -4,7 +4,9 @@
     "blocks/air.json",
     "blocks/grass.json",
     "blocks/dirt.json",
-    "blocks/stone.json"
+    "blocks/stone.json",
+    "blocks/oak_log.json",
+    "blocks/oak_leaves.json"
   ],
   "materials": [
     "materials/opaque.json",

@@ -109,11 +109,21 @@ class GameBootstrapStructureTest {
         assertTrue(source.contains("new AssetManager("));
         assertTrue(source.contains("new GaiaResourceLoader("));
         assertTrue(source.contains("catalog.renderAssets()"));
-        assertTrue(source.contains("new GaiaWorldGenerator("));
+        assertTrue(
+                source.contains(
+                        "GaiaWorldGenerator.createVisualRevisionCandidate()"));
+        assertTrue(
+                source.contains(
+                        "WorldGenerationConfig.visualRevisionCandidate()"));
+        assertTrue(
+                source.contains(
+                        "new SafeSpawnSelector()"));
+        assertTrue(source.contains("new WorldLoader("));
         assertTrue(source.contains("new ChunkMeshBuilder("));
         assertTrue(
                 source.contains(
-                        "() -> worldLoader.load(engine.getWorld())"));
+                        "worldLoader.loadAsync(engine.getWorld())"));
+        assertFalse(source.contains("CompletableFuture.supplyAsync("));
         assertFalse(
                 source.contains(
                         "BlockRegistry." + "init()"));

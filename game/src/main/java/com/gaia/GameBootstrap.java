@@ -4,12 +4,14 @@ import com.gaia.assets.GaiaAssetCatalog;
 import com.gaia.assets.GaiaResourceLoader;
 import com.gaia.blocks.BlockRegistry;
 import com.gaia.world.GaiaWorldGenerator;
+import com.gaia.world.SafeSpawnSelector;
 import com.gaia.world.WorldLoadResult;
 import com.gaia.world.WorldLoader;
+import com.gaia.world.generation.WorldGenerationConfig;
+import com.gaia.world.generation.WorldGenerator;
 import com.overlord.assets.AssetDiagnostic;
 import com.overlord.assets.AssetLoadReport;
 import com.overlord.assets.AssetManager;
-import com.overlord.assets.ResourceLocation;
 import com.overlord.config.GameConfig;
 import com.overlord.core.Engine;
 import com.overlord.core.ModuleManager;
@@ -114,8 +116,10 @@ public final class GameBootstrap {
                             FIXED_STEP_SECONDS, MAX_FIXED_STEPS_PER_FRAME);
 
             BlockRegistry blocks = catalog.blockRegistry();
-            GaiaWorldGenerator generator =
-                    new GaiaWorldGenerator(blocks);
+            WorldGenerator generator =
+                    GaiaWorldGenerator.createVisualRevisionCandidate();
+            WorldGenerationConfig worldGenerationConfig =
+                    WorldGenerationConfig.visualRevisionCandidate();
             ExecutorService meshExecutor =
                     Executors.newFixedThreadPool(
                             2,
@@ -134,14 +138,6 @@ public final class GameBootstrap {
                                             2),
                             ChunkMeshManager::close);
 
-            byte fallbackGroundId =
-                    blocks.requireStoredId(
-                            ResourceLocation.parse("gaia:grass"));
-            WorldLoader worldLoader =
-                    new WorldLoader(
-                            generator,
-                            fallbackGroundId);
-
             ExecutorService worldExecutor =
                     Executors.newSingleThreadExecutor(
                             runnable -> {
@@ -153,10 +149,16 @@ public final class GameBootstrap {
             shutdownBarrier.registerWorldExecutor(
                     shutdownCoordinator, worldExecutor);
 
-            CompletableFuture<WorldLoadResult> worldLoad =
-                    CompletableFuture.supplyAsync(
-                            () -> worldLoader.load(engine.getWorld()),
+            WorldLoader worldLoader =
+                    new WorldLoader(
+                            generator,
+                            blocks,
+                            worldGenerationConfig,
+                            new SafeSpawnSelector(),
                             worldExecutor);
+
+            CompletableFuture<WorldLoadResult> worldLoad =
+                    worldLoader.loadAsync(engine.getWorld());
             shutdownCoordinator.register(
                     "world-load", () -> worldLoad.cancel(true));
 
@@ -172,6 +174,7 @@ public final class GameBootstrap {
                             frameClock,
                             fixedStepClock,
                             chunkMeshes,
+                            worldLoader,
                             worldLoad,
                             shutdownCoordinator);
             new GameLoop(context).run();

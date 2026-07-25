@@ -16,6 +16,7 @@ import com.overlord.physics.CollisionWorld;
 import com.overlord.physics.PhysicsWorld;
 import com.overlord.physics.PlayerController;
 import com.overlord.voxel.ChunkMeshManager;
+import com.gaia.world.WorldLoader;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -310,6 +311,34 @@ class GameBootstrapTest {
         RecordComponent chunkMeshes = componentNamed("chunkMeshes");
 
         assertEquals(ChunkMeshManager.class, chunkMeshes.getType());
+    }
+
+    @Test
+    void gameContextCarriesWorldLoaderForExplicitLoadState() {
+        assertEquals(
+                WorldLoader.class,
+                componentNamed("worldLoader").getType());
+    }
+
+    @Test
+    void bootstrapComposesFiniteLoaderAndSafeSpawnSelector()
+            throws IOException {
+        String source =
+                Files.readString(
+                        Path.of(
+                                "src/main/java/com/gaia/"
+                                        + "GameBootstrap.java"));
+
+        assertTrue(
+                source.contains(
+                        "WorldGenerationConfig.visualRevisionCandidate()"));
+        assertTrue(
+                source.contains(
+                        "GaiaWorldGenerator.createVisualRevisionCandidate()"));
+        assertTrue(source.contains("new SafeSpawnSelector()"));
+        assertTrue(source.contains("new WorldLoader("));
+        assertTrue(source.contains("worldLoader"));
+        assertFalse(source.contains("GameConfig.WorldGeneration"));
     }
 
     @Test

@@ -112,3 +112,12 @@ The purple-and-black missing-texture tile added to
 `game/src/main/resources/assets/gaia/textures/atlas.png` is original
 GaiaLegacy project work. It was produced by a deterministic project-local
 pixel edit; it is not derived from third-party art.
+
+## Phase 4 visual-revision artwork
+
+The `gaia:oak_log_side`, `gaia:oak_log_top`, and `gaia:oak_leaves` tiles in
+`game/src/main/resources/assets/gaia/textures/atlas.png` are original
+GaiaLegacy project artwork created for this repository. They do not copy or
+derive from Minecraft, Terasology, Create, or other third-party textures.
+The leaves tile is intentionally fully opaque until a later rendering phase
+provides a reviewed cutout-material path.

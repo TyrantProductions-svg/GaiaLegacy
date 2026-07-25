@@ -1,0 +1,20 @@
+{
+  "id": 5,
+  "name": "gaia:oak_leaves",
+  "material": "gaia:opaque",
+  "textures": {
+    "all": "gaia:oak_leaves"
+  },
+  "hardness": 0.2,
+  "structuralIntegrity": 8.0,
+  "tolerance": 1.0,
+  "gravity": false,
+  "flammable": true,
+  "blastResistance": 0.2,
+  "item": {
+    "id": "gaia:oak_leaves",
+    "maxStackSize": 64,
+    "mouthHoldable": false,
+    "twoHanded": false
+  }
+}
