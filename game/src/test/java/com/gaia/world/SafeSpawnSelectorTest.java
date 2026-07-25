@@ -48,6 +48,38 @@ class SafeSpawnSelectorTest {
     }
 
     @Test
+    void configuredOneEmptyBlockStillRequiresClearHeadCell() {
+        World world = new World();
+        ChunkKey key = new ChunkKey(0, 0);
+        byte[] blocks = emptyBlocks();
+        set(blocks, 0, 0, 0, SOLID);
+        fillToTop(blocks, 0, 2, 0, SOLID);
+        set(blocks, 1, 0, 0, SOLID);
+        commit(world, key, blocks);
+        WorldGenerationConfig defaults = WorldGenerationConfig.defaults();
+        WorldGenerationConfig config =
+                new WorldGenerationConfig(
+                        defaults.seed(),
+                        defaults.algorithmVersion(),
+                        defaults.chunkRadius(),
+                        defaults.biome(),
+                        defaults.height(),
+                        defaults.cave(),
+                        defaults.surface(),
+                        defaults.decoration(),
+                        new WorldGenerationConfig.SpawnSettings(1, 1));
+
+        Vector3f feet =
+                new SafeSpawnSelector()
+                        .find(world, Set.of(key), config)
+                        .orElseThrow();
+
+        assertEquals(new Vector3f(1.5f, 1.0f, 0.5f), feet);
+        assertEquals(0, world.getBlock(1, 1, 0));
+        assertEquals(0, world.getBlock(1, 2, 0));
+    }
+
+    @Test
     void ordersEqualDistanceCandidatesByWorldXThenZThenFeetY() {
         World world = new World();
         ChunkKey west = new ChunkKey(-1, 0);

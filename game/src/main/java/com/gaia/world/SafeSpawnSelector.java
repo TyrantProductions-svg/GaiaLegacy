@@ -27,8 +27,10 @@ public final class SafeSpawnSelector {
 
         long maximumRadius = config.spawn().maximumSearchRadiusBlocks();
         long maximumDistanceSquared = maximumRadius * maximumRadius;
-        int requiredEmptyBlocks =
-                config.spawn().requiredEmptyBlocks();
+        int effectiveClearance =
+                Math.max(
+                        2,
+                        config.spawn().requiredEmptyBlocks());
         int worldHeight = world.chunks().worldHeight();
         Candidate best = null;
 
@@ -81,7 +83,7 @@ public final class SafeSpawnSelector {
                     int x = (int) candidateX;
                     int z = (int) candidateZ;
                     int maximumSupportY =
-                            worldHeight - requiredEmptyBlocks - 1;
+                            worldHeight - effectiveClearance - 1;
                     for (int supportY = 0;
                             supportY <= maximumSupportY;
                             supportY++) {
@@ -91,7 +93,7 @@ public final class SafeSpawnSelector {
                                         x,
                                         supportY + 1,
                                         z,
-                                        requiredEmptyBlocks)) {
+                                        effectiveClearance)) {
                             continue;
                         }
                         Candidate candidate =
