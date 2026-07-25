@@ -13,6 +13,7 @@ import com.overlord.renderer.Renderer;
 import com.overlord.renderer.Texture;
 import com.overlord.renderer.shader.ShaderProgram;
 import com.overlord.renderer.shader.ShaderSourceSet;
+import com.overlord.renderer.state.OpenGlRenderStateBackend;
 import com.overlord.renderer.texture.TextureImage;
 import com.overlord.assets.ResourceLocation;
 import java.util.List;
@@ -123,6 +124,26 @@ class MainThreadGuardTest {
                             () -> worker.submit(() -> new ShaderProgram(guard, sources, List.of())).get());
 
             assertInstanceOf(IllegalStateException.class, failure.getCause());
+        } finally {
+            worker.shutdownNow();
+            assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void renderStateCaptureRejectsWorkerBeforeCallingOpenGl() throws InterruptedException {
+        OpenGlRenderStateBackend backend =
+                new OpenGlRenderStateBackend(MainThreadGuard.captureCurrentThread());
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        try {
+            ExecutionException failure =
+                    assertThrows(
+                            ExecutionException.class,
+                            () -> worker.submit(backend::capture).get());
+
+            IllegalStateException cause =
+                    assertInstanceOf(IllegalStateException.class, failure.getCause());
+            assertTrue(cause.getMessage().contains("capture OpenGL render state"));
         } finally {
             worker.shutdownNow();
             assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
