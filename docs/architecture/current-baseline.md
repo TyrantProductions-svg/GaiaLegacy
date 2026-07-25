@@ -182,10 +182,13 @@ or call-order state.
 
 `StagedWorldGenerator` creates one bounded detached `GenerationRegion` for a
 key, runs those stages in declaration order, stops at the first returned or
-thrown failure, and calls `freeze()` only after all six succeed. Generation is
-a pure CPU Pipeline and does not read or mutate the live `World`. It has no
+thrown failure, rethrows `CancellationException` without converting it into a
+failed Stage, and calls `freeze()` only after all six succeed. Generation is a
+pure CPU Pipeline and does not read or mutate the live `World`. It has no
 renderer, mesh, GPU, LWJGL, GLFW, EventBus, interaction, inventory, or
-world-item dependency.
+world-item dependency. Biome softmax normalization uses `StrictMath.exp`; the
+correction from `Math.exp` did not change the locked version-1 block bytes or
+hashes.
 
 The default finite loader range is 81 Chunks: inclusive X/Z keys `[-4, 4]`,
 ordered by ascending X and then Z. Initial loading is fail-fast and has
@@ -201,11 +204,16 @@ and ties resolve by squared distance, X, Z, then feet Y. No fallback block is
 manufactured. If no valid candidate exists, initial loading fails explicitly.
 
 The debug rebuild lifecycle is programmatic only. `WorldLoader.rebuildRegion`
-sorts requested keys, starts repository `REBUILD` tickets, continues across
-independent keys, and returns per-key `COMMITTED`, `FAILED`, or `CONFLICT`
-outcomes. A successful replacement remains `DIRTY`; Phase 3
-revision/dirty/stale authority rejects old CPU mesh or upload work and
-preserves the installed render object until a current replacement succeeds.
+is a package-private orchestration helper behind public
+`rebuildRegionAsync`. Both rebuild and initial `loadAsync` execute on one
+constructor-injected executor; `GameBootstrap` owns one dedicated
+`Gaia-World-Loader` executor, injects it into `WorldLoader`, and shuts it down
+through the existing barrier. Rebuild sorts requested keys, starts repository
+`REBUILD` tickets, continues across independent keys, and returns per-key
+`COMMITTED`, `FAILED`, or `CONFLICT` outcomes. A successful replacement
+remains `DIRTY`; Phase 3 revision/dirty/stale authority rejects old CPU mesh
+or upload work and preserves the installed render object until a current
+replacement succeeds.
 
 Phase 7 gameplay mutation exclusion remains authoritative: detached generation
 does not call `WorldMutationService`, publish `BeforeBlockChangedEvent` or
@@ -374,15 +382,17 @@ stage CPU generator, one shared default block-shape resolver,
 workers, constructs `ChunkMeshManager` with an upload budget of two, and
 registers a shutdown barrier around worker, GPU-manager, and engine cleanup.
 
-`WorldLoader` generates the default finite 81-key set through one detached CPU
-Pipeline execution and one repository transaction for each Chunk. After all commits
-it selects explicit safe player-feet coordinates and computes the canonical
-aggregate hash. During `LOADING`, `GameLoop` takes an explicit failure branch
-if the loader fails; on success it teleports both authoritative player
-transforms, requires collision-free recovery, schedules eligible per-key CPU
-meshing, drains completions, and processes up to two uploads per frame while
-continuing clear/swap. It enters `RUNNING` only after every initial key is
-`RENDERABLE`, then renders the manager's independent object collection.
+`WorldLoader.loadAsync` generates the default finite 81-key set on the
+injected world executor through one detached CPU Pipeline execution and one
+repository transaction for each Chunk. After all commits it selects explicit
+safe player-feet coordinates and computes the canonical aggregate hash through
+`WorldGenerationHasher.hashRegion`. During `LOADING`, `GameLoop` takes an
+explicit failure branch if the loader fails; on success it teleports both
+authoritative player transforms, requires collision-free recovery, schedules
+eligible per-key CPU meshing, drains completions, and processes up to two
+uploads per frame while continuing clear/swap. It enters `RUNNING` only after
+every initial key is `RENDERABLE`, then renders the manager's independent
+object collection.
 
 `RUNNING` uses an exact `1.0 / 60.0` fixed step with an eight-step catch-up
 limit, sufficient for the required 10 FPS case while preserving the existing
@@ -397,8 +407,10 @@ objects, and only then tears down Engine/OpenGL. Explicit per-key unload uses
 the same main-thread manager boundary. Phase 3 deliberately adds no automatic
 streaming or culling policy.
 
-The automated Phase 4 implementation verification at `eea7142` covered the
-locked hashes and the Windows clean test/build. The Phase 4 documentation task
-did not launch the interactive Windows game and had no native macOS
-environment; neither interactive behavior nor native macOS verification is
-claimed by this baseline.
+The Game-owner review fixes at `349c81c` added an end-to-end default loader
+snapshot, asynchronous executor ownership/rejection checks, strict biome math,
+and Stage-cancellation propagation coverage. The locked aggregate remains
+`161f6c10773c8dfd84e6961183e8706d5a0ec00750e727e83c4a08afcfbd5ce8`.
+The Phase 4 work did not launch the interactive Windows game and had no native
+macOS environment; neither interactive behavior nor native macOS verification
+is claimed by this baseline.

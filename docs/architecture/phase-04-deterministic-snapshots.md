@@ -28,6 +28,12 @@ chunk count, then the same chunk payload for every chunk sorted by chunk X and
 then chunk Z. Duplicate keys are rejected. Input collection order and worker
 completion order therefore do not affect the result.
 
+`WorldLoader` returns this exact canonical region identity through
+`WorldGenerationHasher.hashRegion`; it does not maintain a second loader-local
+hash format. Public initial load and debug rebuild calls enqueue onto the one
+injected world-generation executor owned by `GameBootstrap`. The synchronous
+orchestration helpers are not public API.
+
 ## Version 1 configuration
 
 - Seed: `12345L`
@@ -46,6 +52,12 @@ The approved 81-chunk region hash is:
 ```text
 161f6c10773c8dfd84e6961183e8706d5a0ec00750e727e83c4a08afcfbd5ce8
 ```
+
+The 2026-07-25 Game-owner correction replaced the biome softmax's
+`Math.exp` calls with `StrictMath.exp`. Repeated provider and locked snapshot
+tests produced the same block bytes and every hash above, so this
+platform-stability correction does not change algorithm version `1` or any
+snapshot constant.
 
 Representative chunk snapshots:
 

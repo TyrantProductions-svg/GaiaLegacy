@@ -6,7 +6,7 @@ Base: `origin/main` at
 `f1ca80beb47616025bea21615d7e3fccaa5b31c6`
 
 Reviewed implementation and architecture-guard HEAD:
-`eea7142f9cca99703e69d9d31b1e1ab9760fa28c`
+`349c81c627e9492fae5a60322228c0a81edd77cb`
 
 ## Completed work
 
@@ -39,6 +39,19 @@ Reviewed implementation and architecture-guard HEAD:
 - Added canonical SHA-256 Chunk/region hashing, scheduling-order determinism
   checks, boundary/provider checks, locked snapshots, source architecture
   guards, and an intentional snapshot-update protocol.
+- Made the loader's successful generation hash use the canonical
+  `WorldGenerationHasher.hashRegion` contract and added a production-default
+  end-to-end test over all 81 committed repository Chunks and safe spawn.
+- Injected one world-generation executor into `WorldLoader`. Public
+  `loadAsync` and `rebuildRegionAsync` use that executor; `GameBootstrap` owns,
+  registers, and shuts the single dedicated executor without nested
+  submission or per-call pools.
+- Made biome softmax normalization use `StrictMath.exp`. Version-1 block bytes,
+  representative hashes, and the aggregate hash remained unchanged, so the
+  algorithm version remains `1`.
+- Made `StagedWorldGenerator` rethrow `CancellationException`, allowing the
+  loader to enter `CANCELLED`, terminally fail the live ticket, publish no
+  partial Chunk, and skip every later Stage.
 - Preserved Phase 7 gameplay mutation exclusion: generation never uses
   `WorldMutationService`, block-change events, inventory, world items, or
   live-world block mutation.
@@ -69,8 +82,9 @@ manual checklist, and intentional-update rules are in
 - Final branch-wide Engine-owner and Game/shared-owner reviews are pending the
   root orchestrator. This handoff records task-level reviews and a
   documentation audit only; it does not claim final cross-owner approval.
-- A final clean test/build and standalone packaged-resource rerun after the
-  documentation commit are pending root orchestration.
+- The post-Game-owner-fix clean test/build and standalone packaged-resource
+  verification both passed. A root-orchestrated final owner re-review remains
+  pending.
 - Task 9's proposed new documentation-source assertions and their explicit
   RED run were not added in this documentation-only delegation because
   production and test code were out of scope. The existing Task 8 architecture
@@ -136,6 +150,10 @@ manual checklist, and intentional-update rules are in
 - Debug rebuild is outcome-oriented and continues through independent keys.
   Genuine repository conflicts remain conflicts and are not rewritten as
   failures.
+- Public initial load and debug rebuild are asynchronous and use the same
+  injected world-generation executor. Their synchronous orchestration is not
+  exposed outside the loader package, and `GameBootstrap` remains the
+  executor lifecycle owner.
 - A committed rebuild is left `DIRTY`; the Phase 3 mesh lifecycle schedules a
   current revision and rejects all stale CPU/upload work.
 
@@ -253,9 +271,19 @@ tracked branch changes.
 
 ## Test commands and results
 
-The last implementation verification was run on Windows at
-`eea7142f9cca99703e69d9d31b1e1ab9760fa28c` before this documentation-only
-commit.
+The final Game-owner fix verification was run on Windows against implementation
+commit `349c81c627e9492fae5a60322228c0a81edd77cb`.
+
+Game-owner fix integration:
+
+```powershell
+.\gradlew.bat :game:test --rerun-tasks --console=plain --no-daemon
+```
+
+- Passed: 27 suites, 220 tests, 0 failures, 0 errors, 0 skipped.
+- Includes the canonical 81-Chunk default loader, async load/rebuild executor,
+  exact exceptional/rejection behavior, `StrictMath.exp`, unchanged locked
+  snapshots, and Stage-cancellation propagation.
 
 Focused determinism, boundary, and architecture:
 
@@ -289,11 +317,22 @@ Full Windows automated verification:
 
 - Passed: `BUILD SUCCESSFUL`; all 18 Gradle tasks passed.
 - Engine JUnit XML: 50 suites, 526 tests, 0 failures, 0 errors, 0 skipped.
-- Game JUnit XML: 27 suites, 215 tests, 0 failures, 0 errors, 0 skipped.
-- Total: 77 suites, 741 tests, 0 failures, 0 errors, 0 skipped.
-- The Task 8 clean build included packaged-resource verification. A fresh
-  standalone `:game:verifyPackagedResources --rerun-tasks` after the docs
-  commit remains pending root orchestration.
+- Game JUnit XML: 27 suites, 220 tests, 0 failures, 0 errors, 0 skipped.
+- Total: 77 suites, 746 tests, 0 failures, 0 errors, 0 skipped.
+- The clean build included packaged-resource verification.
+
+Standalone packaged-resource verification:
+
+```powershell
+.\gradlew.bat :game:verifyPackagedResources `
+  --rerun-tasks --console=plain --no-daemon
+```
+
+- Passed: `BUILD SUCCESSFUL`; all five selected tasks executed.
+- `git diff --check`, tracked-generated-output, absolute-JDK, generation
+  graphics, and generation gameplay-coupling scans produced no prohibited
+  match. The protected-name diff match is the intentional engine test
+  `ChunkMeshManagerTest.java`; no protected production file changed.
 
 Task 9 documentation/inventory checks are recorded in the ignored task report.
 No interactive or native macOS result is inferred from automated tests.
@@ -323,6 +362,12 @@ material findings:
   final Task 8 commits use a shared generator across workers, strengthen
   boundary/material assertions and synthetic hash cases, and harden source
   guards. Re-review reported no remaining Task 8 finding.
+- The final branch-wide Game-owner review found four Important issues:
+  loader-local noncanonical hashing, caller-thread public rebuild, non-strict
+  biome exponentiation, and Stage cancellation converted into failure.
+  `349c81c` resolved all four through separate RED/GREEN regressions. The
+  resulting default aggregate is still
+  `161f6c10773c8dfd84e6961183e8706d5a0ec00750e727e83c4a08afcfbd5ce8`.
 
 Final branch-wide Engine-owner and Game/shared-owner review verdict:
 **PENDING ROOT ORCHESTRATION**. No final phase approval is claimed here.
@@ -373,6 +418,11 @@ Final branch-wide Engine-owner and Game/shared-owner review verdict:
   bounds, deterministic tie order, and no-fallback-block behavior.
 - Preserve the debug rebuild lifecycle and exact per-key
   `COMMITTED`/`FAILED`/`CONFLICT` meaning.
+- Preserve the injected single-executor `loadAsync`/`rebuildRegionAsync`
+  boundary. Do not restore public caller-thread generation, nested submission,
+  or per-call world-generation pools.
+- Preserve `CancellationException` as cancellation across Stage, loader,
+  future, ticket, and no-publication boundaries.
 - Preserve Phase 7 gameplay mutation exclusion. Generation must not emit
   gameplay block-change events, consume inventory/world-item services, or
   bypass the repository with live-world block writes.
@@ -388,10 +438,11 @@ Final branch-wide Engine-owner and Game/shared-owner review verdict:
 
 ## Final phase report
 
-Final `git diff --stat origin/main..HEAD` for the Phase 4 documentation commit:
+Final `git diff --stat origin/main` including the Game-owner fixes and updated
+handoff:
 
 ```text
-73 files changed, 11282 insertions(+), 257 deletions(-)
+73 files changed, 11580 insertions(+), 264 deletions(-)
 ```
 
 Suggested overall commit message:
@@ -431,10 +482,10 @@ Suggested pull request description:
 
 - focused determinism/boundary/architecture suite: 17/17
 - locked snapshot suite: 2/2 in repeated separate Gradle processes
-- Windows clean test/build at implementation HEAD: 741/741, zero
+- Windows clean test/build at Game-owner fix HEAD: 746/746, zero
   failure/error/skip
-- final post-document clean build, packaged-resource rerun, and branch-wide
-  owner verdict to be appended after root orchestration
+- standalone packaged-resource verification passed
+- final branch-wide owner re-review remains pending root orchestration
 
 ## Manual follow-up
 
