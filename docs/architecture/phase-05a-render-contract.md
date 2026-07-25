@@ -75,7 +75,9 @@ program label, missing uniform, vertex resource, and fragment resource. Compile
 diagnostics retain program label, stage, exact resource identity, and compiler
 log. Link diagnostics retain the program label, both resource identities, and
 linker log. Temporary or partially created shaders/programs are deleted before
-failure escapes; cleanup failures are retained as suppressed failures.
+failure escapes. The primary shader failure remains authoritative; only a
+distinct cleanup failure is retained as suppressed, and a cleanup backend
+throwing the same failure instance cannot trigger self-suppression.
 
 ## Material and GPU ownership
 

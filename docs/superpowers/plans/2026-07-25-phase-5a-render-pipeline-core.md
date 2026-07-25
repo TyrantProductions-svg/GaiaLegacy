@@ -28,10 +28,10 @@
 
 ## Baseline Gate
 
-- [ ] Run `git status --short` and confirm no uncommitted or untracked files before Task 1.
-- [ ] Run `.\gradlew.bat clean test build --console=plain --no-daemon`.
-- [ ] Parse `engine/build/test-results/test/TEST-*.xml` and `game/build/test-results/test/TEST-*.xml`; record the exact baseline suite/test/failure/error/skip counts in the execution notes.
-- [ ] Stop and request direction if the clean Phase 4 baseline does not pass.
+- [x] Run `git status --short` and confirm no uncommitted or untracked files before Task 1.
+- [x] Run `.\gradlew.bat clean test build --console=plain --no-daemon`.
+- [x] Parse `engine/build/test-results/test/TEST-*.xml` and `game/build/test-results/test/TEST-*.xml`; record the exact baseline suite/test/failure/error/skip counts in the execution notes.
+- [x] Stop and request direction if the clean Phase 4 baseline does not pass.
 
 ---
 
@@ -66,7 +66,7 @@ public final class ShaderResourceLoader {
 }
 ```
 
-- [ ] **Step 1: Write failing resource-loader tests**
+- [x] **Step 1: Write failing resource-loader tests**
 
 Add tests that load `overlord:shaders/world.vert` and
 `overlord:shaders/world.frag` from the test runtime classpath, copy them into a
@@ -93,7 +93,7 @@ The missing-resource assertion must inspect `AssetLoadException.report()` and
 verify diagnostic code `ASSET_NOT_FOUND` plus the exact missing
 `ResourceLocation`.
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run:
 
@@ -106,7 +106,7 @@ Run:
 Expected: compilation fails because `ShaderSourceSet` and
 `ShaderResourceLoader` do not exist.
 
-- [ ] **Step 3: Add visual-equivalent GLSL 410 resources**
+- [x] **Step 3: Add visual-equivalent GLSL 410 resources**
 
 The vertex shader declares locations 0 through 4 but uses only position and UV
 for Phase 5A output:
@@ -141,19 +141,19 @@ void main() {
 }
 ```
 
-- [ ] **Step 4: Implement immutable source loading**
+- [x] **Step 4: Implement immutable source loading**
 
 Validate every record/constructor field with `Objects.requireNonNull`. Reject a
 blank label with `IllegalArgumentException`. Implement `load` only through
 `AssetManager.readUtf8`; do not use `ClassLoader.getResource`, `Path`, or
 `File`.
 
-- [ ] **Step 5: Run focused tests and verify GREEN**
+- [x] **Step 5: Run focused tests and verify GREEN**
 
 Run the Task 1 command again. Expected: all
 `ShaderResourceLoaderTest` tests pass.
 
-- [ ] **Step 6: Commit Task 1**
+- [x] **Step 6: Commit Task 1**
 
 ```powershell
 git add engine/src/main/resources/assets/overlord/shaders `
@@ -233,7 +233,7 @@ public final class ShaderProgram
 }
 ```
 
-- [ ] **Step 1: Write failing compile/link/uniform/cleanup tests**
+- [x] **Step 1: Write failing compile/link/uniform/cleanup tests**
 
 Use a deterministic `FakeShaderBackend` with assigned IDs and call counters.
 Cover:
@@ -264,12 +264,12 @@ construction deletes both temporary shaders, caches locations exactly once,
 uploads matrices/integers to cached locations, and deletes the program exactly
 once across repeated `cleanup`.
 
-- [ ] **Step 2: Add a worker-thread RED test**
+- [x] **Step 2: Add a worker-thread RED test**
 
 Construct `ShaderProgram` on an executor using an owner-thread guard. Expected
 cause: `IllegalStateException` before the fake backend records any call.
 
-- [ ] **Step 3: Run focused tests and verify RED**
+- [x] **Step 3: Run focused tests and verify RED**
 
 ```powershell
 .\gradlew.bat :engine:test `
@@ -280,7 +280,7 @@ cause: `IllegalStateException` before the fake backend records any call.
 
 Expected: compilation fails because the Task 2 types do not exist.
 
-- [ ] **Step 4: Implement the semantic shader backend**
+- [x] **Step 4: Implement the semantic shader backend**
 
 `OpenGlShaderBackend` is the only Task 2 class that imports LWJGL. Map
 `ShaderStage.VERTEX` to `GL_VERTEX_SHADER` and
@@ -298,12 +298,12 @@ functions exposed by `GL30C`.
 - delete partial resources and attach cleanup failures as suppressed
   exceptions.
 
-- [ ] **Step 5: Run focused tests and verify GREEN**
+- [x] **Step 5: Run focused tests and verify GREEN**
 
 Run the Task 2 command again. Expected: all focused tests pass without an
 OpenGL context because tests use the fake backend.
 
-- [ ] **Step 6: Commit Task 2**
+- [x] **Step 6: Commit Task 2**
 
 ```powershell
 git add engine/src/main/java/com/overlord/renderer/shader `
@@ -354,7 +354,7 @@ public final class VoxelVertexFormat {
 }
 ```
 
-- [ ] **Step 1: Write the failing format contract test**
+- [x] **Step 1: Write the failing format contract test**
 
 Assert the exact locations, component counts, float offsets, byte offsets, and
 stride:
@@ -377,7 +377,7 @@ assertEquals(
 
 Test every explicit face mapping and reject light values below 0 or above 15.
 
-- [ ] **Step 2: Update mesh tests to the new expected layout and verify RED**
+- [x] **Step 2: Update mesh tests to the new expected layout and verify RED**
 
 Change one-block length from 180 to 360 floats and five-face length from 150
 to 300. Read U at `vertexOffset + 3`, normal at offsets 5..7, face/light at 8,
@@ -408,21 +408,21 @@ Run:
 Expected: compilation failure for the missing format types or assertions still
 observe the old five-float layout.
 
-- [ ] **Step 3: Implement the pure vertex contract**
+- [x] **Step 3: Implement the pure vertex contract**
 
 Return an immutable attribute list. Implement `faceId` with an exhaustive
 `switch` over names, not `ordinal()`. Validate the light range before encoding.
 Return `(float) (faceId(face) * 16 + lightLevel)` after validation; do not use
 bit reinterpretation or enum ordinals.
 
-- [ ] **Step 4: Migrate ChunkMeshData**
+- [x] **Step 4: Migrate ChunkMeshData**
 
 Replace the private five-float constant with
 `VoxelVertexFormat.FLOATS_PER_VERTEX`. The validation message must report the
 required ten-float layout. Bounds still read position offsets 0..2 and step by
 the shared stride.
 
-- [ ] **Step 5: Migrate ChunkMeshBuilder**
+- [x] **Step 5: Migrate ChunkMeshBuilder**
 
 Replace five-float face arrays with an `addVertex` helper:
 
@@ -458,18 +458,18 @@ private static void addVertex(
 Keep the existing six-triangle vertex positions, UV orientation, neighbor
 occlusion, Chunk-local coordinates, key, revision, and bounds unchanged.
 
-- [ ] **Step 6: Migrate Mesh VAO configuration**
+- [x] **Step 6: Migrate Mesh VAO configuration**
 
 Calculate `vertexCount` with the shared float count. Loop through
 `VoxelVertexFormat.attributes()` and call `glVertexAttribPointer` with
 `GL_FLOAT`, `VoxelVertexFormat.STRIDE_BYTES`, and each byte offset. Keep upload,
 draw, unbind, failure cleanup, and `MainThreadGuard` behavior unchanged.
 
-- [ ] **Step 7: Run focused tests and verify GREEN**
+- [x] **Step 7: Run focused tests and verify GREEN**
 
 Run the Task 3 command again. Expected: all selected tests pass.
 
-- [ ] **Step 8: Commit Task 3**
+- [x] **Step 8: Commit Task 3**
 
 ```powershell
 git add `
@@ -533,7 +533,7 @@ public record RenderAssets(
 }
 ```
 
-- [ ] **Step 1: Write failing Material ownership tests**
+- [x] **Step 1: Write failing Material ownership tests**
 
 Use fake `ShaderBinding` and `TextureBinding`. Assert the exact Phase 2
 definition is preserved and that `Material` exposes no `cleanup` or `close`
@@ -550,7 +550,7 @@ assertThrows(
         () -> Material.class.getMethod("cleanup"));
 ```
 
-- [ ] **Step 2: Write failing RenderAssets and Gaia composition tests**
+- [x] **Step 2: Write failing RenderAssets and Gaia composition tests**
 
 Assert `RenderAssets.missing()` has a non-null explicit missing
 `MaterialDefinition` and the two default shader locations. Extend
@@ -565,7 +565,7 @@ assertEquals(
         catalog.renderAssets().worldVertexShader());
 ```
 
-- [ ] **Step 3: Run focused tests and verify RED**
+- [x] **Step 3: Run focused tests and verify RED**
 
 ```powershell
 .\gradlew.bat :engine:test `
@@ -581,7 +581,7 @@ assertEquals(
 Expected: compilation failure because `Material`, `TextureBinding`, and the
 expanded `RenderAssets` fields do not exist.
 
-- [ ] **Step 4: Implement non-owning Material and expanded RenderAssets**
+- [x] **Step 4: Implement non-owning Material and expanded RenderAssets**
 
 Validate every constructor field. `RenderAssets.missing()` creates a
 `MaterialDefinition` using:
@@ -596,7 +596,7 @@ missingRegion=overlord:missing
 
 Do not add a registry or mutable material map.
 
-- [ ] **Step 5: Select the existing Gaia opaque definition**
+- [x] **Step 5: Select the existing Gaia opaque definition**
 
 At the end of `GaiaResourceLoader.load`, retrieve `gaia:opaque` from the
 already validated `materialById` map and pass it to `RenderAssets`. If it is
@@ -614,11 +614,11 @@ new AssetDiagnostic(
         null)
 ```
 
-- [ ] **Step 6: Run focused tests and verify GREEN**
+- [x] **Step 6: Run focused tests and verify GREEN**
 
 Run both Task 4 commands again. Expected: all selected tests pass.
 
-- [ ] **Step 7: Commit Task 4**
+- [x] **Step 7: Commit Task 4**
 
 ```powershell
 git add `
@@ -693,7 +693,7 @@ public final class RenderStateScope implements AutoCloseable {
 }
 ```
 
-- [ ] **Step 1: Write failing scope tests with a fake backend**
+- [x] **Step 1: Write failing scope tests with a fake backend**
 
 Cover call order, normal restoration, exceptional restoration, and idempotent
 close:
@@ -711,7 +711,7 @@ assertEquals("restore:" + incoming, backend.lastCall());
 Throw inside the try block and assert restoration happened before the same
 exception escaped.
 
-- [ ] **Step 2: Add worker rejection test and verify RED**
+- [x] **Step 2: Add worker rejection test and verify RED**
 
 Construct `OpenGlRenderStateBackend` with an owner guard and call `capture`
 from a worker. Assert `IllegalStateException` occurs before any OpenGL call can
@@ -728,7 +728,7 @@ Run:
 
 Expected: compilation failure for missing state types.
 
-- [ ] **Step 3: Implement the scope and exact production snapshot**
+- [x] **Step 3: Implement the scope and exact production snapshot**
 
 Use `glIsEnabled`, `glGetBoolean`, and `glGetInteger` calls available in
 OpenGL 4.1. To capture unit-0 texture binding:
@@ -742,7 +742,7 @@ OpenGL 4.1. To capture unit-0 texture binding:
 program, unit-0 texture binding, and original active texture. `ALPHA` applies
 `GL_SRC_ALPHA`, `GL_ONE_MINUS_SRC_ALPHA`, and `GL_FUNC_ADD`.
 
-- [ ] **Step 4: Implement guarded clear**
+- [x] **Step 4: Implement guarded clear**
 
 `clearColorAndDepth` asserts the main thread and calls only:
 
@@ -752,12 +752,12 @@ glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 `Renderer.init` remains responsible for the existing clear color.
 
-- [ ] **Step 5: Run focused tests and verify GREEN**
+- [x] **Step 5: Run focused tests and verify GREEN**
 
 Run the Task 5 command again. Expected: all selected tests pass without a live
 OpenGL context.
 
-- [ ] **Step 6: Commit Task 5**
+- [x] **Step 6: Commit Task 5**
 
 ```powershell
 git add engine/src/main/java/com/overlord/renderer/state `
@@ -824,13 +824,13 @@ public final class RenderPipeline {
 }
 ```
 
-- [ ] **Step 1: Write failing queue tests**
+- [x] **Step 1: Write failing queue tests**
 
 Submit OPAQUE, CUTOUT, and TRANSPARENT fake materials. Assert OPAQUE/CUTOUT
 retain stable order in `opaqueItems`, TRANSPARENT uses
 `transparentItems`, returned lists are immutable, and `clear` empties both.
 
-- [ ] **Step 2: Write failing pipeline ordering/cleanup tests**
+- [x] **Step 2: Write failing pipeline ordering/cleanup tests**
 
 Use three fake passes that append IDs. Assert:
 
@@ -845,7 +845,7 @@ assertTrue(queue.isEmpty());
 Make the world fake throw and assert debug is not called, the same exception
 escapes, and the queue is still cleared in `finally`.
 
-- [ ] **Step 3: Write failing WorldRenderPass tests**
+- [x] **Step 3: Write failing WorldRenderPass tests**
 
 Use fake shader/texture bindings, fake `ChunkGpuMesh`, and fake state backend.
 Assert:
@@ -857,7 +857,7 @@ Assert:
 - each material binds texture unit 0;
 - a draw failure still restores the incoming state.
 
-- [ ] **Step 4: Run focused tests and verify RED**
+- [x] **Step 4: Run focused tests and verify RED**
 
 ```powershell
 .\gradlew.bat :engine:test `
@@ -869,12 +869,12 @@ Assert:
 
 Expected: compilation failure because the queue/pass classes do not exist.
 
-- [ ] **Step 5: Implement queue routing and defensive views**
+- [x] **Step 5: Implement queue routing and defensive views**
 
 Route `RenderType.TRANSPARENT` to transparent; route OPAQUE and CUTOUT to
 opaque. Return `List.copyOf` snapshots, not mutable backing lists.
 
-- [ ] **Step 6: Implement the three passes and pipeline**
+- [x] **Step 6: Implement the three passes and pipeline**
 
 Use these exact IDs:
 
@@ -909,11 +909,11 @@ an in-flight pass context.
 `RenderPipeline` copies the pass list, rejects duplicate IDs, executes in list
 order, and clears the queue in `finally`.
 
-- [ ] **Step 7: Run focused tests and verify GREEN**
+- [x] **Step 7: Run focused tests and verify GREEN**
 
 Run the Task 6 command again. Expected: all selected tests pass.
 
-- [ ] **Step 8: Commit Task 6**
+- [x] **Step 8: Commit Task 6**
 
 ```powershell
 git add engine/src/main/java/com/overlord/renderer/queue `
@@ -969,7 +969,7 @@ Existing two-argument `Engine` and `Renderer` constructors remain and delegate
 to an `AssetManager` using the engine classloader, preserving source
 compatibility.
 
-- [ ] **Step 1: Write failing integration structure tests**
+- [x] **Step 1: Write failing integration structure tests**
 
 Assert that `Renderer.java` contains no `#version`, no inline shader source,
 and no `new Shader(`. Assert it contains:
@@ -987,7 +987,7 @@ renderFrame
 
 Assert `Shader.java` is absent after GREEN.
 
-- [ ] **Step 2: Update GameLoop/Bootstrap tests for the intended API and verify RED**
+- [x] **Step 2: Update GameLoop/Bootstrap tests for the intended API and verify RED**
 
 `GameBootstrapStructureTest` must require one reused `AssetManager` variable
 for `GaiaResourceLoader` and the three-argument `Engine`.
@@ -1023,7 +1023,7 @@ Run:
 Expected: assertions fail because the old `clear`/`renderChunks` and inline
 `Shader` path still exist.
 
-- [ ] **Step 3: Migrate Engine and application composition**
+- [x] **Step 3: Migrate Engine and application composition**
 
 Store the injected `AssetManager` in `Engine`, pass it to `Renderer`, and
 preserve init failure cleanup. In `GameBootstrap`, create one variable:
@@ -1044,7 +1044,7 @@ Engine engine =
 Do not register `AssetManager`, passes, queues, or materials in
 `ServiceLocator`.
 
-- [ ] **Step 4: Migrate Renderer initialization and cleanup**
+- [x] **Step 4: Migrate Renderer initialization and cleanup**
 
 Initialization order:
 
@@ -1060,7 +1060,7 @@ On failure, clean texture then program, attach cleanup failures as suppressed,
 and leave every field null. Normal cleanup uses the same reverse GPU order and
 is idempotent.
 
-- [ ] **Step 5: Implement renderFrame and preserve Chunk backend behavior**
+- [x] **Step 5: Implement renderFrame and preserve Chunk backend behavior**
 
 `renderFrame` asserts the main thread, clears the reusable queue before
 collection, submits every current Chunk with the world material, builds a
@@ -1074,18 +1074,18 @@ release behavior.
 Delete old `clear` and `renderChunks` only after both application callers use
 `renderFrame`.
 
-- [ ] **Step 6: Update GameLoop and engine Main**
+- [x] **Step 6: Update GameLoop and engine Main**
 
 `GameLoop` calls one `renderFrame` every visible frame, with an empty list
 during loading and installed render objects while running. `Main` calls
 `renderFrame(List.of())`. Resize, polling, camera interpolation, and
 swap-buffer order stay unchanged.
 
-- [ ] **Step 7: Run integration tests and verify GREEN**
+- [x] **Step 7: Run integration tests and verify GREEN**
 
 Run both Task 7 commands again. Expected: all selected tests pass.
 
-- [ ] **Step 8: Run Chunk lifecycle regression tests**
+- [x] **Step 8: Run Chunk lifecycle regression tests**
 
 ```powershell
 .\gradlew.bat :engine:test `
@@ -1098,7 +1098,7 @@ Run both Task 7 commands again. Expected: all selected tests pass.
 
 Expected: all tests pass; no independent-Chunk or cleanup contract changed.
 
-- [ ] **Step 9: Commit Task 7**
+- [x] **Step 9: Commit Task 7**
 
 ```powershell
 git add `
@@ -1138,7 +1138,7 @@ git commit -m "refactor(rendering): route frames through render pipeline"
 
 Both tasks are dependencies of their module `check`.
 
-- [ ] **Step 1: Write failing architecture tests**
+- [x] **Step 1: Write failing architecture tests**
 
 `RenderPipelineArchitectureTest` reads engine source and asserts:
 
@@ -1154,7 +1154,7 @@ Both tasks are dependencies of their module `check`.
 `org.lwjgl.opengl`, `glUseProgram`, `glBindTexture`, `glBindVertexArray`, and
 `glDraw`.
 
-- [ ] **Step 2: Extend build-script structure assertions and verify RED**
+- [x] **Step 2: Extend build-script structure assertions and verify RED**
 
 Require both task names, both shader paths, `installDist`, and each module's
 `check` dependency. Run:
@@ -1171,7 +1171,7 @@ Require both task names, both shader paths, `installDist`, and each module's
 
 Expected: assertions fail because the verification tasks do not yet exist.
 
-- [ ] **Step 3: Add engine JAR shader verification**
+- [x] **Step 3: Add engine JAR shader verification**
 
 In `engine/build.gradle`, register
 `verifyPackagedShaderResources`, depend on `jar`, open the archive with
@@ -1184,7 +1184,7 @@ assets/overlord/shaders/world.frag
 
 Make `check` depend on this task.
 
-- [ ] **Step 4: Add installDist shader verification**
+- [x] **Step 4: Add installDist shader verification**
 
 In `game/build.gradle`, register `verifyInstalledShaderResources`, depend on
 `installDist`, locate exactly one `engine-*.jar` under
@@ -1192,7 +1192,7 @@ In `game/build.gradle`, register `verifyInstalledShaderResources`, depend on
 `ZipFile`. Fail if zero or multiple engine JARs match. Make `check` depend on
 this task.
 
-- [ ] **Step 5: Run focused tests and resource tasks**
+- [x] **Step 5: Run focused tests and resource tasks**
 
 ```powershell
 .\gradlew.bat :engine:test `
@@ -1210,7 +1210,7 @@ this task.
 
 Expected: all tests and both resource tasks pass.
 
-- [ ] **Step 6: Commit Task 8**
+- [x] **Step 6: Commit Task 8**
 
 ```powershell
 git add engine/build.gradle game/build.gradle `
@@ -1394,14 +1394,16 @@ push, pull request, or merge.
 
 #### Task 9 execution status
 
-- Steps 1 through 6 and Step 8 are complete.
-- Post-fix implementation HEAD:
-  `e603946cbb00e42c0dba097796f21f745c4d5683`.
-- Windows automated gate: 60 Engine suites / 573 tests and 29 Game suites /
-  249 tests, totaling 89 suites / 822 tests with 0 failures, 0 errors, and
+- The baseline gate and every Task 1 through Task 9 step are complete and
+  recorded as `[x]`.
+- Final-review implementation HEAD:
+  `0ea3fa7b45162d6fb4fd48953fb61b49bb780c3f`.
+- Windows automated gate: 60 Engine suites / 574 tests and 29 Game suites /
+  249 tests, totaling 89 suites / 823 tests with 0 failures, 0 errors, and
   0 skipped.
-- All four required Gradle commands passed, including standalone packaged,
-  engine-JAR shader, and installed-engine-JAR shader checks.
+- The final `clean test build` passed 22/22 tasks. The post-`0ea3fa7`
+  packaging gates passed: packaged resources 5/5, engine-JAR shaders 4/4,
+  and installed-engine-JAR shaders 9/9.
 - Hygiene, JDK-path, game-OpenGL, OpenGL/GLSL-version, compute/SSBO,
   engine-to-game, and protected production-diff audits found no prohibited
   match.
@@ -1416,11 +1418,18 @@ push, pull request, or merge.
   rendering/input behavior, so the valid GUI exit-0 evidence was retained
   without another GUI run.
 - Native macOS automated and interactive acceptance is **NOT RUN**.
-- Step 7 is complete. Engine-owner and Game/shared-owner final re-reviews are
-  **APPROVED**, each with no remaining Critical, Important, or Minor finding.
-  Engine confirmed the `0fe593b` and `e603946` findings closed; Game/shared
-  confirmed the `Renderer.renderFrame` documentation Minor closed.
-- Task 9 documentation is finalized for the controller's documentation commit.
-- Steps 9 and 10 are completed by that commit and the immediately following
-  clean-status, final-HEAD, and branch-diff verification recorded in the final
-  delivery.
+- The earlier Engine-owner and Game/shared-owner re-reviews were
+  **APPROVED**, each with no remaining Critical, Important, or Minor finding
+  at that review point. Engine confirmed `0fe593b` and `e603946` closed;
+  Game/shared confirmed the `Renderer.renderFrame` documentation Minor closed.
+- Task 9 documentation was committed as `e400f6f`; its immediate post-commit
+  clean-status, HEAD, and branch-diff verification passed, completing Steps 9
+  and 10.
+- A later final branch review found two Minor issues. Minor 1 is closed by
+  `0ea3fa7`, which preserves the primary shader failure when cleanup throws
+  the same instance; focused shader verification passed 15/15, followed by
+  Task 7 integration and the 22/22 clean build. Minor 2 is closed by this
+  documentation correction, which removes stale pre-commit wording and marks
+  all 60 completed baseline/Tasks 1-8 checkboxes `[x]`.
+- Both later Minors are fixed; final branch re-review is **APPROVED**, with no
+  remaining Critical, Important, or Minor finding.

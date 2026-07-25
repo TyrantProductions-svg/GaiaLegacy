@@ -1,14 +1,16 @@
 # Phase 5A Handoff: Render Pipeline Core
 
-Implementation HEAD: `e603946cbb00e42c0dba097796f21f745c4d5683`
+Implementation HEAD: `0ea3fa7b45162d6fb4fd48953fb61b49bb780c3f`
 
 Branch: `feat/render-pipeline-core`
 
 Base: `origin/main` at
 `647d91d5fcab15a0acdd60e7898729e35182f71e`
 
-Handoff status: **APPROVED**. Automation, Windows manual acceptance,
-documentation, and both final owner re-reviews are complete. Native macOS
+Handoff status: **APPROVED**. The earlier Engine-owner and Game/shared-owner
+re-reviews were approved. A later final branch review reported two Minor
+findings; both were fixed, and the final branch re-review approved the result
+with no remaining Critical, Important, or Minor finding. Native macOS
 verification is **NOT RUN**.
 
 ## Completed work
@@ -33,17 +35,26 @@ verification is **NOT RUN**.
   tasks.
 - Created the normative Phase 5A render contract and updated the current
   architecture baseline.
-- Ran the complete Windows automated gate and final scope/hygiene audits at
-  implementation HEAD `e603946`.
+- Ran the final Windows clean build and post-fix packaging/resource gates at
+  implementation HEAD `0ea3fa7`.
 - Recorded valid serial Windows development and installDist launcher
   acceptance, both with exit code 0.
 - Resolved two owner findings with focused failure-path regressions:
   `0fe593b` restores captured render state when pass-state application fails,
   and `e603946` names both shader resources in missing-uniform diagnostics.
+- Committed the original Task 9 documentation as `e400f6f` and completed its
+  immediate post-commit clean-status, HEAD, and branch-diff verification.
+- Resolved final branch review Minor 1 in `0ea3fa7`: ShaderProgram cleanup now
+  preserves the primary failure when the backend throws the same instance.
+- Resolved final branch review Minor 2 in this documentation correction:
+  stale pre-commit wording and all completed baseline/Tasks 1-8 checkboxes now
+  reflect actual history.
 
-No production or test code changed during Task 9 documentation preparation.
-No GUI command, commit, push, pull request, merge, force-push, or modification
-of `main` was performed by this documentation task.
+This final-review documentation correction changes no production or test code.
+This worker ran no GUI command and performed no stage, commit, push, pull
+request, merge, force-push, or modification of `main`. The existing `e400f6f`
+documentation and `0ea3fa7` production commits were completed before this
+correction.
 
 ## Unfinished work and platform truth
 
@@ -109,11 +120,12 @@ The controller launched:
 Screenshots from both acceptances were inspected in-app only and were not
 committed.
 
-The two later owner fixes affect only failure rollback and diagnostic text.
-They do not change shader sources, normal pass state, vertex data, world
-generation, rendering output, or input behavior. The valid development and
-installDist exit-0 results therefore remain the manual acceptance evidence;
-no post-fix GUI rerun was required or performed.
+The later fixes affect failure rollback/diagnostics, same-instance cleanup
+failure preservation, and documentation state only. They do not change shader
+sources, normal pass state, vertex data, world generation, rendering output,
+or input behavior. The valid development and installDist exit-0 results
+therefore remain the manual acceptance evidence; no later GUI rerun was
+required or performed.
 
 ## Core architecture decisions
 
@@ -264,18 +276,18 @@ deliverables.
 
 ## Windows automated verification
 
-All results below are fresh post-fix Task 9 runs at implementation HEAD
-`e603946`.
+All results below are final post-fix evidence at implementation HEAD
+`0ea3fa7`.
 
 ```powershell
 .\gradlew.bat clean test build --console=plain --no-daemon
 ```
 
-- **PASSED**: `BUILD SUCCESSFUL` in 40 seconds.
+- **PASSED** after the `0ea3fa7` fix task.
 - 22 actionable tasks, 22 executed.
-- Engine XML: 60 suites, 573 tests, 0 failures, 0 errors, 0 skipped.
+- Engine XML: 60 suites, 574 tests, 0 failures, 0 errors, 0 skipped.
 - Game XML: 29 suites, 249 tests, 0 failures, 0 errors, 0 skipped.
-- Total: 89 suites, 822 tests, 0 failures, 0 errors, 0 skipped.
+- Total: 89 suites, 823 tests, 0 failures, 0 errors, 0 skipped.
 
 ```powershell
 .\gradlew.bat :game:verifyPackagedResources `
@@ -298,7 +310,7 @@ All results below are fresh post-fix Task 9 runs at implementation HEAD
   --rerun-tasks --console=plain --no-daemon
 ```
 
-- **PASSED**: `BUILD SUCCESSFUL` in 10 seconds.
+- **PASSED**: `BUILD SUCCESSFUL` in 11 seconds.
 - 9 actionable tasks, 9 executed.
 
 Both `engine/build/libs/engine-0.1.0.jar` and
@@ -311,6 +323,8 @@ assets/overlord/shaders/world.vert
 ```
 
 ## Owner-review findings and resolutions
+
+### Earlier owner-review cycle
 
 Two owner findings are resolved in production and focused tests:
 
@@ -328,7 +342,7 @@ Two owner findings are resolved in production and focused tests:
 
 Both fixes passed the complete post-fix gate and all hygiene/resource checks.
 
-Final owner re-review verdict: **APPROVED**.
+That owner re-review verdict was **APPROVED**.
 
 - Engine owner: **APPROVED**, with no remaining Critical, Important, or Minor
   finding. The re-review explicitly confirmed that the `0fe593b` state-apply
@@ -338,6 +352,23 @@ Final owner re-review verdict: **APPROVED**.
   Minor finding. The re-review explicitly confirmed that the documentation
   Minor referring to deleted `Renderer.renderChunks` is closed by the accurate
   `Renderer.renderFrame` guard statement.
+
+### Later final branch review
+
+The later final branch review found two additional Minor issues:
+
+- Minor 1: `ShaderProgram` attempted to self-suppress when cleanup threw the
+  exact same failure instance as the primary shader failure. Commit `0ea3fa7`
+  preserves the primary failure, suppresses only distinct cleanup failures,
+  and adds the focused RED/GREEN regression. Verification passed the focused
+  shader suite 15/15, Task 7 integration, and final Windows clean build 22/22.
+- Minor 2: the handoff still contained pre-`e400f6f` commit wording and the
+  implementation plan left 60 completed baseline/Tasks 1-8 checkboxes
+  unchecked. This documentation correction removes the stale statements and
+  records every completed checkbox as `[x]`.
+
+Both later Minors are fixed. Final branch re-review is **APPROVED**, with no
+remaining Critical, Important, or Minor finding.
 
 ## Hygiene and scope audit
 
@@ -363,9 +394,8 @@ game/src/main/java/com/gaia/GameLoop.java
 game/src/main/java/com/gaia/assets/GaiaResourceLoader.java
 ```
 
-Task 9 final documentation-only status and diff checks are recorded in the
-ignored task report and must be rerun by the controller after inserting
-owner-review evidence.
+Final hygiene, status, inventory, and diff checks are rerun directly against
+the `0ea3fa7` branch plus this documentation correction and recorded below.
 
 ## Known risks
 
@@ -380,8 +410,9 @@ owner-review evidence.
   absence of semantically hidden coupling.
 - Automated fake-backend tests cannot replace live-driver shader compilation,
   exact window/input behavior, or native macOS verification.
-- Final Engine-owner and Game/shared-owner re-reviews are approved with no
-  remaining Critical, Important, or Minor finding.
+- The earlier Engine-owner and Game/shared-owner re-reviews were approved.
+  The two later final-branch Minors are fixed, and final branch re-review is
+  also approved with no remaining finding.
 
 ## Interfaces Phase 5B must not break
 
@@ -409,16 +440,26 @@ owner-review evidence.
 
 ## Final phase report
 
-Implementation-only `git diff --stat origin/main...HEAD` at `e603946`:
-
-```text
-66 files changed, 5824 insertions(+), 312 deletions(-)
-```
-
-Documentation-preparation `git diff --stat origin/main`:
+Task 9 documentation commit `e400f6f` and its immediately verified branch
+stat:
 
 ```text
 69 files changed, 6642 insertions(+), 331 deletions(-)
+```
+
+The post-commit status was clean, HEAD resolved to `e400f6f`, and the
+post-commit status/HEAD/diff verification passed before the later code fix.
+
+Final committed branch `git diff --stat origin/main...HEAD` at `0ea3fa7`:
+
+```text
+69 files changed, 6686 insertions(+), 331 deletions(-)
+```
+
+Current final-review documentation correction relative to `origin/main`:
+
+```text
+69 files changed, 6755 insertions(+), 331 deletions(-)
 ```
 
 Suggested final implementation commit:
@@ -427,10 +468,10 @@ Suggested final implementation commit:
 refactor(rendering): establish render passes materials and shader resources
 ```
 
-Suggested Task 9 documentation commit:
+Completed Task 9 documentation commit:
 
 ```text
-docs(rendering): record Phase 5A render contracts
+e400f6f docs(rendering): record Phase 5A render contracts
 ```
 
 Suggested pull request title:
@@ -456,7 +497,7 @@ Suggested pull request description:
 
 ## Verification
 
-- Windows `clean test build`: 89 suites / 822 tests, zero
+- Windows `clean test build`: 89 suites / 823 tests, zero
   failure/error/skip
 - standalone packaged-resource verification passed
 - standalone engine-JAR shader verification passed
@@ -466,9 +507,11 @@ Suggested pull request description:
 ## Manual/platform follow-up
 
 - Windows development and installDist interactive acceptance: passed, exit 0
-- Engine-owner and Game/shared-owner reviews: APPROVED, no findings
+- earlier Engine-owner and Game/shared-owner reviews: APPROVED, no findings
+- later final branch review: two Minor findings fixed; re-review APPROVED
 - native macOS clean build and interactive smoke: NOT RUN
 ```
 
-Both owner reviews approve Phase 5A. Task 9 remains uncommitted until the
-controller performs the documented commit and post-commit verification steps.
+Task 9 documentation commit `e400f6f` and its post-commit verification are
+complete. The later final-review implementation fix is `0ea3fa7`; this
+closeout records the final approved branch re-review.

@@ -4,10 +4,11 @@
 
 This document describes the Phase 5A render-pipeline architecture on
 `feat/render-pipeline-core`, based on `origin/main` at
-`647d91d5fcab15a0acdd60e7898729e35182f71e`. The reviewed Tasks 1 through 8
-implementation ends at `e603946cbb00e42c0dba097796f21f745c4d5683`;
-Task 9 documentation and final controller-supplied manual/owner evidence
-follow that implementation. Phase 5A preserves the Phase 3 independent-Chunk
+`647d91d5fcab15a0acdd60e7898729e35182f71e`. The current final-review
+implementation HEAD is `0ea3fa7b45162d6fb4fd48953fb61b49bb780c3f`.
+Task 9 documentation was committed at `e400f6f` after the initial owner fixes;
+the later `0ea3fa7` cleanup fix follows that documentation commit. Phase 5A
+preserves the Phase 3 independent-Chunk
 mesh lifecycle, approved Phase 4 deterministic world, Phase 6 fixed-step
 physics foundation, and Phase 7 interaction/inventory contracts while
 replacing inline shaders and direct world drawing with JAR-safe shader
@@ -295,7 +296,9 @@ uniform set is `projection`, `view`, `model`, and `textureAtlas`; locations are
 resolved once at successful link and cached. Compile, link, missing-uniform,
 and cleanup failures preserve the program/stage/resource context; a missing
 uniform names both the vertex and fragment `ResourceLocation` values. Partial
-shader/program resources are deleted before failure escapes. `ShaderProgram`,
+shader/program resources are deleted before failure escapes. Cleanup retains
+the primary shader failure, suppresses only distinct cleanup failures, and
+avoids self-suppression when a backend throws the same instance. `ShaderProgram`,
 `Mesh`, and `Texture` own their OpenGL object IDs. Runtime `Material` only
 references the shared program and texture and has no cleanup/close ownership;
 `Renderer` releases the texture and then the program exactly once.
@@ -535,18 +538,29 @@ than reusing candidate version-1 values. Its configuration fingerprint is
 `56cb2f243319c7cf275ade89f480f9208ce5c1f85334eb225e6b56ed18e3012a`
 and its 81-Chunk aggregate hash is
 `ec2c76a97f36d34b7360ae9abbb0be60fb8790f275fdaf5227a7daeae9754353`.
-The Phase 5A Windows automated gate at implementation HEAD `e603946` passed
-with 60 Engine suites / 573 tests and 29 Game suites / 249 tests (822 total),
-with zero failures, errors, or skips. Standalone packaged-resource checks also
-confirmed both shader entries in the engine JAR and installed engine JAR.
+The final Windows `clean test build` at implementation HEAD `0ea3fa7` passed
+all 22 actionable tasks. Final XML contains 60 Engine suites / 574 tests and
+29 Game suites / 249 tests (823 total), with zero failures, errors, or skips.
+Standalone packaged-resource checks also passed after `0ea3fa7` and confirmed
+both shader entries in the engine JAR and installed engine JAR.
 
 Owner review found two failure-path gaps. Commit `0fe593b` now restores the
 captured state when `RenderStateScope` pass-state application fails and
 preserves rollback failure as suppressed. Commit `e603946` now includes both
 world shader resource identities in a missing-uniform diagnostic. Both
 findings have focused regression coverage and passed the complete gate above.
-Final Engine-owner re-review confirmed both findings closed and returned
-**APPROVED**, with no remaining Critical, Important, or Minor finding.
+The earlier Engine-owner re-review confirmed both findings closed and returned
+**APPROVED**, with no remaining Critical, Important, or Minor finding at that
+review point.
+
+A later final branch review found two additional Minor issues. Minor 1 was a
+same-instance cleanup self-suppression path in `ShaderProgram`; `0ea3fa7`
+preserves the primary failure, has a focused RED/GREEN regression (15/15), and
+passed Task 7 integration plus the final 22/22 clean build. Minor 2 was stale
+Task 9 documentation/checkbox state; the current documentation correction
+records the completed `e400f6f` commit and final implementation HEAD. Both
+Minors are fixed; final branch re-review is **APPROVED**, with no remaining
+Critical, Important, or Minor finding.
 
 The controller's valid serial Windows development run rendered the current
 grass/dirt/stone atlas and approved plains/tree, rolling-hills, and rocky
@@ -559,11 +573,14 @@ with exit code 0. The cave entrance was not re-navigated under the user's
 earlier explicit waiver that the entrance had already been found. Screenshots
 were inspected in-app only and were not committed.
 
-Both fixes affect failure handling/diagnostics only and do not change normal
-render output, shader source, vertex data, pass state, world generation, or
-input behavior, so the valid serial Windows development and installDist exit-0
-evidence was retained without another GUI run. Final Game/shared-owner
+The implementation fixes after manual acceptance affect failure handling,
+diagnostics, and same-instance cleanup preservation only; Minor 2 is
+documentation-only. They do not change normal render output, shader source,
+vertex data, pass state, world generation, or input behavior, so the valid
+serial Windows development and installDist exit-0 evidence was retained
+without another GUI run. Final Game/shared-owner
 re-review confirmed the `Renderer.renderFrame` documentation Minor closed and
-returned **APPROVED**, with no remaining Critical, Important, or Minor
-finding. Native macOS clean-build and interactive verification are
+returned **APPROVED**, with no remaining Critical, Important, or Minor finding
+at that review point. The later final-branch two-Minor re-review is also
+**APPROVED** with no remaining finding. Native macOS clean-build and interactive verification are
 **NOT RUN**; no Windows result is used to infer macOS runtime success.
