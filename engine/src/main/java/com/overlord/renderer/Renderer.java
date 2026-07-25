@@ -1,69 +1,127 @@
 package com.overlord.renderer;
 
+import static org.lwjgl.opengl.GL30C.glClearColor;
+import static org.lwjgl.opengl.GL30C.glViewport;
+
+import com.overlord.assets.AssetManager;
 import com.overlord.config.GameConfig;
 import com.overlord.core.thread.MainThreadGuard;
+import com.overlord.renderer.material.Material;
+import com.overlord.renderer.pass.DebugRenderPass;
+import com.overlord.renderer.pass.RenderContext;
+import com.overlord.renderer.pass.RenderPipeline;
+import com.overlord.renderer.pass.SkyRenderPass;
+import com.overlord.renderer.pass.WorldRenderPass;
+import com.overlord.renderer.queue.RenderQueue;
+import com.overlord.renderer.shader.ShaderProgram;
+import com.overlord.renderer.shader.ShaderResourceLoader;
+import com.overlord.renderer.shader.ShaderSourceSet;
+import com.overlord.renderer.state.OpenGlRenderStateBackend;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkMeshData;
 import java.util.Collection;
+import java.util.List;
 import java.util.Objects;
 import org.joml.Matrix4f;
 
-import static org.lwjgl.opengl.GL30C.*;
-
-public class Renderer implements ChunkRenderBackend {
+public final class Renderer implements ChunkRenderBackend {
     private final MainThreadGuard mainThreadGuard;
     private final RenderAssets renderAssets;
-    private Shader shader;
+    private final AssetManager assetManager;
+
+    private ShaderProgram shaderProgram;
     private Camera camera;
     private Texture textureAtlas;
-    
+    private Material worldMaterial;
+    private RenderQueue renderQueue;
+    private RenderPipeline renderPipeline;
     private Matrix4f projectionMatrix;
 
     public Renderer(
             MainThreadGuard mainThreadGuard,
             RenderAssets renderAssets) {
-        this.mainThreadGuard = Objects.requireNonNull(mainThreadGuard, "mainThreadGuard");
-        this.renderAssets = Objects.requireNonNull(renderAssets, "renderAssets");
+        this(
+                mainThreadGuard,
+                renderAssets,
+                new AssetManager(Renderer.class.getClassLoader()));
+    }
+
+    public Renderer(
+            MainThreadGuard mainThreadGuard,
+            RenderAssets renderAssets,
+            AssetManager assetManager) {
+        this.mainThreadGuard =
+                Objects.requireNonNull(
+                        mainThreadGuard, "mainThreadGuard");
+        this.renderAssets =
+                Objects.requireNonNull(renderAssets, "renderAssets");
+        this.assetManager =
+                Objects.requireNonNull(assetManager, "assetManager");
     }
 
     public void init(Camera camera, int width, int height) {
         mainThreadGuard.assertMainThread("renderer initialization");
-        this.camera = camera;
+        Camera initializedCamera = Objects.requireNonNull(camera, "camera");
+        ShaderProgram initializedProgram = null;
+        Texture initializedTexture = null;
+        try {
+            ShaderSourceSet shaderSources =
+                    new ShaderResourceLoader(assetManager)
+                            .load(
+                                    "world",
+                                    renderAssets.worldVertexShader(),
+                                    renderAssets.worldFragmentShader());
+            initializedProgram =
+                    new ShaderProgram(
+                            mainThreadGuard,
+                            shaderSources,
+                            List.of(
+                                    "projection",
+                                    "view",
+                                    "model",
+                                    "textureAtlas"));
+            initializedTexture =
+                    new Texture(
+                            mainThreadGuard,
+                            renderAssets.blockAtlas());
+            Material initializedWorldMaterial =
+                    new Material(
+                            renderAssets.worldMaterial(),
+                            initializedProgram,
+                            initializedTexture);
+            OpenGlRenderStateBackend stateBackend =
+                    new OpenGlRenderStateBackend(mainThreadGuard);
+            SkyRenderPass skyPass = new SkyRenderPass(stateBackend);
+            WorldRenderPass worldPass =
+                    new WorldRenderPass(stateBackend);
+            DebugRenderPass debugPass = new DebugRenderPass();
+            RenderPipeline initializedPipeline =
+                    new RenderPipeline(
+                            List.of(skyPass, worldPass, debugPass));
+            RenderQueue initializedQueue = new RenderQueue();
+            Matrix4f initializedProjection =
+                    createProjection(width, height);
 
-        glEnable(GL_DEPTH_TEST);
-        glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+            glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+            if (width > 0 && height > 0) {
+                glViewport(0, 0, width, height);
+            }
 
-        rebuildProjection(width, height);
-        glViewport(0, 0, width, height);
-        
-        String vertexSource = 
-            "#version 410 core\n" +
-            "layout (location = 0) in vec3 aPos;\n" +
-            "layout (location = 1) in vec2 aTexCoord;\n" +
-            "uniform mat4 projection;\n" +
-            "uniform mat4 view;\n" +
-            "uniform mat4 model;\n" +
-            "out vec2 TexCoord;\n" +
-            "void main() {\n" +
-            "    gl_Position = projection * view * model * vec4(aPos, 1.0);\n" +
-            "    TexCoord = aTexCoord;\n" +
-            "}\n";
-        
-        String fragmentSource = 
-            "#version 410 core\n" +
-            "in vec2 TexCoord;\n" +
-            "out vec4 FragColor;\n" +
-            "uniform sampler2D textureAtlas;\n" +
-            "void main() {\n" +
-            "    FragColor = texture(textureAtlas, TexCoord);\n" +
-            "}\n";
-        
-        shader = new Shader(mainThreadGuard, vertexSource, fragmentSource);
-
-        textureAtlas =
-                new Texture(
-                        mainThreadGuard,
-                        renderAssets.blockAtlas());
+            this.camera = initializedCamera;
+            shaderProgram = initializedProgram;
+            textureAtlas = initializedTexture;
+            worldMaterial = initializedWorldMaterial;
+            renderQueue = initializedQueue;
+            renderPipeline = initializedPipeline;
+            projectionMatrix = initializedProjection;
+        } catch (RuntimeException | Error failure) {
+            clearInitializedFields();
+            cleanupAfterInitializationFailure(
+                    initializedTexture,
+                    initializedProgram,
+                    failure);
+            throw failure;
+        }
     }
 
     @Override
@@ -111,11 +169,6 @@ public class Renderer implements ChunkRenderBackend {
         Objects.requireNonNull(object, "object").mesh().cleanup();
     }
 
-    public void clear() {
-        mainThreadGuard.assertMainThread("framebuffer clear");
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    }
-
     public void resizeFramebuffer(int width, int height) {
         mainThreadGuard.assertMainThread("framebuffer resize");
         if (width <= 0 || height <= 0) {
@@ -125,44 +178,161 @@ public class Renderer implements ChunkRenderBackend {
         rebuildProjection(width, height);
     }
 
-    public void renderChunks(Collection<ChunkRenderObject> chunks) {
-        mainThreadGuard.assertMainThread("chunk rendering");
-        Objects.requireNonNull(chunks, "chunks");
-
-        shader.use();
-        textureAtlas.bind(0);
-        shader.setUniformMat4f("projection", projectionMatrix);
-        shader.setUniformMat4f("view", camera.getViewMatrix());
-        for (ChunkRenderObject chunk : chunks) {
-            shader.setUniformMat4f("model", chunk.modelMatrix());
-            chunk.mesh().draw();
+    public void renderFrame(Collection<ChunkRenderObject> chunks) {
+        mainThreadGuard.assertMainThread("frame rendering");
+        RenderQueue frameQueue =
+                requireInitialized(renderQueue, "render queue");
+        frameQueue.clear();
+        try {
+            Objects.requireNonNull(chunks, "chunks");
+            Material frameMaterial =
+                    requireInitialized(worldMaterial, "world material");
+            for (ChunkRenderObject chunk : chunks) {
+                frameQueue.submit(chunk, frameMaterial);
+            }
+            RenderContext context =
+                    new RenderContext(
+                            requireInitialized(
+                                    projectionMatrix,
+                                    "projection matrix"),
+                            requireInitialized(camera, "camera")
+                                    .getViewMatrix());
+            requireInitialized(renderPipeline, "render pipeline")
+                    .render(context, frameQueue);
+        } finally {
+            frameQueue.clear();
         }
     }
 
     public void cleanup() {
         mainThreadGuard.assertMainThread("renderer cleanup");
-        if (shader != null) {
-            shader.cleanup();
-            shader = null;
+        Texture textureToClean = textureAtlas;
+        ShaderProgram programToClean = shaderProgram;
+        clearInitializedFields();
+
+        Throwable failure = null;
+        failure = runCleanup(textureToClean, failure);
+        failure = runCleanup(programToClean, failure);
+        if (failure != null) {
+            rethrow(failure);
         }
-        if (textureAtlas != null) {
-            textureAtlas.cleanup();
-            textureAtlas = null;
-        }
+    }
+
+    private void clearInitializedFields() {
+        shaderProgram = null;
+        textureAtlas = null;
+        worldMaterial = null;
+        renderQueue = null;
+        renderPipeline = null;
         camera = null;
         projectionMatrix = null;
     }
 
     private void rebuildProjection(int width, int height) {
-        if (width <= 0 || height <= 0) {
+        projectionMatrix = createProjection(width, height);
+    }
+
+    private static Matrix4f createProjection(int width, int height) {
+        return new Matrix4f()
+                .perspective(
+                        (float)
+                                Math.toRadians(
+                                        GameConfig.Rendering.FOV),
+                        (float) width / height,
+                        GameConfig.Rendering.NEAR_PLANE,
+                        GameConfig.Rendering.FAR_PLANE);
+    }
+
+    private static void cleanupAfterInitializationFailure(
+            Texture texture,
+            ShaderProgram program,
+            Throwable primaryFailure) {
+        suppressCleanup(texture, primaryFailure);
+        suppressCleanup(program, primaryFailure);
+    }
+
+    private static void suppressCleanup(
+            Texture texture,
+            Throwable primaryFailure) {
+        if (texture == null) {
             return;
         }
-        projectionMatrix =
-                new Matrix4f()
-                        .perspective(
-                                (float) Math.toRadians(GameConfig.Rendering.FOV),
-                                (float) width / height,
-                                GameConfig.Rendering.NEAR_PLANE,
-                                GameConfig.Rendering.FAR_PLANE);
+        try {
+            texture.cleanup();
+        } catch (RuntimeException | Error cleanupFailure) {
+            if (cleanupFailure != primaryFailure) {
+                primaryFailure.addSuppressed(cleanupFailure);
+            }
+        }
+    }
+
+    private static void suppressCleanup(
+            ShaderProgram program,
+            Throwable primaryFailure) {
+        if (program == null) {
+            return;
+        }
+        try {
+            program.cleanup();
+        } catch (RuntimeException | Error cleanupFailure) {
+            if (cleanupFailure != primaryFailure) {
+                primaryFailure.addSuppressed(cleanupFailure);
+            }
+        }
+    }
+
+    private static Throwable runCleanup(
+            Texture texture,
+            Throwable firstFailure) {
+        if (texture == null) {
+            return firstFailure;
+        }
+        try {
+            texture.cleanup();
+        } catch (RuntimeException | Error cleanupFailure) {
+            return appendCleanupFailure(firstFailure, cleanupFailure);
+        }
+        return firstFailure;
+    }
+
+    private static Throwable runCleanup(
+            ShaderProgram program,
+            Throwable firstFailure) {
+        if (program == null) {
+            return firstFailure;
+        }
+        try {
+            program.cleanup();
+        } catch (RuntimeException | Error cleanupFailure) {
+            return appendCleanupFailure(firstFailure, cleanupFailure);
+        }
+        return firstFailure;
+    }
+
+    private static Throwable appendCleanupFailure(
+            Throwable firstFailure,
+            Throwable cleanupFailure) {
+        if (firstFailure == null) {
+            return cleanupFailure;
+        }
+        if (cleanupFailure != firstFailure) {
+            firstFailure.addSuppressed(cleanupFailure);
+        }
+        return firstFailure;
+    }
+
+    private static void rethrow(Throwable failure) {
+        if (failure instanceof RuntimeException runtimeException) {
+            throw runtimeException;
+        }
+        throw (Error) failure;
+    }
+
+    private static <T> T requireInitialized(T value, String resource) {
+        if (value == null) {
+            throw new IllegalStateException(
+                    "Renderer " + resource + " is not initialized");
+        }
+        return value;
     }
 }

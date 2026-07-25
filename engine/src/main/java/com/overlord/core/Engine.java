@@ -1,5 +1,6 @@
 package com.overlord.core;
 
+import com.overlord.assets.AssetManager;
 import com.overlord.config.GameConfig;
 import com.overlord.core.thread.MainThreadGuard;
 import com.overlord.event.EventBus;
@@ -20,6 +21,7 @@ public class Engine {
     private final TaskScheduler taskScheduler;
     private final MainThreadGuard mainThreadGuard;
     private final RenderAssets renderAssets;
+    private final AssetManager assetManager;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
@@ -41,10 +43,22 @@ public class Engine {
     public Engine(
             MainThreadGuard mainThreadGuard,
             RenderAssets renderAssets) {
+        this(
+                mainThreadGuard,
+                renderAssets,
+                new AssetManager(Engine.class.getClassLoader()));
+    }
+
+    public Engine(
+            MainThreadGuard mainThreadGuard,
+            RenderAssets renderAssets,
+            AssetManager assetManager) {
         this.mainThreadGuard =
                 Objects.requireNonNull(mainThreadGuard, "mainThreadGuard");
         this.renderAssets =
                 Objects.requireNonNull(renderAssets, "renderAssets");
+        this.assetManager =
+                Objects.requireNonNull(assetManager, "assetManager");
         int maxCores = Runtime.getRuntime().availableProcessors();
         availableCores = Math.min(4, Math.max(1, maxCores));
         taskScheduler = new TaskScheduler(availableCores);
@@ -66,7 +80,10 @@ public class Engine {
             initializedWindow = new Window(mainThreadGuard);
             Camera initializedCamera = new Camera();
             initializedRenderer =
-                    new Renderer(mainThreadGuard, renderAssets);
+                    new Renderer(
+                            mainThreadGuard,
+                            renderAssets,
+                            assetManager);
             World initializedWorld = new World();
 
             initializedRenderer.init(

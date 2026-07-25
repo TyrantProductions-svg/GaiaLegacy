@@ -5,9 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.overlord.assets.AssetManager;
+import com.overlord.assets.ResourceLocation;
 import com.overlord.core.Engine;
 import com.overlord.core.thread.MainThreadGuard;
-import com.overlord.assets.ResourceLocation;
 import com.overlord.renderer.material.RenderType;
 import com.overlord.renderer.texture.TextureImage;
 import org.junit.jupiter.api.Test;
@@ -64,5 +65,17 @@ class RenderAssetsTest {
                         Engine.class.getConstructor(
                                 MainThreadGuard.class,
                                 RenderAssets.class));
+        assertDoesNotThrow(
+                () ->
+                        Renderer.class.getConstructor(
+                                MainThreadGuard.class,
+                                RenderAssets.class,
+                                AssetManager.class));
+        assertDoesNotThrow(
+                () ->
+                        Engine.class.getConstructor(
+                                MainThreadGuard.class,
+                                RenderAssets.class,
+                                AssetManager.class));
     }
 }

@@ -84,13 +84,13 @@ class ChunkRenderBackendTest {
     }
 
     @Test
-    void renderChunksRejectsWorkerBeforeOpenGl() throws InterruptedException {
+    void renderFrameRejectsWorkerBeforeOpenGl() throws InterruptedException {
         Renderer renderer =
                 new Renderer(
                         MainThreadGuard.captureCurrentThread(),
                         RenderAssets.missing());
 
-        assertWorkerRejected(() -> renderer.renderChunks(List.of()));
+        assertWorkerRejected(() -> renderer.renderFrame(List.of()));
     }
 
     @Test

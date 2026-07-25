@@ -52,18 +52,18 @@ public final class GameBootstrap {
                 new ShutdownBarrier(5, TimeUnit.SECONDS);
         Throwable primaryFailure = null;
         try {
-            ClassLoader classLoader =
-                    GameBootstrap.class.getClassLoader();
+            AssetManager assetManager =
+                    new AssetManager(
+                            GameBootstrap.class.getClassLoader());
             GaiaAssetCatalog catalog =
-                    new GaiaResourceLoader(
-                                    new AssetManager(classLoader))
-                            .load();
+                    new GaiaResourceLoader(assetManager).load();
             logAssetReport(catalog.report());
 
             Engine engine =
                     new Engine(
                             mainThreadGuard,
-                            catalog.renderAssets());
+                            catalog.renderAssets(),
+                            assetManager);
             engine.init();
             shutdownCoordinator.register(
                     "engine",

@@ -105,10 +105,20 @@ class GameBootstrapStructureTest {
                         Path.of(
                                 "src/main/java/com/gaia/"
                                         + "GameBootstrap.java"));
+        String compact = source.replaceAll("\\s+", "");
 
-        assertTrue(source.contains("new AssetManager("));
-        assertTrue(source.contains("new GaiaResourceLoader("));
-        assertTrue(source.contains("catalog.renderAssets()"));
+        assertTrue(
+                compact.contains(
+                        "AssetManagerassetManager="
+                                + "newAssetManager("
+                                + "GameBootstrap.class.getClassLoader());"));
+        assertTrue(
+                compact.contains(
+                        "newGaiaResourceLoader(assetManager).load();"));
+        assertTrue(
+                compact.contains(
+                        "newEngine(mainThreadGuard,"
+                                + "catalog.renderAssets(),assetManager);"));
         assertTrue(
                 source.contains(
                         "GaiaWorldGenerator.createVisualRevisionCandidate()"));
@@ -143,10 +153,10 @@ class GameBootstrapStructureTest {
         assertFalse(source.contains("AssetLoadException"));
         assertFalse(source.contains("ServiceLocator"));
 
-        int assetLoad = source.indexOf("new GaiaResourceLoader(");
-        int engineConstruction = source.indexOf("new Engine(");
-        int engineInitialization = source.indexOf("engine.init()");
-        int worldConstruction = source.indexOf("new WorldLoader(");
+        int assetLoad = compact.indexOf("newGaiaResourceLoader(");
+        int engineConstruction = compact.indexOf("newEngine(");
+        int engineInitialization = compact.indexOf("engine.init()");
+        int worldConstruction = compact.indexOf("newWorldLoader(");
         assertTrue(assetLoad < engineConstruction);
         assertTrue(engineConstruction < engineInitialization);
         assertTrue(engineInitialization < worldConstruction);
