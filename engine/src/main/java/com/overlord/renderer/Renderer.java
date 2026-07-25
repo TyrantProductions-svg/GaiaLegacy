@@ -61,6 +61,7 @@ public final class Renderer implements ChunkRenderBackend {
 
     public void init(Camera camera, int width, int height) {
         mainThreadGuard.assertMainThread("renderer initialization");
+        ensureNotInitialized();
         Camera initializedCamera = Objects.requireNonNull(camera, "camera");
         ShaderProgram initializedProgram = null;
         Texture initializedTexture = null;
@@ -228,17 +229,32 @@ public final class Renderer implements ChunkRenderBackend {
         projectionMatrix = null;
     }
 
+    private void ensureNotInitialized() {
+        if (shaderProgram != null
+                || textureAtlas != null
+                || worldMaterial != null
+                || renderQueue != null
+                || renderPipeline != null
+                || camera != null
+                || projectionMatrix != null) {
+            throw new IllegalStateException(
+                    "Renderer is already initialized");
+        }
+    }
+
     private void rebuildProjection(int width, int height) {
         projectionMatrix = createProjection(width, height);
     }
 
     private static Matrix4f createProjection(int width, int height) {
+        int projectionWidth = Math.max(1, width);
+        int projectionHeight = Math.max(1, height);
         return new Matrix4f()
                 .perspective(
                         (float)
                                 Math.toRadians(
                                         GameConfig.Rendering.FOV),
-                        (float) width / height,
+                        (float) projectionWidth / projectionHeight,
                         GameConfig.Rendering.NEAR_PLANE,
                         GameConfig.Rendering.FAR_PLANE);
     }
