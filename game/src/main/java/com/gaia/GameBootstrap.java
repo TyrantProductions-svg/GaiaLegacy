@@ -4,11 +4,9 @@ import com.gaia.assets.GaiaAssetCatalog;
 import com.gaia.assets.GaiaResourceLoader;
 import com.gaia.blocks.BlockRegistry;
 import com.gaia.world.GaiaWorldGenerator;
+import com.gaia.world.SafeSpawnSelector;
 import com.gaia.world.WorldLoadResult;
 import com.gaia.world.WorldLoader;
-import com.gaia.world.generation.DeterministicCoordinateSampler;
-import com.gaia.world.generation.GenerationBlockPalette;
-import com.gaia.world.generation.GenerationContext;
 import com.gaia.world.generation.WorldGenerationConfig;
 import com.gaia.world.generation.WorldGenerator;
 import com.overlord.assets.AssetDiagnostic;
@@ -122,14 +120,6 @@ public final class GameBootstrap {
                     GaiaWorldGenerator.createDefault();
             WorldGenerationConfig worldGenerationConfig =
                     WorldGenerationConfig.defaults();
-            GenerationContext generationContext =
-                    new GenerationContext(
-                            worldGenerationConfig,
-                            GenerationBlockPalette.from(blocks),
-                            new DeterministicCoordinateSampler(
-                                    worldGenerationConfig.seed(),
-                                    worldGenerationConfig
-                                            .algorithmVersion()));
             ExecutorService meshExecutor =
                     Executors.newFixedThreadPool(
                             2,
@@ -151,7 +141,9 @@ public final class GameBootstrap {
             WorldLoader worldLoader =
                     new WorldLoader(
                             generator,
-                            generationContext);
+                            blocks,
+                            worldGenerationConfig,
+                            new SafeSpawnSelector());
 
             ExecutorService worldExecutor =
                     Executors.newSingleThreadExecutor(
@@ -183,6 +175,7 @@ public final class GameBootstrap {
                             frameClock,
                             fixedStepClock,
                             chunkMeshes,
+                            worldLoader,
                             worldLoad,
                             shutdownCoordinator);
             new GameLoop(context).run();

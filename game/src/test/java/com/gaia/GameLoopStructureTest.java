@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.gaia.world.WorldLoadResult;
+import com.gaia.world.WorldLoadState;
 import com.overlord.config.GameConfig;
 import com.overlord.physics.Aabb;
 import com.overlord.physics.BlockCollisionShapeResolver;
@@ -92,6 +93,30 @@ class GameLoopStructureTest {
     }
 
     @Test
+    void failedWorldLoadEntersExplicitFailedStateBeforeRethrow()
+            throws IOException {
+        String source =
+                Files.readString(
+                        Path.of(
+                                "src/main/java/com/gaia/"
+                                        + "GameLoop.java"));
+        String compact = source.replaceAll("\\s+", "");
+
+        assertTrue(compact.contains("FAILED"));
+        assertTrue(compact.contains("state=State.FAILED;"));
+        assertTrue(
+                compact.contains(
+                        "context.worldLoader().state()"
+                                + "!=WorldLoadState.SUCCEEDED"));
+        assertFalse(
+                compact.contains(
+                        "state=State.RUNNING;"
+                                + "if(context.worldLoader().state()"
+                                + "==WorldLoadState.FAILED"));
+        assertEquals(WorldLoadState.FAILED, WorldLoadState.valueOf("FAILED"));
+    }
+
+    @Test
     void loadsFeetThenRunsOrderedPhysicsAndRenderInterpolation()
             throws IOException {
         String source =
@@ -167,7 +192,9 @@ class GameLoopStructureTest {
         WorldLoadResult result =
                 new WorldLoadResult(
                         Set.of(new ChunkKey(0, 0)),
-                        new Vector3f(0.5f, 0.0f, 0.5f));
+                        new Vector3f(0.5f, 0.0f, 0.5f),
+                        "fingerprint",
+                        "hash");
 
         IllegalStateException failure =
                 assertThrows(

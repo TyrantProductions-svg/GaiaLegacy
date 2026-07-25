@@ -1,6 +1,7 @@
 package com.gaia;
 
 import com.gaia.world.WorldLoadResult;
+import com.gaia.world.WorldLoader;
 import com.overlord.core.Engine;
 import com.overlord.core.PlayerManager;
 import com.overlord.core.input.InputManager;
@@ -26,6 +27,7 @@ public record GameContext(
         FrameClock frameClock,
         FixedStepClock fixedStepClock,
         ChunkMeshManager chunkMeshes,
+        WorldLoader worldLoader,
         CompletableFuture<WorldLoadResult> worldLoad,
         ShutdownCoordinator shutdownCoordinator) {
     public GameContext {
@@ -41,6 +43,7 @@ public record GameContext(
         frameClock = Objects.requireNonNull(frameClock, "frameClock");
         fixedStepClock = Objects.requireNonNull(fixedStepClock, "fixedStepClock");
         chunkMeshes = Objects.requireNonNull(chunkMeshes, "chunkMeshes");
+        worldLoader = Objects.requireNonNull(worldLoader, "worldLoader");
         worldLoad = Objects.requireNonNull(worldLoad, "worldLoad");
         shutdownCoordinator =
                 Objects.requireNonNull(shutdownCoordinator, "shutdownCoordinator");

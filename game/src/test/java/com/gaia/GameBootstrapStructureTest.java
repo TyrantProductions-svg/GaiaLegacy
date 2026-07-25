@@ -115,13 +115,10 @@ class GameBootstrapStructureTest {
         assertTrue(
                 source.contains(
                         "WorldGenerationConfig.defaults()"));
-        assertTrue(source.contains("new GenerationContext("));
         assertTrue(
                 source.contains(
-                        "GenerationBlockPalette.from(blocks)"));
-        assertTrue(
-                source.contains(
-                        "new DeterministicCoordinateSampler("));
+                        "new SafeSpawnSelector()"));
+        assertTrue(source.contains("new WorldLoader("));
         assertTrue(source.contains("new ChunkMeshBuilder("));
         assertTrue(
                 source.contains(

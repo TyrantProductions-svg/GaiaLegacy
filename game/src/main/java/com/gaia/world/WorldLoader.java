@@ -1,10 +1,14 @@
 package com.gaia.world;
 
+import com.gaia.blocks.BlockRegistry;
+import com.gaia.world.generation.DeterministicCoordinateSampler;
+import com.gaia.world.generation.GenerationBlockPalette;
 import com.gaia.world.generation.GenerationContext;
 import com.gaia.world.generation.GenerationStageResult;
+import com.gaia.world.generation.WorldGenerationConfig;
 import com.gaia.world.generation.WorldGenerationResult;
 import com.gaia.world.generation.WorldGenerator;
-import com.overlord.config.GameConfig;
+import com.overlord.assets.ResourceLocation;
 import com.overlord.voxel.ChunkGenerationData;
 import com.overlord.voxel.ChunkGenerationMode;
 import com.overlord.voxel.ChunkGenerationResult;
@@ -13,92 +17,315 @@ import com.overlord.voxel.ChunkGenerationTicket;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkRepository;
 import com.overlord.voxel.World;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import org.joml.Vector3f;
 
 public final class WorldLoader {
-    private static final int CHUNK_RADIUS = 2;
+    private static final ResourceLocation GENERATION_FAILED =
+            ResourceLocation.parse("gaia:generation_failed");
+    private static final ResourceLocation GENERATION_COMMIT_FAILED =
+            ResourceLocation.parse("gaia:generation_commit_failed");
+    private static final ResourceLocation NO_SAFE_SPAWN =
+            ResourceLocation.parse("gaia:no_safe_spawn");
 
-    private final WorldGenerator worldGenerator;
-    private final GenerationContext generationContext;
+    private final WorldGenerator generator;
+    private final BlockRegistry blocks;
+    private final WorldGenerationConfig config;
+    private final SafeSpawnSelector spawnSelector;
+    private volatile WorldLoadState state = WorldLoadState.IDLE;
+    private volatile WorldLoadFailure failure;
 
     public WorldLoader(
-            WorldGenerator worldGenerator,
-            GenerationContext generationContext) {
-        this.worldGenerator =
-                Objects.requireNonNull(
-                        worldGenerator, "worldGenerator");
-        this.generationContext =
-                Objects.requireNonNull(
-                        generationContext,
-                        "generationContext");
+            WorldGenerator generator,
+            BlockRegistry blocks,
+            WorldGenerationConfig config,
+            SafeSpawnSelector spawnSelector) {
+        this.generator = Objects.requireNonNull(generator, "generator");
+        this.blocks = Objects.requireNonNull(blocks, "blocks");
+        this.config = Objects.requireNonNull(config, "config");
+        this.spawnSelector =
+                Objects.requireNonNull(spawnSelector, "spawnSelector");
+        validateInclusiveArea(config.chunkRadius());
     }
 
     public WorldLoadResult load(World world) {
         Objects.requireNonNull(world, "world");
-
-        Set<ChunkKey> generated = new LinkedHashSet<>();
-        for (int chunkX = -CHUNK_RADIUS;
-                chunkX < CHUNK_RADIUS;
-                chunkX++) {
-            for (int chunkZ = -CHUNK_RADIUS; chunkZ < CHUNK_RADIUS; chunkZ++) {
+        beginLoad();
+        LinkedHashSet<ChunkKey> completed = new LinkedHashSet<>();
+        List<ChunkGenerationData> generatedData = new ArrayList<>();
+        try {
+            GenerationContext context = contextFor(config);
+            for (ChunkKey key : initialKeys(config.chunkRadius())) {
                 checkCancelled();
-                ChunkKey key = new ChunkKey(chunkX, chunkZ);
-                generateChunk(world.chunks(), key);
-                generated.add(key);
+                ChunkGenerationData data =
+                        generateInitial(world.chunks(), context, key, completed);
+                completed.add(key);
+                generatedData.add(data);
             }
+            checkCancelled();
+            Vector3f spawn =
+                    spawnSelector
+                            .find(world, completed, config)
+                            .orElseThrow(
+                                    () ->
+                                            loadException(
+                                                    completed,
+                                                    Optional.empty(),
+                                                    Optional.empty(),
+                                                    NO_SAFE_SPAWN,
+                                                    new IllegalStateException(
+                                                            "No safe spawn "
+                                                                    + "exists in the committed "
+                                                                    + "initial region")));
+            checkCancelled();
+            String configFingerprint = configFingerprint(config);
+            String generationHash =
+                    generationHash(
+                            config,
+                            configFingerprint,
+                            generatedData);
+            checkCancelled();
+            markSucceeded();
+            return new WorldLoadResult(
+                    completed,
+                    spawn,
+                    configFingerprint,
+                    generationHash);
+        } catch (CancellationException cancellation) {
+            markCancelled();
+            throw cancellation;
+        } catch (WorldLoadException loadFailure) {
+            markFailed(loadFailure.failure());
+            throw loadFailure;
+        } catch (RuntimeException | Error unexpected) {
+            WorldLoadException loadFailure =
+                    loadException(
+                            completed,
+                            Optional.empty(),
+                            Optional.empty(),
+                            GENERATION_FAILED,
+                            unexpected);
+            markFailed(loadFailure.failure());
+            throw loadFailure;
         }
-
-        checkCancelled();
-        int spawnX = 0;
-        int spawnZ = 0;
-        int highestBlockY = findHighestBlock(world, spawnX, spawnZ);
-
-        int playerFeetY = highestBlockY + 1;
-        Vector3f playerFeetPosition =
-                new Vector3f(
-                        spawnX + 0.5f,
-                        playerFeetY,
-                        spawnZ + 0.5f);
-        return new WorldLoadResult(generated, playerFeetPosition);
     }
 
-    private void generateChunk(
-            ChunkRepository chunks, ChunkKey key) {
-        ChunkGenerationTicket ticket =
-                chunks.beginGeneration(
-                        key, ChunkGenerationMode.INITIAL);
+    public WorldRebuildResult rebuildRegion(
+            World world,
+            Set<ChunkKey> keys,
+            WorldGenerationConfig config) {
+        Objects.requireNonNull(world, "world");
+        Objects.requireNonNull(keys, "keys");
+        Objects.requireNonNull(config, "config");
+        GenerationContext context = contextFor(config);
+        List<ChunkKey> orderedKeys =
+                keys.stream()
+                        .map(
+                                key ->
+                                        Objects.requireNonNull(
+                                                key, "rebuild key"))
+                        .sorted(keyOrder())
+                        .toList();
+        LinkedHashSet<ChunkKey> committed = new LinkedHashSet<>();
+        LinkedHashMap<ChunkKey, ChunkGenerationResult> outcomes =
+                new LinkedHashMap<>();
+        for (ChunkKey key : orderedKeys) {
+            checkCancelled();
+            ChunkGenerationResult outcome =
+                    rebuildOne(world.chunks(), context, key);
+            outcomes.put(key, outcome);
+            if (outcome.status()
+                    == ChunkGenerationResult.Status.COMMITTED) {
+                committed.add(key);
+            }
+        }
+        checkCancelled();
+        return new WorldRebuildResult(committed, outcomes);
+    }
+
+    public WorldLoadState state() {
+        return state;
+    }
+
+    public Optional<WorldLoadFailure> failure() {
+        return Optional.ofNullable(failure);
+    }
+
+    private ChunkGenerationData generateInitial(
+            ChunkRepository chunks,
+            GenerationContext context,
+            ChunkKey key,
+            Set<ChunkKey> completed) {
+        ChunkGenerationTicket ticket;
+        try {
+            ticket =
+                    chunks.beginGeneration(
+                            key, ChunkGenerationMode.INITIAL);
+        } catch (RuntimeException | Error beginFailure) {
+            throw loadException(
+                    completed,
+                    Optional.of(key),
+                    Optional.empty(),
+                    GENERATION_FAILED,
+                    beginFailure);
+        }
+
         try {
             WorldGenerationResult generated =
-                    worldGenerator.generate(
-                            generationContext, key);
+                    Objects.requireNonNull(
+                            generator.generate(context, key),
+                            "generator result");
             if (!generated.succeeded()) {
-                throw stageFailure(key, generated);
+                GenerationStageResult failedStage =
+                        generated.failedStage().orElseThrow(
+                                () ->
+                                        new IllegalStateException(
+                                                "World generator failed "
+                                                        + "without a failed stage"));
+                Throwable cause =
+                        failedStage.failure().orElseThrow();
+                chunks.failGeneration(ticket, cause);
+                throw loadException(
+                        completed,
+                        Optional.of(key),
+                        Optional.of(failedStage.stageId()),
+                        GENERATION_FAILED,
+                        cause);
             }
+            checkCancelled();
             ChunkGenerationData data =
                     generated.chunkData().orElseThrow();
             validateGeneratedData(chunks, key, data);
             ChunkGenerationResult committed =
-                    chunks.commitGeneration(
-                            ticket, data);
+                    chunks.commitGeneration(ticket, data);
             if (committed.status()
                     != ChunkGenerationResult.Status.COMMITTED) {
-                throw new IllegalStateException(
-                        "Initial generation commit conflict for "
-                                + key
-                                + ": "
-                                + committed.status());
+                IllegalStateException cause =
+                        new IllegalStateException(
+                                "Generation commit "
+                                        + committed.status()
+                                        + " for "
+                                        + key);
+                throw loadException(
+                        completed,
+                        Optional.of(key),
+                        Optional.empty(),
+                        GENERATION_COMMIT_FAILED,
+                        cause);
             }
-        } catch (RuntimeException | Error failure) {
-            if (chunks.generationStatus(key)
-                    == ChunkGenerationStatus.GENERATING) {
-                chunks.failGeneration(ticket, failure);
-            }
-            throw failure;
+            return data;
+        } catch (CancellationException cancellation) {
+            failLiveTicket(chunks, ticket, cancellation);
+            throw cancellation;
+        } catch (WorldLoadException loadFailure) {
+            throw loadFailure;
+        } catch (RuntimeException | Error generationFailure) {
+            failLiveTicket(chunks, ticket, generationFailure);
+            throw loadException(
+                    completed,
+                    Optional.of(key),
+                    Optional.empty(),
+                    GENERATION_FAILED,
+                    generationFailure);
         }
+    }
+
+    private ChunkGenerationResult rebuildOne(
+            ChunkRepository chunks,
+            GenerationContext context,
+            ChunkKey key) {
+        ChunkGenerationTicket ticket;
+        try {
+            ticket =
+                    chunks.beginGeneration(
+                            key, ChunkGenerationMode.REBUILD);
+        } catch (RuntimeException | Error beginFailure) {
+            return failedOutcome(chunks, key, beginFailure);
+        }
+
+        try {
+            WorldGenerationResult generated =
+                    Objects.requireNonNull(
+                            generator.generate(context, key),
+                            "generator result");
+            if (!generated.succeeded()) {
+                Throwable cause =
+                        generated.failedStage()
+                                .orElseThrow(
+                                        () ->
+                                                new IllegalStateException(
+                                                        "World generator failed "
+                                                                + "without a failed stage"))
+                                .failure()
+                                .orElseThrow();
+                return chunks.failGeneration(ticket, cause);
+            }
+            checkCancelled();
+            ChunkGenerationData data =
+                    generated.chunkData().orElseThrow();
+            validateGeneratedData(chunks, key, data);
+            return chunks.commitGeneration(ticket, data);
+        } catch (CancellationException cancellation) {
+            failLiveTicket(chunks, ticket, cancellation);
+            throw cancellation;
+        } catch (RuntimeException | Error generationFailure) {
+            ChunkGenerationResult failed =
+                    failLiveTicket(chunks, ticket, generationFailure);
+            if (failed.status()
+                    == ChunkGenerationResult.Status.FAILED) {
+                return failed;
+            }
+            return failedOutcome(chunks, key, generationFailure);
+        }
+    }
+
+    private static ChunkGenerationResult failLiveTicket(
+            ChunkRepository chunks,
+            ChunkGenerationTicket ticket,
+            Throwable failure) {
+        if (chunks.generationStatus(ticket.key())
+                == ChunkGenerationStatus.GENERATING) {
+            return chunks.failGeneration(ticket, failure);
+        }
+        return new ChunkGenerationResult(
+                ChunkGenerationResult.Status.CONFLICT,
+                ticket.key(),
+                chunks.revision(ticket.key()),
+                Optional.empty());
+    }
+
+    private static ChunkGenerationResult failedOutcome(
+            ChunkRepository chunks,
+            ChunkKey key,
+            Throwable failure) {
+        return new ChunkGenerationResult(
+                ChunkGenerationResult.Status.FAILED,
+                key,
+                chunks.revision(key),
+                Optional.of(failure));
+    }
+
+    private GenerationContext contextFor(
+            WorldGenerationConfig generationConfig) {
+        return new GenerationContext(
+                generationConfig,
+                GenerationBlockPalette.from(blocks),
+                new DeterministicCoordinateSampler(
+                        generationConfig.seed(),
+                        generationConfig.algorithmVersion()));
     }
 
     private static void validateGeneratedData(
@@ -122,38 +349,138 @@ public final class WorldLoader {
         }
     }
 
-    private static IllegalStateException stageFailure(
-            ChunkKey key,
-            WorldGenerationResult generated) {
-        GenerationStageResult failedStage =
-                generated.failedStage().orElseThrow(
-                        () ->
-                                new IllegalStateException(
-                                        "World generator failed "
-                                                + "without a failed stage"));
-        Throwable cause =
-                failedStage.failure().orElseThrow();
-        return new IllegalStateException(
-                "World generation failed for "
-                        + key
-                        + " at stage "
-                        + failedStage.stageId(),
-                cause);
+    private static List<ChunkKey> initialKeys(int radius) {
+        validateInclusiveArea(radius);
+        List<ChunkKey> keys =
+                new ArrayList<>(
+                        Math.multiplyExact(
+                                Math.addExact(
+                                        Math.multiplyExact(radius, 2),
+                                        1),
+                                Math.addExact(
+                                        Math.multiplyExact(radius, 2),
+                                        1)));
+        for (int x = -radius; x <= radius; x++) {
+            for (int z = -radius; z <= radius; z++) {
+                keys.add(new ChunkKey(x, z));
+            }
+        }
+        return Collections.unmodifiableList(keys);
+    }
+
+    private static void validateInclusiveArea(int radius) {
+        try {
+            int diameter =
+                    Math.addExact(Math.multiplyExact(radius, 2), 1);
+            Math.multiplyExact(diameter, diameter);
+        } catch (ArithmeticException overflow) {
+            throw new IllegalArgumentException(
+                    "Inclusive chunk radius area overflows", overflow);
+        }
+    }
+
+    private static Comparator<ChunkKey> keyOrder() {
+        return Comparator.comparingInt(ChunkKey::x)
+                .thenComparingInt(ChunkKey::z);
+    }
+
+    private static WorldLoadException loadException(
+            Set<ChunkKey> completed,
+            Optional<ChunkKey> failedChunk,
+            Optional<ResourceLocation> failedStage,
+            ResourceLocation code,
+            Throwable cause) {
+        return new WorldLoadException(
+                new WorldLoadFailure(
+                        completed,
+                        failedChunk,
+                        failedStage,
+                        code,
+                        cause));
+    }
+
+    private synchronized void beginLoad() {
+        if (state == WorldLoadState.RUNNING) {
+            throw new IllegalStateException(
+                    "World loading is already running");
+        }
+        failure = null;
+        state = WorldLoadState.RUNNING;
+    }
+
+    private synchronized void markSucceeded() {
+        state = WorldLoadState.SUCCEEDED;
+    }
+
+    private synchronized void markFailed(
+            WorldLoadFailure loadFailure) {
+        failure = Objects.requireNonNull(loadFailure, "loadFailure");
+        state = WorldLoadState.FAILED;
+    }
+
+    private synchronized void markCancelled() {
+        failure = null;
+        state = WorldLoadState.CANCELLED;
     }
 
     private static void checkCancelled() {
         if (Thread.currentThread().isInterrupted()) {
-            throw new CancellationException("World loading was cancelled");
+            throw new CancellationException(
+                    "World loading was cancelled");
         }
     }
 
-    private static int findHighestBlock(World world, int x, int z) {
-        for (int y = GameConfig.Chunk.MAX_HEIGHT - 1; y >= 0; y--) {
-            if (world.getBlock(x, y, z) != 0) {
-                return y;
-            }
-        }
-        return 0;
+    private static String configFingerprint(
+            WorldGenerationConfig config) {
+        MessageDigest digest = sha256();
+        digest.update(
+                config.canonicalFingerprintInput()
+                        .getBytes(StandardCharsets.UTF_8));
+        return hex(digest.digest());
     }
 
+    private static String generationHash(
+            WorldGenerationConfig config,
+            String configFingerprint,
+            List<ChunkGenerationData> generatedData) {
+        MessageDigest digest = sha256();
+        updateInt(digest, config.algorithmVersion());
+        digest.update(
+                configFingerprint.getBytes(StandardCharsets.UTF_8));
+        for (ChunkGenerationData data : generatedData) {
+            updateInt(digest, data.key().x());
+            updateInt(digest, data.key().z());
+            digest.update(data.copyBlocks());
+        }
+        return hex(digest.digest());
+    }
+
+    private static void updateInt(
+            MessageDigest digest, int value) {
+        digest.update(
+                ByteBuffer.allocate(Integer.BYTES)
+                        .putInt(value)
+                        .array());
+    }
+
+    private static MessageDigest sha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(
+                    "SHA-256 is unavailable", impossible);
+        }
+    }
+
+    private static String hex(byte[] bytes) {
+        StringBuilder result =
+                new StringBuilder(bytes.length * 2);
+        for (byte value : bytes) {
+            result.append(
+                    Character.forDigit((value >>> 4) & 0x0f, 16));
+            result.append(
+                    Character.forDigit(value & 0x0f, 16));
+        }
+        return result.toString();
+    }
 }

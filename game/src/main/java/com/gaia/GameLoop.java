@@ -1,6 +1,7 @@
 package com.gaia;
 
 import com.gaia.world.WorldLoadResult;
+import com.gaia.world.WorldLoadState;
 import com.overlord.config.GameConfig;
 import com.overlord.core.ModuleManager;
 import com.overlord.core.Window;
@@ -97,6 +98,7 @@ public final class GameLoop {
                 state = State.STOPPING;
                 return;
             }
+            state = State.FAILED;
             if (cause instanceof RuntimeException runtimeException) {
                 throw runtimeException;
             }
@@ -106,6 +108,13 @@ public final class GameLoop {
             throw new RuntimeException("World loading failed", cause);
         }
 
+        if (context.worldLoader().state()
+                != WorldLoadState.SUCCEEDED) {
+            state = State.FAILED;
+            throw new IllegalStateException(
+                    "World load future completed while loader state was "
+                            + context.worldLoader().state());
+        }
         completePlayerLoading(
                 context.playerController(), loadResult);
         updateRenderCamera();
@@ -138,6 +147,12 @@ public final class GameLoop {
                 && context.chunkMeshes()
                         .allRenderable(
                                 loadResult.initialChunks())) {
+            if (context.worldLoader().state()
+                    != WorldLoadState.SUCCEEDED) {
+                state = State.FAILED;
+                throw new IllegalStateException(
+                        "World loader is not successful");
+            }
             state = State.RUNNING;
         }
     }
@@ -190,6 +205,7 @@ public final class GameLoop {
     private enum State {
         LOADING,
         RUNNING,
+        FAILED,
         STOPPING
     }
 }
