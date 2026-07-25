@@ -77,6 +77,11 @@ public final class GenerationRegion {
         writeCount++;
     }
 
+    public void setBlock(
+            int localX, int y, int localZ, byte block) {
+        writeBlock(localX, y, localZ, block);
+    }
+
     public int writeCount() {
         return writeCount;
     }

@@ -1,5 +1,6 @@
 package com.gaia.world.generation;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -11,7 +12,7 @@ import org.junit.jupiter.api.Test;
 
 class GenerationRegionTest {
     @Test
-    void exposesCpuStagingWriteWithoutLiveWorldMutationName() {
+    void exposesCpuStagingWriteAndSourceCompatibleAlias() {
         assertDoesNotThrow(
                 () ->
                         GenerationRegion.class.getMethod(
@@ -20,8 +21,7 @@ class GenerationRegionTest {
                                 int.class,
                                 int.class,
                                 byte.class));
-        assertThrows(
-                NoSuchMethodException.class,
+        assertDoesNotThrow(
                 () ->
                         GenerationRegion.class.getMethod(
                                 "setBlock",
@@ -29,6 +29,53 @@ class GenerationRegionTest {
                                 int.class,
                                 int.class,
                                 byte.class));
+    }
+
+    @Test
+    void sourceCompatibleAliasMatchesWriteAndCountSemantics() {
+        GenerationRegion aliased =
+                region(new ChunkKey(0, 0), 32);
+        GenerationRegion explicit =
+                region(new ChunkKey(0, 0), 32);
+
+        aliased.setBlock(2, 7, 3, (byte) 5);
+        aliased.setBlock(2, 7, 3, (byte) 5);
+        explicit.writeBlock(2, 7, 3, (byte) 5);
+        explicit.writeBlock(2, 7, 3, (byte) 5);
+
+        assertArrayEquals(
+                explicit.copyBlocks(), aliased.copyBlocks());
+        assertEquals(
+                explicit.writeCount(), aliased.writeCount());
+        assertEquals(2, aliased.writeCount());
+        assertEquals(
+                (byte) 5, aliased.getBlock(2, 7, 3));
+    }
+
+    @Test
+    void sourceCompatibleAliasRejectsEveryOutOfBoundsWrite() {
+        GenerationRegion region =
+                region(new ChunkKey(-1, 2), 64);
+
+        assertThrows(
+                IndexOutOfBoundsException.class,
+                () -> region.setBlock(-1, 2, 1, (byte) 3));
+        assertThrows(
+                IndexOutOfBoundsException.class,
+                () -> region.setBlock(16, 2, 1, (byte) 3));
+        assertThrows(
+                IndexOutOfBoundsException.class,
+                () -> region.setBlock(1, -1, 1, (byte) 3));
+        assertThrows(
+                IndexOutOfBoundsException.class,
+                () -> region.setBlock(1, 64, 1, (byte) 3));
+        assertThrows(
+                IndexOutOfBoundsException.class,
+                () -> region.setBlock(1, 2, -1, (byte) 3));
+        assertThrows(
+                IndexOutOfBoundsException.class,
+                () -> region.setBlock(1, 2, 16, (byte) 3));
+        assertEquals(0, region.writeCount());
     }
 
     @Test
