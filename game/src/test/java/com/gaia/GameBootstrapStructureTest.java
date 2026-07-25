@@ -11,6 +11,14 @@ import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 class GameBootstrapStructureTest {
+    private enum LexicalState {
+        CODE,
+        LINE_COMMENT,
+        BLOCK_COMMENT,
+        SINGLE_QUOTED,
+        DOUBLE_QUOTED
+    }
+
     @Test
     void worldLoadingDoesNotPublishCombinedMeshData()
             throws IOException {
@@ -230,7 +238,9 @@ class GameBootstrapStructureTest {
     @Test
     void installedShaderDependencyMustAppearInsideCheckBlock() {
         String script =
-                "tasks.named('check') { dependsOn tasks.named('other') }\n"
+                "tasks.named('check') {\n"
+                        + "    dependsOn tasks.named('other')\n"
+                        + "}\n"
                         + "dependsOn tasks.named('verifyInstalledShaderResources')";
 
         assertFalse(
@@ -243,9 +253,12 @@ class GameBootstrapStructureTest {
     @Test
     void installedShaderDependencyMayAppearInALaterCheckBlock() {
         String script =
-                "tasks.named('check') { dependsOn tasks.named('other') }\n"
-                        + "tasks.named('check') { "
-                        + "dependsOn tasks.named('verifyInstalledShaderResources') }";
+                "tasks.named('check') {\n"
+                        + "    dependsOn tasks.named('other')\n"
+                        + "}\n"
+                        + "tasks.named('check') {\n"
+                        + "    dependsOn tasks.named('verifyInstalledShaderResources')\n"
+                        + "}";
 
         assertTrue(
                 taskBlockDependsOn(
@@ -254,8 +267,44 @@ class GameBootstrapStructureTest {
                         "verifyInstalledShaderResources"));
     }
 
+    @Test
+    void installedShaderDependencyIgnoresCommentsStringsAndQuotedBraces() {
+        for (String script :
+                java.util.List.of(
+                        "tasks.named('check') {\n"
+                                + "    // dependsOn tasks.named('verifyInstalledShaderResources')\n"
+                                + "}",
+                        "tasks.named('check') {\n"
+                                + "    /*\n"
+                                + "    dependsOn tasks.named('verifyInstalledShaderResources')\n"
+                                + "    */\n"
+                                + "}",
+                        "tasks.named('check') {\n"
+                                + "    \"dependsOn tasks.named('verifyInstalledShaderResources')\"\n"
+                                + "}",
+                        "\"tasks.named('check') { dependsOn tasks.named('verifyInstalledShaderResources') }\"")) {
+            assertFalse(
+                    taskBlockDependsOn(
+                            script,
+                            "check",
+                            "verifyInstalledShaderResources"));
+        }
+
+        String validScript =
+                "tasks.named('check') {\n"
+                        + "    def message = \"{ escaped quote: \\\" }\"\n"
+                        + "    dependsOn tasks.named('verifyInstalledShaderResources')\n"
+                        + "}";
+        assertTrue(
+                taskBlockDependsOn(
+                        validScript,
+                        "check",
+                        "verifyInstalledShaderResources"));
+    }
+
     private static boolean taskBlockDependsOn(
             String script, String taskName, String dependencyName) {
+        String code = sanitizeCode(script);
         Matcher taskBlock =
                 Pattern.compile(
                                 "tasks\\.named\\(\\s*['\"]"
@@ -264,17 +313,34 @@ class GameBootstrapStructureTest {
                         .matcher(script);
         Pattern dependency =
                 Pattern.compile(
-                        "dependsOn\\s+tasks\\.named\\(\\s*['\"]"
+                        "(?m)^\\s*dependsOn\\s+tasks\\.named\\(\\s*['\"]"
                                 + Pattern.quote(dependencyName)
                                 + "['\"]\\s*\\)");
         while (taskBlock.find()) {
-            int openingBrace = script.indexOf('{', taskBlock.start());
+            if (!isCodeAt(script, code, taskBlock.start())) {
+                continue;
+            }
+            int openingBrace =
+                    nextCodeCharacter(code, taskBlock.end() - 1, '{');
+            if (openingBrace < 0) {
+                continue;
+            }
+            int closingBrace =
+                    matchingDelimiter(code, openingBrace, '{', '}');
             String body =
                     script.substring(
                             openingBrace + 1,
-                            matchingDelimiter(script, openingBrace, '{', '}'));
-            if (dependency.matcher(body).find()) {
-                return true;
+                            closingBrace);
+            String bodyCode =
+                    code.substring(openingBrace + 1, closingBrace);
+            Matcher dependencies = dependency.matcher(body);
+            while (dependencies.find()) {
+                int dependencyToken =
+                        dependencies.start()
+                                + dependencies.group().indexOf("dependsOn");
+                if (isCodeAt(body, bodyCode, dependencyToken)) {
+                    return true;
+                }
             }
         }
         return false;
@@ -282,9 +348,10 @@ class GameBootstrapStructureTest {
 
     private static int matchingDelimiter(
             String source, int openingIndex, char opening, char closing) {
+        String code = sanitizeCode(source);
         int depth = 0;
-        for (int index = openingIndex; index < source.length(); index++) {
-            char current = source.charAt(index);
+        for (int index = openingIndex; index < code.length(); index++) {
+            char current = code.charAt(index);
             if (current == opening) {
                 depth++;
             } else if (current == closing && --depth == 0) {
@@ -293,5 +360,92 @@ class GameBootstrapStructureTest {
         }
         throw new AssertionError(
                 "Unclosed delimiter starting at " + openingIndex);
+    }
+
+    private static String sanitizeCode(String source) {
+        StringBuilder sanitized = new StringBuilder(source.length());
+        LexicalState state = LexicalState.CODE;
+        for (int index = 0; index < source.length(); index++) {
+            char current = source.charAt(index);
+            char next = index + 1 < source.length() ? source.charAt(index + 1) : '\0';
+            switch (state) {
+                case CODE -> {
+                    if (current == '/' && next == '/') {
+                        sanitized.append(' ').append(' ');
+                        index++;
+                        state = LexicalState.LINE_COMMENT;
+                    } else if (current == '/' && next == '*') {
+                        sanitized.append(' ').append(' ');
+                        index++;
+                        state = LexicalState.BLOCK_COMMENT;
+                    } else if (current == '\'') {
+                        sanitized.append(' ');
+                        state = LexicalState.SINGLE_QUOTED;
+                    } else if (current == '"') {
+                        sanitized.append(' ');
+                        state = LexicalState.DOUBLE_QUOTED;
+                    } else {
+                        sanitized.append(current);
+                    }
+                }
+                case LINE_COMMENT -> {
+                    sanitized.append(whitespace(current));
+                    if (current == '\n' || current == '\r') {
+                        state = LexicalState.CODE;
+                    }
+                }
+                case BLOCK_COMMENT -> {
+                    if (current == '*' && next == '/') {
+                        sanitized.append(' ').append(' ');
+                        index++;
+                        state = LexicalState.CODE;
+                    } else {
+                        sanitized.append(whitespace(current));
+                    }
+                }
+                case SINGLE_QUOTED -> {
+                    if (current == '\\' && next != '\0') {
+                        sanitized.append(' ').append(whitespace(next));
+                        index++;
+                    } else {
+                        sanitized.append(whitespace(current));
+                        if (current == '\'') {
+                            state = LexicalState.CODE;
+                        }
+                    }
+                }
+                case DOUBLE_QUOTED -> {
+                    if (current == '\\' && next != '\0') {
+                        sanitized.append(' ').append(whitespace(next));
+                        index++;
+                    } else {
+                        sanitized.append(whitespace(current));
+                        if (current == '"') {
+                            state = LexicalState.CODE;
+                        }
+                    }
+                }
+            }
+        }
+        return sanitized.toString();
+    }
+
+    private static char whitespace(char character) {
+        return character == '\n' || character == '\r' ? character : ' ';
+    }
+
+    private static int nextCodeCharacter(String code, int start, char expected) {
+        for (int index = start; index < code.length(); index++) {
+            if (code.charAt(index) == expected) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private static boolean isCodeAt(String source, String code, int index) {
+        return index >= 0
+                && index < source.length()
+                && code.charAt(index) == source.charAt(index);
     }
 }

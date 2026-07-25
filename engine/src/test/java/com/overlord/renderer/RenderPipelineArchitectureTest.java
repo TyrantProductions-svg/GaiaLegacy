@@ -19,6 +19,14 @@ class RenderPipelineArchitectureTest {
     private static final Path MAIN = Path.of("src/main");
     private static final Path JAVA = MAIN.resolve("java");
 
+    private enum LexicalState {
+        CODE,
+        LINE_COMMENT,
+        BLOCK_COMMENT,
+        SINGLE_QUOTED,
+        DOUBLE_QUOTED
+    }
+
     @Test
     void voxelMeshingAndGenerationSourcesDoNotDependOnLwjgl()
             throws IOException {
@@ -222,9 +230,48 @@ class RenderPipelineArchitectureTest {
     }
 
     @Test
+    void lexicalGuardHelpersIgnoreCommentsStringsAndQuotedBraces() {
+        String escaped =
+                "void guarded() { String fake = \"guard.assertMainThread(); \\\" }\"; "
+                        + "/* { backend.create(); } */ guard.assertMainThread(); "
+                        + "backend.create(); }";
+        assertGuardBeforeFirstCall(
+                methodBody(escaped, "guarded"),
+                "guard.assertMainThread(",
+                "backend.");
+
+        assertThrows(
+                AssertionError.class,
+                () ->
+                        assertGuardBeforeFirstCall(
+                                "// guard.assertMainThread();\nbackend.create();",
+                                "guard.assertMainThread(",
+                                "backend."));
+        assertThrows(
+                AssertionError.class,
+                () ->
+                        assertGuardBeforeFirstCall(
+                                "\"guard.assertMainThread();\"; backend.create();",
+                                "guard.assertMainThread(",
+                                "backend."));
+
+        String sanitized =
+                sanitizeCode(
+                        "// fake { }\n'guard.assertMainThread()' \"backend.create()\\\" }\"");
+        assertEquals(
+                sanitized.length(),
+                "// fake { }\n'guard.assertMainThread()' \"backend.create()\\\" }\""
+                        .length());
+        assertFalse(sanitized.contains("guard.assertMainThread"));
+        assertFalse(sanitized.contains("backend.create"));
+    }
+
+    @Test
     void taskBlockDependencyHelperRejectsDependencyOutsideCheckBlock() {
         String script =
-                "tasks.named('check') { dependsOn tasks.named('other') }\n"
+                "tasks.named('check') {\n"
+                        + "    dependsOn tasks.named('other')\n"
+                        + "}\n"
                         + "dependsOn tasks.named('verifyPackagedShaderResources')";
 
         assertFalse(
@@ -235,13 +282,47 @@ class RenderPipelineArchitectureTest {
     @Test
     void taskBlockDependencyHelperChecksEverySeparateCheckBlock() {
         String script =
-                "tasks.named('check') { dependsOn tasks.named('other') }\n"
-                        + "tasks.named('check') { "
-                        + "dependsOn tasks.named('verifyPackagedShaderResources') }";
+                "tasks.named('check') {\n"
+                        + "    dependsOn tasks.named('other')\n"
+                        + "}\n"
+                        + "tasks.named('check') {\n"
+                        + "    dependsOn tasks.named('verifyPackagedShaderResources')\n"
+                        + "}";
 
         assertTrue(
                 taskBlockDependsOn(
                         script, "check", "verifyPackagedShaderResources"));
+    }
+
+    @Test
+    void taskBlockDependencyHelperIgnoresCommentsStringsAndQuotedBraces() {
+        for (String script :
+                List.of(
+                        "tasks.named('check') {\n"
+                                + "    // dependsOn tasks.named('verifyPackagedShaderResources')\n"
+                                + "}",
+                        "tasks.named('check') {\n"
+                                + "    /*\n"
+                                + "    dependsOn tasks.named('verifyPackagedShaderResources')\n"
+                                + "    */\n"
+                                + "}",
+                        "tasks.named('check') {\n"
+                                + "    \"dependsOn tasks.named('verifyPackagedShaderResources')\"\n"
+                                + "}",
+                        "\"tasks.named('check') { dependsOn tasks.named('verifyPackagedShaderResources') }\"")) {
+            assertFalse(
+                    taskBlockDependsOn(
+                            script, "check", "verifyPackagedShaderResources"));
+        }
+
+        String validScript =
+                "tasks.named('check') {\n"
+                        + "    def message = \"{ escaped quote: \\\" }\"\n"
+                        + "    dependsOn tasks.named('verifyPackagedShaderResources')\n"
+                        + "}";
+        assertTrue(
+                taskBlockDependsOn(
+                        validScript, "check", "verifyPackagedShaderResources"));
     }
 
     private static List<Path> allJavaSources(Path root) {
@@ -278,26 +359,27 @@ class RenderPipelineArchitectureTest {
 
     private static String methodBody(
             String source, String methodName, String requiredParameter) {
+        String code = sanitizeCode(source);
         Matcher declarations =
                 Pattern.compile("\\b" + Pattern.quote(methodName) + "\\s*\\(")
-                        .matcher(source);
+                        .matcher(code);
         while (declarations.find()) {
             int parametersStart = declarations.end() - 1;
             int parametersEnd =
-                    matchingDelimiter(source, parametersStart, '(', ')');
+                    matchingDelimiter(code, parametersStart, '(', ')');
             String parameters =
-                    source.substring(parametersStart + 1, parametersEnd);
+                    code.substring(parametersStart + 1, parametersEnd);
             if (requiredParameter != null
                     && !parameters.contains(requiredParameter)) {
                 continue;
             }
-            int openingBrace = source.indexOf('{', parametersEnd);
+            int openingBrace = nextCodeCharacter(code, parametersEnd, '{');
             if (openingBrace < 0) {
                 throw new AssertionError(
                         "Missing method body for " + methodName);
             }
             int closingBrace =
-                    matchingDelimiter(source, openingBrace, '{', '}');
+                    matchingDelimiter(code, openingBrace, '{', '}');
             return source.substring(openingBrace + 1, closingBrace);
         }
         throw new AssertionError("Missing method declaration for " + methodName);
@@ -305,9 +387,10 @@ class RenderPipelineArchitectureTest {
 
     private static int matchingDelimiter(
             String source, int openingIndex, char opening, char closing) {
+        String code = sanitizeCode(source);
         int depth = 0;
-        for (int index = openingIndex; index < source.length(); index++) {
-            char current = source.charAt(index);
+        for (int index = openingIndex; index < code.length(); index++) {
+            char current = code.charAt(index);
             if (current == opening) {
                 depth++;
             } else if (current == closing && --depth == 0) {
@@ -320,8 +403,9 @@ class RenderPipelineArchitectureTest {
 
     private static void assertGuardBeforeFirstCall(
             String body, String guardCall, String callPrefix) {
-        int guardIndex = body.indexOf(guardCall);
-        int callIndex = firstCallIndex(body, callPrefix);
+        String code = sanitizeCode(body);
+        int guardIndex = code.indexOf(guardCall);
+        int callIndex = firstCallIndex(code, callPrefix);
 
         assertTrue(guardIndex >= 0, "Missing main-thread guard: " + guardCall);
         assertTrue(callIndex >= 0, "Missing guarded call: " + callPrefix);
@@ -344,6 +428,7 @@ class RenderPipelineArchitectureTest {
 
     private static boolean taskBlockDependsOn(
             String script, String taskName, String dependencyName) {
+        String code = sanitizeCode(script);
         Matcher taskBlock =
                 Pattern.compile(
                                 "tasks\\.named\\(\\s*['\"]"
@@ -352,20 +437,124 @@ class RenderPipelineArchitectureTest {
                         .matcher(script);
         Pattern dependency =
                 Pattern.compile(
-                        "dependsOn\\s+tasks\\.named\\(\\s*['\"]"
+                        "(?m)^\\s*dependsOn\\s+tasks\\.named\\(\\s*['\"]"
                                 + Pattern.quote(dependencyName)
                                 + "['\"]\\s*\\)");
         while (taskBlock.find()) {
-            int openingBrace = script.indexOf('{', taskBlock.start());
+            if (!isCodeAt(script, code, taskBlock.start())) {
+                continue;
+            }
+            int openingBrace =
+                    nextCodeCharacter(code, taskBlock.end() - 1, '{');
+            if (openingBrace < 0) {
+                continue;
+            }
+            int closingBrace =
+                    matchingDelimiter(code, openingBrace, '{', '}');
             String body =
                     script.substring(
                             openingBrace + 1,
-                            matchingDelimiter(script, openingBrace, '{', '}'));
-            if (dependency.matcher(body).find()) {
-                return true;
+                            closingBrace);
+            String bodyCode =
+                    code.substring(openingBrace + 1, closingBrace);
+            Matcher dependencies = dependency.matcher(body);
+            while (dependencies.find()) {
+                int dependencyToken =
+                        dependencies.start()
+                                + dependencies.group().indexOf("dependsOn");
+                if (isCodeAt(body, bodyCode, dependencyToken)) {
+                    return true;
+                }
             }
         }
         return false;
+    }
+
+    private static String sanitizeCode(String source) {
+        StringBuilder sanitized = new StringBuilder(source.length());
+        LexicalState state = LexicalState.CODE;
+        for (int index = 0; index < source.length(); index++) {
+            char current = source.charAt(index);
+            char next = index + 1 < source.length() ? source.charAt(index + 1) : '\0';
+            switch (state) {
+                case CODE -> {
+                    if (current == '/' && next == '/') {
+                        sanitized.append(' ').append(' ');
+                        index++;
+                        state = LexicalState.LINE_COMMENT;
+                    } else if (current == '/' && next == '*') {
+                        sanitized.append(' ').append(' ');
+                        index++;
+                        state = LexicalState.BLOCK_COMMENT;
+                    } else if (current == '\'') {
+                        sanitized.append(' ');
+                        state = LexicalState.SINGLE_QUOTED;
+                    } else if (current == '"') {
+                        sanitized.append(' ');
+                        state = LexicalState.DOUBLE_QUOTED;
+                    } else {
+                        sanitized.append(current);
+                    }
+                }
+                case LINE_COMMENT -> {
+                    sanitized.append(whitespace(current));
+                    if (current == '\n' || current == '\r') {
+                        state = LexicalState.CODE;
+                    }
+                }
+                case BLOCK_COMMENT -> {
+                    if (current == '*' && next == '/') {
+                        sanitized.append(' ').append(' ');
+                        index++;
+                        state = LexicalState.CODE;
+                    } else {
+                        sanitized.append(whitespace(current));
+                    }
+                }
+                case SINGLE_QUOTED -> {
+                    if (current == '\\' && next != '\0') {
+                        sanitized.append(' ').append(whitespace(next));
+                        index++;
+                    } else {
+                        sanitized.append(whitespace(current));
+                        if (current == '\'') {
+                            state = LexicalState.CODE;
+                        }
+                    }
+                }
+                case DOUBLE_QUOTED -> {
+                    if (current == '\\' && next != '\0') {
+                        sanitized.append(' ').append(whitespace(next));
+                        index++;
+                    } else {
+                        sanitized.append(whitespace(current));
+                        if (current == '"') {
+                            state = LexicalState.CODE;
+                        }
+                    }
+                }
+            }
+        }
+        return sanitized.toString();
+    }
+
+    private static char whitespace(char character) {
+        return character == '\n' || character == '\r' ? character : ' ';
+    }
+
+    private static int nextCodeCharacter(String code, int start, char expected) {
+        for (int index = start; index < code.length(); index++) {
+            if (code.charAt(index) == expected) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private static boolean isCodeAt(String source, String code, int index) {
+        return index >= 0
+                && index < source.length()
+                && code.charAt(index) == source.charAt(index);
     }
 
     private static String read(Path source) {
