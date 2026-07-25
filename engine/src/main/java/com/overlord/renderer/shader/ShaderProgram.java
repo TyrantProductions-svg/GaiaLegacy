@@ -212,7 +212,9 @@ public final class ShaderProgram implements ShaderBinding, AutoCloseable {
 
     private static Throwable appendCleanupFailure(Throwable failure, Throwable cleanupFailure) {
         if (failure != null) {
-            failure.addSuppressed(cleanupFailure);
+            if (cleanupFailure != failure) {
+                failure.addSuppressed(cleanupFailure);
+            }
             return failure;
         }
         return cleanupFailure;

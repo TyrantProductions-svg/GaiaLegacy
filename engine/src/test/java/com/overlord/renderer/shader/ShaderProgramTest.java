@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -122,6 +123,31 @@ class ShaderProgramTest {
     }
 
     @Test
+    void preservesPrimaryFailureWhenCleanupThrowsTheSameInstance() {
+        FakeShaderBackend backend = new FakeShaderBackend();
+        IllegalStateException sharedFailure = new IllegalStateException("shared failure");
+        backend.failLink(sharedFailure);
+        backend.failDeletingShader(101, sharedFailure);
+        backend.failDeletingShader(102, sharedFailure);
+        backend.failDeletingProgram(sharedFailure);
+
+        IllegalStateException escaped =
+                assertThrows(
+                        IllegalStateException.class,
+                        () ->
+                                new ShaderProgram(
+                                        MainThreadGuard.captureCurrentThread(),
+                                        sources(),
+                                        List.of("projection"),
+                                        backend));
+
+        assertSame(sharedFailure, escaped);
+        assertEquals(0, escaped.getSuppressed().length);
+        assertEquals(List.of(101, 102), backend.deletedShaders());
+        assertEquals(List.of(201), backend.deletedPrograms());
+    }
+
+    @Test
     void cachesLocationsUploadsValuesAndCleansUpOnlyOnce() {
         FakeShaderBackend backend = new FakeShaderBackend();
         backend.uniformLocation("projection", 17);
@@ -222,13 +248,14 @@ class ShaderProgramTest {
         private final List<Integer> intLocations = new ArrayList<>();
         private final List<Integer> intValues = new ArrayList<>();
         private final Map<Integer, String> compileFailures = new HashMap<>();
-        private final Map<Integer, String> shaderDeleteFailures = new HashMap<>();
+        private final Map<Integer, RuntimeException> shaderDeleteFailures = new HashMap<>();
         private final Map<String, Integer> uniformLocations = new HashMap<>();
         private final Map<String, Integer> uniformLocationCalls = new HashMap<>();
         private int calls;
         private boolean linkFails;
         private String linkLog;
-        private String programDeleteFailure;
+        private RuntimeException linkRuntimeFailure;
+        private RuntimeException programDeleteFailure;
         private int nextShaderId = 101;
         private int nextProgramId = 201;
 
@@ -241,16 +268,28 @@ class ShaderProgramTest {
             linkLog = log;
         }
 
+        void failLink(RuntimeException failure) {
+            linkRuntimeFailure = failure;
+        }
+
         void uniformLocation(String name, int location) {
             uniformLocations.put(name, location);
         }
 
         void failDeletingShader(int shaderId, String message) {
-            shaderDeleteFailures.put(shaderId, message);
+            failDeletingShader(shaderId, new IllegalStateException(message));
+        }
+
+        void failDeletingShader(int shaderId, RuntimeException failure) {
+            shaderDeleteFailures.put(shaderId, failure);
         }
 
         void failDeletingProgram(String message) {
-            programDeleteFailure = message;
+            failDeletingProgram(new IllegalStateException(message));
+        }
+
+        void failDeletingProgram(RuntimeException failure) {
+            programDeleteFailure = failure;
         }
 
         int callCount() {
@@ -321,9 +360,9 @@ class ShaderProgramTest {
         public void deleteShader(int shaderId) {
             calls++;
             deletedShaders.add(shaderId);
-            String failure = shaderDeleteFailures.get(shaderId);
+            RuntimeException failure = shaderDeleteFailures.get(shaderId);
             if (failure != null) {
-                throw new IllegalStateException(failure);
+                throw failure;
             }
         }
 
@@ -341,6 +380,9 @@ class ShaderProgramTest {
         @Override
         public void link(int programId) {
             calls++;
+            if (linkRuntimeFailure != null) {
+                throw linkRuntimeFailure;
+            }
         }
 
         @Override
@@ -387,7 +429,7 @@ class ShaderProgramTest {
             calls++;
             deletedPrograms.add(programId);
             if (programDeleteFailure != null) {
-                throw new IllegalStateException(programDeleteFailure);
+                throw programDeleteFailure;
             }
         }
     }
