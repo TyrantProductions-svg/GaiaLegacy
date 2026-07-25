@@ -934,8 +934,29 @@ public final class GaiaResourceLoader {
         BlockRegistry registry =
                 BlockRegistry.create(
                         sortedBlocks, renderInfoById);
+        ResourceLocation worldMaterialId =
+                ResourceLocation.parse("gaia:opaque");
+        MaterialDefinition worldMaterial =
+                materialById.get(worldMaterialId);
+        if (worldMaterial == null) {
+            diagnostics.add(
+                    new AssetDiagnostic(
+                            AssetSeverity.ERROR,
+                            "RENDER_WORLD_MATERIAL_MISSING",
+                            "assets/gaia/resource-index.json",
+                            worldMaterialId,
+                            "materials",
+                            "Required world material gaia:opaque is not declared",
+                            null));
+        }
         RenderAssets renderAssets =
-                new RenderAssets(loadedAtlas.image());
+                new RenderAssets(
+                        loadedAtlas.image(),
+                        worldMaterial == null
+                                ? fallbackMaterial
+                                : worldMaterial,
+                        RenderAssets.DEFAULT_WORLD_VERTEX_SHADER,
+                        RenderAssets.DEFAULT_WORLD_FRAGMENT_SHADER);
 
         return new GaiaAssetCatalog(
                 registry,

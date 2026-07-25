@@ -48,8 +48,10 @@ class GameLoopStructureTest {
         assertTrue(compact.contains("chunkMeshes().allRenderable("));
         assertTrue(
                 compact.contains(
-                        "renderChunks("
-                                + "context.chunkMeshes().renderObjects())"));
+                        "context.engine().getRenderer().renderFrame("
+                                + "state==State.RUNNING?"
+                                + "context.chunkMeshes().renderObjects():"
+                                + "List.of())"));
 
         int schedule = compact.indexOf("chunkMeshes().scheduleEligible()");
         int process =
@@ -59,17 +61,14 @@ class GameLoopStructureTest {
         int allRenderable =
                 compact.indexOf("chunkMeshes().allRenderable(");
         int pump = compact.indexOf("pumpChunkMeshes();");
-        int render = compact.indexOf("renderChunks(");
+        int render = compact.indexOf("renderFrame(");
         assertTrue(schedule < process);
         assertTrue(process < failure);
         assertTrue(failure < allRenderable);
         assertTrue(pump < render);
 
-        assertTrue(
-                compact.contains(
-                        "clear();if(state==State.RUNNING){"
-                                + "context.engine().getRenderer()"
-                                + ".renderChunks("));
+        assertFalse(compact.contains(".clear();"));
+        assertFalse(compact.contains(".renderChunks("));
         assertFalse(source.contains("result.meshData()"));
         assertFalse(source.contains("combineMeshData"));
         assertFalse(source.contains("new Mesh("));
@@ -168,7 +167,7 @@ class GameLoopStructureTest {
                 compact.indexOf(".getCamera().setPosition(");
         int renderCameraUpdate =
                 compact.indexOf("updateRenderCamera();");
-        int render = compact.indexOf("renderChunks(");
+        int render = compact.indexOf("renderFrame(");
         assertTrue(playerUpdate < physicsStep);
         assertTrue(physicsStep < moduleUpdate);
         assertTrue(moduleUpdate < eventProcessing);

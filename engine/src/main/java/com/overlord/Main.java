@@ -1,6 +1,7 @@
 package com.overlord;
 
 import com.overlord.core.Engine;
+import java.util.List;
 
 public final class Main {
     private Main() {}
@@ -17,7 +18,7 @@ public final class Main {
                                 size ->
                                         engine.getRenderer()
                                                 .resizeFramebuffer(size.width(), size.height()));
-                engine.getRenderer().clear();
+                engine.getRenderer().renderFrame(List.of());
                 engine.getWindow().swapBuffers();
             }
         } finally {

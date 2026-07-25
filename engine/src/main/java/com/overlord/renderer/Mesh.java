@@ -3,6 +3,8 @@ package com.overlord.renderer;
 import static org.lwjgl.opengl.GL30C.*;
 
 import com.overlord.core.thread.MainThreadGuard;
+import com.overlord.voxel.VoxelVertexAttribute;
+import com.overlord.voxel.VoxelVertexFormat;
 import java.nio.FloatBuffer;
 import java.util.Objects;
 import org.lwjgl.BufferUtils;
@@ -16,7 +18,8 @@ public class Mesh implements ChunkGpuMesh {
     public Mesh(MainThreadGuard mainThreadGuard, float[] vertices) {
         this.mainThreadGuard = Objects.requireNonNull(mainThreadGuard, "mainThreadGuard");
         this.mainThreadGuard.assertMainThread("mesh GPU upload");
-        this.vertexCount = vertices.length / 5;
+        this.vertexCount = vertices.length
+                / VoxelVertexFormat.FLOATS_PER_VERTEX;
 
         try {
             vaoId = glGenVertexArrays();
@@ -29,12 +32,17 @@ public class Mesh implements ChunkGpuMesh {
             vertexBuffer.put(vertices).flip();
             glBufferData(GL_ARRAY_BUFFER, vertexBuffer, GL_STATIC_DRAW);
 
-            glVertexAttribPointer(0, 3, GL_FLOAT, false, 5 * Float.BYTES, 0);
-            glEnableVertexAttribArray(0);
-
-            glVertexAttribPointer(
-                    1, 2, GL_FLOAT, false, 5 * Float.BYTES, 3 * Float.BYTES);
-            glEnableVertexAttribArray(1);
+            for (VoxelVertexAttribute attribute
+                    : VoxelVertexFormat.attributes()) {
+                glVertexAttribPointer(
+                        attribute.location(),
+                        attribute.componentCount(),
+                        GL_FLOAT,
+                        false,
+                        VoxelVertexFormat.STRIDE_BYTES,
+                        attribute.byteOffset());
+                glEnableVertexAttribArray(attribute.location());
+            }
 
             glBindBuffer(GL_ARRAY_BUFFER, 0);
             glBindVertexArray(0);

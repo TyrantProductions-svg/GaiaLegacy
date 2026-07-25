@@ -9,6 +9,7 @@ import com.overlord.core.input.InputSnapshot;
 import com.overlord.core.input.MouseDelta;
 import com.overlord.event.EventBus;
 import com.overlord.physics.PlayerController;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletionException;
@@ -68,13 +69,12 @@ public final class GameLoop {
             if (state == State.RUNNING) {
                 updateRenderCamera();
             }
-            context.engine().getRenderer().clear();
-            if (state == State.RUNNING) {
-                context.engine()
-                        .getRenderer()
-                        .renderChunks(
-                                context.chunkMeshes().renderObjects());
-            }
+            context.engine()
+                    .getRenderer()
+                    .renderFrame(
+                            state == State.RUNNING
+                                    ? context.chunkMeshes().renderObjects()
+                                    : List.of());
             window.swapBuffers();
         }
     }

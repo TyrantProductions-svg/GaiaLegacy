@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.assets.AssetManager;
 import com.overlord.assets.ResourceLocation;
+import com.overlord.renderer.RenderAssets;
 import com.overlord.renderer.texture.TextureAtlasMetadata;
 import com.overlord.voxel.BlockFace;
 import java.awt.image.BufferedImage;
@@ -86,6 +87,12 @@ class GaiaProductionAssetsTest {
         assertEquals(
                 ResourceLocation.parse("gaia:opaque"),
                 oakLeaves.material());
+        assertEquals(
+                ResourceLocation.parse("gaia:opaque"),
+                catalog.renderAssets().worldMaterial().id());
+        assertEquals(
+                RenderAssets.DEFAULT_WORLD_VERTEX_SHADER,
+                catalog.renderAssets().worldVertexShader());
         assertTrue(oakLog.flammable());
         assertTrue(oakLeaves.flammable());
 

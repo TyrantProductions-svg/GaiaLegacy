@@ -25,11 +25,15 @@ class ChunkMeshLifecycleStructureTest {
                 readMainSource("com/overlord/renderer/Renderer.java");
 
         assertFalse(renderer.contains("replaceMesh("));
+        assertFalse(renderer.contains("renderChunks("));
         assertFalse(renderer.contains("private Mesh mesh"));
         assertFalse(renderer.contains("fallbackMesh"));
         assertFalse(
                 hasAnyPublicMethod(
                         Renderer.class, "replaceMesh"));
+        assertFalse(
+                hasAnyPublicMethod(
+                        Renderer.class, "renderChunks"));
         assertFalse(
                 hasPublicMethod(Renderer.class, "render"));
         assertFalse(
@@ -53,12 +57,12 @@ class ChunkMeshLifecycleStructureTest {
         Method release =
                 Renderer.class.getMethod(
                         "release", ChunkRenderObject.class);
-        Method renderChunks =
+        Method renderFrame =
                 Renderer.class.getMethod(
-                        "renderChunks", Collection.class);
+                        "renderFrame", Collection.class);
         assertEquals(ChunkRenderObject.class, upload.getReturnType());
         assertEquals(void.class, release.getReturnType());
-        assertEquals(void.class, renderChunks.getReturnType());
+        assertEquals(void.class, renderFrame.getReturnType());
     }
 
     @Test

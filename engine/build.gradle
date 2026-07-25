@@ -67,3 +67,26 @@ dependencies {
 test {
     useJUnitPlatform()
 }
+
+tasks.register('verifyPackagedShaderResources') {
+    dependsOn tasks.named('jar')
+    doLast {
+        def archive = tasks.named('jar').get().archiveFile.get().asFile
+        def required = [
+            'assets/overlord/shaders/world.vert',
+            'assets/overlord/shaders/world.frag'
+        ]
+        new java.util.zip.ZipFile(archive).withCloseable { zip ->
+            required.each { path ->
+                if (zip.getEntry(path) == null) {
+                    throw new GradleException(
+                        "Packaged engine JAR is missing ${path}")
+                }
+            }
+        }
+    }
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('verifyPackagedShaderResources')
+}

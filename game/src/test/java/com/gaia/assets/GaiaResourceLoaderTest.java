@@ -14,6 +14,7 @@ import com.overlord.assets.AssetLoadException;
 import com.overlord.assets.AssetManager;
 import com.overlord.assets.AssetSeverity;
 import com.overlord.assets.ResourceLocation;
+import com.overlord.renderer.RenderAssets;
 import com.overlord.renderer.material.RenderType;
 import com.overlord.renderer.texture.TextureImage;
 import com.overlord.renderer.texture.TextureRegion;
@@ -46,6 +47,8 @@ class GaiaResourceLoaderTest {
             "META-INF/gaialegacy/resource-indexes.list";
     private static final String MANIFEST =
             "assets/test/resource-index.json";
+    private static final String GAIA_MANIFEST =
+            "assets/gaia/resource-index.json";
     private static final String AIR =
             "assets/test/blocks/air.json";
     private static final String SOLID =
@@ -54,6 +57,8 @@ class GaiaResourceLoaderTest {
             "assets/test/materials/missing.json";
     private static final String OPAQUE_MATERIAL =
             "assets/test/materials/opaque.json";
+    private static final String GAIA_OPAQUE_MATERIAL =
+            "assets/gaia/materials/opaque.json";
     private static final String BLOCK_ATLAS =
             "assets/test/atlases/blocks.json";
     private static final String ATLAS_IMAGE =
@@ -95,6 +100,14 @@ class GaiaResourceLoaderTest {
                 () -> assertTrue(catalog.report().warnings().isEmpty()),
                 () -> assertEquals(1, catalog.renderAssets().blockAtlas().width()),
                 () ->
+                        assertEquals(
+                                ResourceLocation.parse("gaia:opaque"),
+                                catalog.renderAssets().worldMaterial().id()),
+                () ->
+                        assertEquals(
+                                RenderAssets.DEFAULT_WORLD_VERTEX_SHADER,
+                                catalog.renderAssets().worldVertexShader()),
+                () ->
                         assertFalse(
                                 catalog.blockRegistry()
                                         .resolve(0)
@@ -132,6 +145,20 @@ class GaiaResourceLoaderTest {
                 SOLID,
                 ResourceLocation.parse("test:blocks/solid.json"),
                 "id");
+    }
+
+    @Test
+    void reportsExactDiagnosticWhenGaiaWorldMaterialIsAbsent()
+            throws Exception {
+        Map<String, byte[]> entries = validEntries();
+        putJson(entries, INDEX_LIST, MANIFEST + "\n");
+
+        assertFatal(
+                entries,
+                "RENDER_WORLD_MATERIAL_MISSING",
+                "assets/gaia/resource-index.json",
+                ResourceLocation.parse("gaia:opaque"),
+                "materials");
     }
 
     @ParameterizedTest
@@ -1147,7 +1174,10 @@ class GaiaResourceLoaderTest {
         putJson(
                 entries,
                 INDEX_LIST,
-                MANIFEST + "\nassets/shared/resource-index.json\n");
+                MANIFEST
+                        + "\n"
+                        + GAIA_MANIFEST
+                        + "\nassets/shared/resource-index.json\n");
         putJson(
                 entries,
                 "assets/shared/resource-index.json",
@@ -1470,7 +1500,7 @@ class GaiaResourceLoaderTest {
 
     private static Map<String, byte[]> validEntries() {
         Map<String, byte[]> entries = new HashMap<>();
-        putJson(entries, INDEX_LIST, MANIFEST + "\n");
+        putJson(entries, INDEX_LIST, MANIFEST + "\n" + GAIA_MANIFEST + "\n");
         putJson(
                 entries,
                 MANIFEST,
@@ -1481,6 +1511,14 @@ class GaiaResourceLoaderTest {
                                 "materials/missing.json",
                                 "materials/opaque.json"),
                         List.of("atlases/blocks.json")));
+        putJson(
+                entries,
+                GAIA_MANIFEST,
+                manifestJson(
+                        "gaia",
+                        List.of(),
+                        List.of("materials/opaque.json"),
+                        List.of()));
         putJson(entries, AIR, airJson());
         putJson(
                 entries,
@@ -1503,6 +1541,14 @@ class GaiaResourceLoaderTest {
                 OPAQUE_MATERIAL,
                 materialJson(
                         "test:opaque",
+                        "test:blocks",
+                        "opaque",
+                        "test:missing"));
+        putJson(
+                entries,
+                GAIA_OPAQUE_MATERIAL,
+                materialJson(
+                        "gaia:opaque",
                         "test:blocks",
                         "opaque",
                         "test:missing"));

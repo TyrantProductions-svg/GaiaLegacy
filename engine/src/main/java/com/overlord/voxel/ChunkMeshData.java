@@ -6,8 +6,6 @@ import java.util.Objects;
 import java.util.Optional;
 
 public final class ChunkMeshData {
-    private static final int FLOATS_PER_VERTEX = 5;
-
     private final ChunkKey key;
     private final long revision;
     private final float[] vertices;
@@ -18,9 +16,10 @@ public final class ChunkMeshData {
         this.key = Objects.requireNonNull(key, "key");
         this.revision = revision;
         Objects.requireNonNull(vertices, "vertices");
-        if (vertices.length % FLOATS_PER_VERTEX != 0) {
+        if (vertices.length
+                % VoxelVertexFormat.FLOATS_PER_VERTEX != 0) {
             throw new IllegalArgumentException(
-                    "vertices must use a five-float layout");
+                    "vertices must use a ten-float layout");
         }
         this.vertices = Arrays.copyOf(vertices, vertices.length);
         this.localBounds = calculateLocalBounds(this.vertices);
@@ -39,7 +38,8 @@ public final class ChunkMeshData {
     }
 
     public int vertexCount() {
-        return vertices.length / FLOATS_PER_VERTEX;
+        return vertices.length
+                / VoxelVertexFormat.FLOATS_PER_VERTEX;
     }
 
     public Optional<AxisAlignedBounds> localBounds() {
@@ -64,7 +64,7 @@ public final class ChunkMeshData {
         float maxZ = Float.NEGATIVE_INFINITY;
         for (int offset = 0;
                 offset < vertices.length;
-                offset += FLOATS_PER_VERTEX) {
+                offset += VoxelVertexFormat.FLOATS_PER_VERTEX) {
             float x = vertices[offset];
             float y = vertices[offset + 1];
             float z = vertices[offset + 2];

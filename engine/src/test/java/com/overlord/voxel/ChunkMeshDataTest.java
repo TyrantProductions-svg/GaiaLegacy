@@ -13,8 +13,8 @@ class ChunkMeshDataTest {
     @Test
     void copiesVerticesOnConstructionAndAccess() {
         float[] source = {
-            1, 2, 3, 0, 0,
-            4, 5, 6, 1, 1
+            1, 2, 3, 0, 0, 0, 1, 0, 15, 1,
+            4, 5, 6, 1, 1, 0, 1, 0, 15, 1
         };
         ChunkMeshData data =
                 new ChunkMeshData(
@@ -26,8 +26,8 @@ class ChunkMeshDataTest {
 
         assertArrayEquals(
                 new float[] {
-                    1, 2, 3, 0, 0,
-                    4, 5, 6, 1, 1
+                    1, 2, 3, 0, 0, 0, 1, 0, 15, 1,
+                    4, 5, 6, 1, 1, 0, 1, 0, 15, 1
                 },
                 data.vertices());
     }
@@ -39,9 +39,9 @@ class ChunkMeshDataTest {
                         new ChunkKey(0, 0),
                         1,
                         new float[] {
-                            4, 7, 2, 0, 0,
-                            1, 3, 8, 1, 1,
-                            2, 5, 6, 0.5f, 0.5f
+                            4, 7, 2, 0, 0, 0, 1, 0, 15, 1,
+                            1, 3, 8, 1, 1, 0, 1, 0, 15, 1,
+                            2, 5, 6, 0.5f, 0.5f, 0, 1, 0, 15, 1
                         });
 
         assertEquals(3, data.vertexCount());
@@ -65,13 +65,13 @@ class ChunkMeshDataTest {
     }
 
     @Test
-    void rejectsVertexArrayWithoutFiveFloatLayout() {
+    void rejectsVertexArrayWithoutTenFloatLayout() {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> new ChunkMeshData(
                         new ChunkKey(0, 0),
                         1,
-                        new float[] {1, 2, 3, 4}));
+                        new float[] {1, 2, 3, 4, 5}));
     }
 
     @Test
