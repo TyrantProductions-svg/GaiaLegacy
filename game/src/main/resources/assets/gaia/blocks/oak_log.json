@@ -1,0 +1,22 @@
+{
+  "id": 4,
+  "name": "gaia:oak_log",
+  "material": "gaia:opaque",
+  "textures": {
+    "top": "gaia:oak_log_top",
+    "bottom": "gaia:oak_log_top",
+    "sides": "gaia:oak_log_side"
+  },
+  "hardness": 2.0,
+  "structuralIntegrity": 65.0,
+  "tolerance": 4.0,
+  "gravity": false,
+  "flammable": true,
+  "blastResistance": 2.0,
+  "item": {
+    "id": "gaia:oak_log",
+    "maxStackSize": 64,
+    "mouthHoldable": false,
+    "twoHanded": false
+  }
+}

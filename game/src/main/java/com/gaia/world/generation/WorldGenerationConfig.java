@@ -51,6 +51,28 @@ public record WorldGenerationConfig(
                 new SpawnSettings(96, 2));
     }
 
+    public static WorldGenerationConfig visualRevisionCandidate() {
+        return new WorldGenerationConfig(
+                12345L,
+                2,
+                4,
+                new BiomeSettings(0.0035, 2.5),
+                new HeightSettings(
+                        0.015,
+                        8,
+                        96,
+                        24,
+                        4,
+                        36,
+                        18,
+                        52,
+                        36),
+                new CaveSettings(0.045, 0.72, 2, 5),
+                new SurfaceSettings(3, 0.48, 2.0),
+                new DecorationSettings(768, 6),
+                new SpawnSettings(96, 2));
+    }
+
     public String canonicalFingerprintInput() {
         return "seed="
                 + seed

@@ -72,6 +72,8 @@ class GenerationContractTest {
         assertEquals((byte) 1, palette.grass());
         assertEquals((byte) 2, palette.dirt());
         assertEquals((byte) 200, palette.stone());
+        assertEquals((byte) 4, palette.oakLog());
+        assertEquals((byte) 5, palette.oakLeaves());
     }
 
     @Test
@@ -253,12 +255,16 @@ class GenerationContractTest {
                         definition(0, "gaia:air"),
                         definition(1, "gaia:grass"),
                         definition(2, "gaia:dirt"),
-                        definition(200, "gaia:stone")),
+                        definition(200, "gaia:stone"),
+                        definition(4, "gaia:oak_log"),
+                        definition(5, "gaia:oak_leaves")),
                 Map.of(
                         0, renderInfo(false),
                         1, renderInfo(true),
                         2, renderInfo(true),
-                        200, renderInfo(true)));
+                        200, renderInfo(true),
+                        4, renderInfo(true),
+                        5, renderInfo(true)));
     }
 
     private static BlockDefinition definition(int id, String name) {

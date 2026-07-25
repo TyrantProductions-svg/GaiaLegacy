@@ -8,7 +8,14 @@ public record GenerationBlockPalette(
         byte air,
         byte grass,
         byte dirt,
-        byte stone) {
+        byte stone,
+        byte oakLog,
+        byte oakLeaves) {
+    public GenerationBlockPalette(
+            byte air, byte grass, byte dirt, byte stone) {
+        this(air, grass, dirt, stone, stone, stone);
+    }
+
     public static GenerationBlockPalette from(
             BlockRegistry blocks) {
         Objects.requireNonNull(blocks, "blocks");
@@ -20,6 +27,10 @@ public record GenerationBlockPalette(
                 blocks.requireStoredId(
                         ResourceLocation.parse("gaia:dirt")),
                 blocks.requireStoredId(
-                        ResourceLocation.parse("gaia:stone")));
+                        ResourceLocation.parse("gaia:stone")),
+                blocks.requireStoredId(
+                        ResourceLocation.parse("gaia:oak_log")),
+                blocks.requireStoredId(
+                        ResourceLocation.parse("gaia:oak_leaves")));
     }
 }

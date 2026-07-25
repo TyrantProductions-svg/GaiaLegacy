@@ -18,6 +18,15 @@
     },
     "gaia:missing": {
       "x": 80, "y": 0, "width": 16, "height": 16
+    },
+    "gaia:oak_log_side": {
+      "x": 80, "y": 48, "width": 16, "height": 16
+    },
+    "gaia:oak_log_top": {
+      "x": 96, "y": 48, "width": 16, "height": 16
+    },
+    "gaia:oak_leaves": {
+      "x": 112, "y": 48, "width": 16, "height": 16
     }
   }
 }

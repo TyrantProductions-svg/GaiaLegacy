@@ -206,6 +206,26 @@ class SafeSpawnSelectorTest {
         assertTrue(spawn.isEmpty());
     }
 
+    @Test
+    void prefersExposedSurfaceOverUndergroundCavityInNearestColumn() {
+        World world = new World();
+        ChunkKey center = new ChunkKey(0, 0);
+        byte[] blocks = emptyBlocks();
+        set(blocks, 0, 0, 0, SOLID);
+        set(blocks, 0, 3, 0, SOLID);
+        commit(world, center, blocks);
+
+        Vector3f feet =
+                new SafeSpawnSelector()
+                        .find(
+                                world,
+                                Set.of(center),
+                                WorldGenerationConfig.defaults())
+                        .orElseThrow();
+
+        assertEquals(new Vector3f(0.5f, 4.0f, 0.5f), feet);
+    }
+
     private static byte[] emptyBlocks() {
         return new byte[
                 GameConfig.Chunk.SIZE

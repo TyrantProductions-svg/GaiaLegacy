@@ -117,9 +117,9 @@ public final class GameBootstrap {
 
             BlockRegistry blocks = catalog.blockRegistry();
             WorldGenerator generator =
-                    GaiaWorldGenerator.createDefault();
+                    GaiaWorldGenerator.createVisualRevisionCandidate();
             WorldGenerationConfig worldGenerationConfig =
-                    WorldGenerationConfig.defaults();
+                    WorldGenerationConfig.visualRevisionCandidate();
             ExecutorService meshExecutor =
                     Executors.newFixedThreadPool(
                             2,

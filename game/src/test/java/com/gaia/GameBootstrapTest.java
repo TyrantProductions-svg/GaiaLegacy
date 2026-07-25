@@ -329,8 +329,12 @@ class GameBootstrapTest {
                                 "src/main/java/com/gaia/"
                                         + "GameBootstrap.java"));
 
-        assertTrue(source.contains("WorldGenerationConfig.defaults()"));
-        assertTrue(source.contains("GaiaWorldGenerator.createDefault()"));
+        assertTrue(
+                source.contains(
+                        "WorldGenerationConfig.visualRevisionCandidate()"));
+        assertTrue(
+                source.contains(
+                        "GaiaWorldGenerator.createVisualRevisionCandidate()"));
         assertTrue(source.contains("new SafeSpawnSelector()"));
         assertTrue(source.contains("new WorldLoader("));
         assertTrue(source.contains("worldLoader"));

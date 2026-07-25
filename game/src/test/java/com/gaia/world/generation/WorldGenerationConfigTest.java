@@ -18,6 +18,15 @@ class WorldGenerationConfigTest {
     }
 
     @Test
+    void approvedVisualRevisionUsesAlgorithmVersionTwo() {
+        WorldGenerationConfig config =
+                WorldGenerationConfig.visualRevisionCandidate();
+
+        assertEquals(2, config.algorithmVersion());
+        assertEquals(1, WorldGenerationConfig.defaults().algorithmVersion());
+    }
+
+    @Test
     void rejectsInvalidTopLevelConfiguration() {
         WorldGenerationConfig defaults = WorldGenerationConfig.defaults();
 

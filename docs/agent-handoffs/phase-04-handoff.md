@@ -8,6 +8,146 @@ Base: `origin/main` at
 Reviewed implementation and architecture-guard HEAD:
 `72a08dd602d031120674332c6fcd4f4c4b4d36a8`
 
+## 2026-07-25 visual revision addendum
+
+The revision starts from branch HEAD
+`bb788cf65d658dad0ead79886ec0514d52b6d501`. The user approved the visual
+direction as **APPROVED WITH DEFERRED RENDERING LIMITATIONS**. Final
+version-2 verification and delivery are recorded in this addendum.
+
+Completed candidate work:
+
+- appended original `oak_log_side`, `oak_log_top`, and opaque `oak_leaves`
+  tiles to the existing 128-by-64 atlas without moving existing regions;
+- added data-driven `gaia:oak_log` and `gaia:oak_leaves` definitions using
+  stored IDs 4 and 5, with no second item registry;
+- retained exactly six formal stages while adding biome-specific height
+  shaping, deterministic world-cell trees, sparse clustered outcrops, and a
+  hybrid chamber/tunnel/surface-entrance cave provider;
+- preserved detached CPU generation, repository publication, revision/dirty
+  authority, cancellation, stale-result rejection, and Phase 7 gameplay
+  mutation exclusion;
+- fixed `SafeSpawnSelector` to choose the highest valid support in each
+  horizontal column. A focused RED test reproduced an underground-cavity
+  spawn, and the GREEN implementation restored open surface spawning;
+- preserved every formal version-1 configuration and snapshot value.
+
+Historical pre-promotion candidate evidence:
+
+- candidate algorithm version: `1` for review only;
+- config fingerprint:
+  `b68aebd22b63bdfb0cb1916f4f7041ad17e2ec896b79d281747620d54eb99a86`;
+- 81-Chunk aggregate hash:
+  `9974c7cec96ed503d7e1d21527f80eeac24f892471ca6dd358cd440c12d6f329`;
+- tree totals: 376 logs and 3,385 leaves;
+- outcrop columns `(plains, hills, highlands)`: `(0, 0, 10)`;
+- two entrance-reachable components, largest 2,337 cells, maximum depth 47,
+  spanning up to 10 Chunks.
+
+Final version-2 deterministic evidence:
+
+- algorithm version: `2`;
+- config fingerprint:
+  `56cb2f243319c7cf275ade89f480f9208ce5c1f85334eb225e6b56ed18e3012a`;
+- 81-Chunk aggregate hash:
+  `ec2c76a97f36d34b7360ae9abbb0be60fb8790f275fdaf5227a7daeae9754353`;
+- tree totals: 220 logs and 2,089 leaves;
+- outcrop columns `(plains, hills, highlands)`: `(0, 0, 33)`;
+- entrance surface cells: 304;
+- ten entrance-reachable components, largest 73,558 cells, maximum depth 63,
+  spanning up to 23 Chunks.
+
+Final version-2 inspection coordinates:
+
+| Purpose | Coordinate |
+| --- | ---: |
+| Plains tree | `(-33, 33)` |
+| Rolling-hills tree | `(0, 12)` |
+| Rocky outcrop | `(-50, 8)` |
+| Surface cave entrances | `(-22, 24, 3)` and `(-6, 23, -21)` |
+| Deep reachable cave | `(67, 2, -64)` |
+| Cross-Chunk tunnel air | `(48, 57, -45)` |
+
+Version 2 was required because terrain shaping, tree/outcrop generation,
+chambers, tunnels, entrances, and resulting Chunk bytes intentionally changed.
+The sampler consumes algorithm version, so no candidate version-1 hash,
+statistic, or coordinate was reused. The approved original version-1 aggregate
+`161f6c10773c8dfd84e6961183e8706d5a0ec00750e727e83c4a08afcfbd5ce8`
+remains preserved as history.
+
+The final urgent visual correction places one oak-leaf block directly above
+every top trunk block, preventing exposed log tops when viewed from above.
+The focused regression first failed at `(-60,-61)` with air above the top log,
+then passed after the deterministic cap write. This added 40 leaf blocks,
+changed the affected representative/aggregate hashes shown above, and left
+tree roots, outcrop/cave statistics, and inspection coordinates unchanged.
+
+Windows interactive evidence:
+
+- the final tree-cap build was launched with
+  `.\gradlew.bat :game --console=plain --no-daemon`;
+- the user confirmed that the cave entrance had been found and explicitly
+  waived further agent entrance inspection;
+- open grass-surface spawn, identifiable log/leaf trees, rolling hills, and
+  sparse rocky highland exposure were observed;
+- F1 cursor release worked;
+- framebuffer resize from 1026-by-607 to 2048-by-1104 and restoration rendered
+  without a crash;
+- Escape produced a clean shutdown and the wrapper recorded exit code `0`;
+  Gradle reported `BUILD SUCCESSFUL` in 2m 2s;
+- three version-2 surface screenshots were captured outside the repository:
+  plains/tree, rolling hills, and rocky highlands/outcrop;
+- cave entrance and underground tunnel/chamber screenshots were not captured.
+  The final screenshot status is therefore 3/5. The user-confirmed entrance
+  replaces further agent entrance navigation but is not represented as a
+  screenshot or an independently repeated cave traversal;
+- native macOS clean build, hash comparison, and interactive smoke were
+  **NOT RUN**;
+- no push, PR, merge, force-push, or modification of `main` has occurred.
+
+## Phase 5A/5B prerequisites
+
+The accepted rendering limitations must not trigger further Phase 4 worldgen
+changes:
+
+- caves are currently fullbright, so wall height, depth, and chamber shape are
+  difficult to read. Phase 5B owns lighting, ambient occlusion, and foundational
+  shadow/depth cues;
+- the stone atlas tile has mean sRGB luma `131.12/255`, compared with dirt
+  `92.68`, grass top `107.04`, oak log side `85.56`, and oak leaves `89.27`.
+  Stone is therefore intrinsically brighter than nearby opaque albedos while
+  the current fullbright renderer amplifies that contrast;
+- classification: **C — both rendering and albedo**. Phase 5B should address
+  lighting/AO first; Phase 5A or a separately approved asset adjustment may
+  rebalance stone albedo afterward;
+- this final-lock task intentionally does not alter the stone PNG.
+
+Post-review hardening:
+
+- Game/shared review initially returned five Important findings. The revision
+  now applies an explicit 12-step entrance mask, protects later tunnel cells
+  below the configured surface buffer, consumes candidate height/cave/
+  decoration tuning fields, bounds outcrop footprints to two-to-five columns
+  with slope weighting, uses overflow-safe feature enumeration at representable
+  world edges, and adds shuffled/four-worker determinism plus focused policy
+  tests.
+- Final Windows `clean test build` passed after the tree-cap correction:
+  Engine 50 suites/526 tests and Game 28 suites/243 tests, total 769, with zero
+  failures, errors, or skips.
+- Standalone `:game:verifyPackagedResources --rerun-tasks` passed.
+- The focused snapshot suite passed in a second independent Gradle process.
+- `run.sh` was reduced to a portable repository-relative command wrapper; it
+  no longer contains a personal macOS JDK or checkout path.
+- Final version-2 staged-tree Engine-owner review: **APPROVED**, with no
+  Critical, Important, or Minor findings.
+- Final version-2 staged-tree Game/shared-owner review: **APPROVED**, with no
+  Critical, Important, or Minor findings after the exact-file inventory,
+  snapshot count, screenshot waiver, and v1/v2 outcrop checklist were aligned.
+- The current candidate aggregate after hardening is
+  `9974c7cec96ed503d7e1d21527f80eeac24f892471ca6dd358cd440c12d6f329`;
+  the non-normative config fingerprint remains
+  `b68aebd22b63bdfb0cb1916f4f7041ad17e2ec896b79d281747620d54eb99a86`.
+
 ## Completed work
 
 - Added repository generation transactions with immutable
@@ -105,10 +245,11 @@ manual checklist, and intentional-update rules are in
   RED run were not added in this documentation-only delegation because
   production and test code were out of scope. The existing Task 8 architecture
   guards remain unchanged.
-- Windows interactive `.\gradlew.bat :game` was **NOT RUN** during Phase 4.
-  Plains, rolling hills, rocky highlands, caves, boundary continuity, spawn,
-  debug rebuild, resize/input, and Escape shutdown were not observed in an
-  interactive session.
+- The original Phase 4 handoff had no Windows interactive result. The visual
+  revision addendum above supersedes that statement for surface spawn,
+  plains/trees, rolling hills, highlands/outcrops, F1, resize, and Escape.
+  The user found a cave entrance and waived further agent entrance inspection.
+  Cave entrance and underground screenshot categories remain uncaptured.
 - Native macOS `./gradlew clean test build` and interactive `./gradlew :game`
   were **NOT RUN** because no native macOS environment was available.
 - The debug rebuild is a programmatic API only. There is no key binding,
@@ -192,7 +333,7 @@ manual checklist, and intentional-update rules are in
 
 ## Exact modified files relative to `origin/main`
 
-The final Phase 4 documentation commit changes these exact 73 tracked paths
+The final Phase 4 branch changes these exact 88 tracked paths
 relative to `origin/main`.
 
 ### Shared design, plan, architecture, and handoff
@@ -201,7 +342,11 @@ relative to `origin/main`.
 - `docs/architecture/current-baseline.md`
 - `docs/architecture/phase-04-deterministic-snapshots.md`
 - `docs/superpowers/plans/2026-07-25-deterministic-worldgen-pipeline.md`
+- `docs/superpowers/plans/2026-07-25-phase-4-terrain-cave-visual-revision.md`
 - `docs/superpowers/specs/2026-07-25-deterministic-worldgen-pipeline-design.md`
+- `docs/superpowers/specs/2026-07-25-phase-4-terrain-cave-visual-revision-design.md`
+- `THIRD_PARTY_NOTICES.md`
+- `run.sh`
 
 ### Engine production
 
@@ -235,10 +380,12 @@ relative to `origin/main`.
 - `game/src/main/java/com/gaia/world/WorldRebuildResult.java`
 - `game/src/main/java/com/gaia/world/generation/BiomeProvider.java`
 - `game/src/main/java/com/gaia/world/generation/BiomeSample.java`
+- `game/src/main/java/com/gaia/world/generation/BiomeShapedHeightProvider.java`
 - `game/src/main/java/com/gaia/world/generation/BiomeType.java`
 - `game/src/main/java/com/gaia/world/generation/BlendedHeightProvider.java`
 - `game/src/main/java/com/gaia/world/generation/CaveProvider.java`
 - `game/src/main/java/com/gaia/world/generation/ContinuousBiomeProvider.java`
+- `game/src/main/java/com/gaia/world/generation/CompositeDecorationProvider.java`
 - `game/src/main/java/com/gaia/world/generation/DecorationProvider.java`
 - `game/src/main/java/com/gaia/world/generation/DefaultStrataDensityProvider.java`
 - `game/src/main/java/com/gaia/world/generation/DefaultSurfaceProvider.java`
@@ -248,11 +395,13 @@ relative to `origin/main`.
 - `game/src/main/java/com/gaia/world/generation/GenerationRegion.java`
 - `game/src/main/java/com/gaia/world/generation/GenerationStageResult.java`
 - `game/src/main/java/com/gaia/world/generation/HeightProvider.java`
+- `game/src/main/java/com/gaia/world/generation/HybridCaveProvider.java`
 - `game/src/main/java/com/gaia/world/generation/NoiseCaveProvider.java`
 - `game/src/main/java/com/gaia/world/generation/StagedWorldGenerator.java`
 - `game/src/main/java/com/gaia/world/generation/StoneOutcropDecorationProvider.java`
 - `game/src/main/java/com/gaia/world/generation/StrataDensityProvider.java`
 - `game/src/main/java/com/gaia/world/generation/SurfaceProvider.java`
+- `game/src/main/java/com/gaia/world/generation/TreeDecorationProvider.java`
 - `game/src/main/java/com/gaia/world/generation/WorldGenerationConfig.java`
 - `game/src/main/java/com/gaia/world/generation/WorldGenerationHasher.java`
 - `game/src/main/java/com/gaia/world/generation/WorldGenerationResult.java`
@@ -264,6 +413,7 @@ relative to `origin/main`.
 - `game/src/test/java/com/gaia/GameBootstrapStructureTest.java`
 - `game/src/test/java/com/gaia/GameBootstrapTest.java`
 - `game/src/test/java/com/gaia/GameLoopStructureTest.java`
+- `game/src/test/java/com/gaia/assets/GaiaProductionAssetsTest.java`
 - `game/src/test/java/com/gaia/world/GaiaWorldGeneratorTest.java`
 - `game/src/test/java/com/gaia/world/SafeSpawnSelectorTest.java`
 - `game/src/test/java/com/gaia/world/WorldGenerationArchitectureTest.java`
@@ -278,13 +428,23 @@ relative to `origin/main`.
 - `game/src/test/java/com/gaia/world/generation/NoiseCaveProviderTest.java`
 - `game/src/test/java/com/gaia/world/generation/StagedWorldGeneratorTest.java`
 - `game/src/test/java/com/gaia/world/generation/StoneOutcropDecorationProviderTest.java`
+- `game/src/test/java/com/gaia/world/generation/VisualRevisionWorldGenerationTest.java`
 - `game/src/test/java/com/gaia/world/generation/WorldGenerationBoundaryTest.java`
 - `game/src/test/java/com/gaia/world/generation/WorldGenerationConfigTest.java`
 - `game/src/test/java/com/gaia/world/generation/WorldGenerationDeterminismTest.java`
 - `game/src/test/java/com/gaia/world/generation/WorldGenerationSnapshotTest.java`
 
-Ignored `.superpowers/sdd` briefs and reports are coordination records, not
-tracked branch changes.
+### Game resources
+
+- `game/src/main/resources/assets/gaia/atlases/blocks.json`
+- `game/src/main/resources/assets/gaia/blocks/oak_leaves.json`
+- `game/src/main/resources/assets/gaia/blocks/oak_log.json`
+- `game/src/main/resources/assets/gaia/resource-index.json`
+- `game/src/main/resources/assets/gaia/textures/atlas.png`
+
+Ignored `.superpowers/sdd` briefs and reports remain coordination records, not
+tracked branch changes. The two tracked `docs/superpowers` design/plan files
+listed above are Phase 4 deliverables, not `.superpowers/sdd` artifacts.
 
 ## Test commands and results
 
@@ -441,8 +601,10 @@ Final branch-wide owner-review verdict: **APPROVED**.
 - Snapshot constants protect the approved algorithm/configuration, not visual
   quality. An intentional terrain change requires version/config visibility,
   two-process hash reproduction, and manual coordinate review.
-- Real GLFW/OpenGL visuals, terrain feel, resize/input, Escape shutdown, and
-  native macOS behavior remain unverified for Phase 4.
+- Cave entrance and underground screenshot categories plus native macOS
+  behavior remain unverified by this agent. The user found an entrance and
+  accepted the cave direction. Surface terrain, trees, highland exposure, F1,
+  resize, and Escape shutdown were exercised on Windows by the visual revision.
 
 ## Interfaces Phase 5, Phase 8, Phase 9, and later world work must not break
 
@@ -503,13 +665,13 @@ Final `git diff --stat origin/main` including the Game-owner fixes and updated
 handoff:
 
 ```text
-73 files changed, 12644 insertions(+), 266 deletions(-)
+88 files changed, 15848 insertions(+), 270 deletions(-)
 ```
 
 Suggested overall commit message:
 
 ```text
-feat(worldgen): add deterministic staged generation pipeline
+feat(worldgen): revise deterministic terrain caves and decoration
 ```
 
 Task 9 documentation commit:
@@ -521,7 +683,7 @@ docs(worldgen): record deterministic pipeline handoff
 Suggested pull request title:
 
 ```text
-Phase 4: add deterministic staged world generation
+feat(worldgen): add composable deterministic small-world pipeline
 ```
 
 Suggested pull request description:
@@ -542,18 +704,21 @@ Suggested pull request description:
 ## Verification
 
 - focused determinism/boundary/architecture suite: 17/17
-- locked snapshot suite: 2/2 in repeated separate Gradle processes
-- Windows clean test/build at atomic-cancellation fix HEAD: 757/757, zero
-  failure/error/skip
+- locked snapshot suite: 3/3 in repeated separate Gradle processes
+- Windows final `clean test build`: Engine 526 + Game 243 = 769 tests, zero
+  failure/error
 - standalone packaged-resource verification passed
-- final branch-wide Engine-owner and Game/shared-owner reviews: APPROVED
+- version-2 fingerprint:
+  `56cb2f243319c7cf275ade89f480f9208ce5c1f85334eb225e6b56ed18e3012a`
+- version-2 aggregate hash:
+  `ec2c76a97f36d34b7360ae9abbb0be60fb8790f275fdaf5227a7daeae9754353`
 
 ## Manual follow-up
 
-- Windows plains/hills/highlands/cave/boundary/spawn/rebuild,
-  resize/input, and Escape-shutdown smoke
+- Windows plains/hills/highlands/spawn, resize/input, and Escape-shutdown
+  smoke; user-confirmed cave entrance; screenshot delivery 3/5
 - native macOS clean build, interactive smoke, and aggregate-hash comparison
 ```
 
 No push, pull request, merge, force-push, or modification of `main` was
-performed by the Task 9 documentation delegate.
+performed.

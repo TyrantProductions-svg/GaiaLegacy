@@ -180,6 +180,17 @@ or call-order state.
 5. `DefaultSurfaceProvider`;
 6. `StoneOutcropDecorationProvider`.
 
+The visually revised pipeline remains a non-normative candidate until explicit
+approval. `GaiaWorldGenerator.createVisualRevisionCandidate()` also composes
+exactly six ordered stages, but substitutes `BiomeShapedHeightProvider`,
+`HybridCaveProvider`, and `CompositeDecorationProvider`. The composite
+decoration stage rebuilds deterministic world-cell tree and outcrop
+descriptors independently for every intersected Chunk. Oak log and opaque oak
+leaf blocks are data-driven resources in the existing atlas; no second atlas
+or item registry was introduced. `GameBootstrap` currently selects this
+candidate for Windows visual review while `createDefault()` and the formal
+version-1 snapshot contract remain unchanged.
+
 `StagedWorldGenerator` creates one bounded detached `GenerationRegion` for a
 key, runs those stages in declaration order, stops at the first returned or
 thrown failure, rethrows `CancellationException` without converting it into a
@@ -199,9 +210,12 @@ set, player feet coordinates, the configuration fingerprint, and aggregate
 generation hash.
 
 `SafeSpawnSelector` searches only committed keys within the configured block
-radius. Candidates need non-air support and at least empty feet and head cells,
-and ties resolve by squared distance, X, Z, then feet Y. No fallback block is
-manufactured. If no valid candidate exists, initial loading fails explicitly.
+radius. Candidates need non-air support and at least empty feet and head cells.
+For each horizontal column it selects the highest valid support before ties
+resolve by squared distance, X, Z, then feet Y. This prevents a hybrid cave
+below the nearest surface from becoming the initial player position. No
+fallback block is manufactured. If no valid candidate exists, initial loading
+fails explicitly.
 
 The debug rebuild lifecycle is programmatic only. `WorldLoader.rebuildRegion`
 is a package-private orchestration helper behind public
@@ -246,6 +260,15 @@ rocky highlands `(0, 44)`, cave and positive boundary `(16, 2, 0)`, and
 negative coverage `(-1, -1)`. The byte contract, representative Chunk hashes,
 and intentional-update protocol are normative in
 `docs/architecture/phase-04-deterministic-snapshots.md`.
+
+The approved visual revision is algorithm version `2`. Its locked
+configuration fingerprint is
+`56cb2f243319c7cf275ade89f480f9208ce5c1f85334eb225e6b56ed18e3012a`
+and its seed-12345 81-Chunk aggregate hash is
+`ec2c76a97f36d34b7360ae9abbb0be60fb8790f275fdaf5227a7daeae9754353`.
+The preceding version-1 review candidate remains historical evidence only.
+The user approved the terrain, decoration, and cave direction with deferred
+rendering limitations and later confirmed that an entrance was found.
 
 ## Renderer
 
@@ -392,8 +415,9 @@ Current boundaries and risks:
 ## Current application flow
 
 `GameBootstrap` is the composition root. It loads data-driven assets, starts
-the engine, constructs the default immutable world-generation config and six
-stage CPU generator, one shared default block-shape resolver,
+the engine, constructs the current visual-candidate immutable
+world-generation config and six-stage CPU generator, one shared default
+block-shape resolver,
 `CollisionWorld`, `BlockRaycast`, player body, `PlayerController`, and
 `PhysicsWorld`, creates one world-loading executor and two named chunk-meshing
 workers, constructs `ChunkMeshManager` with an upload budget of two, and
@@ -432,6 +456,17 @@ active cancellation exclusivity, immutable rebuild-request coverage, and
 atomic cancellation/commit/success winner semantics. The locked aggregate
 remains
 `161f6c10773c8dfd84e6961183e8706d5a0ec00750e727e83c4a08afcfbd5ce8`.
-The Phase 4 work did not launch the interactive Windows game and had no native
-macOS environment; neither interactive behavior nor native macOS verification
-is claimed by this baseline.
+The 2026-07-25 pre-hardening Windows visual-candidate run completed
+successfully. The revised safe-spawn selection produced an open grass-surface
+start; plains, trees, rolling terrain, sparse rocky highlands, F1 cursor
+release, framebuffer resize from 1026-by-607 to 2048-by-1104 and back, and
+Escape shutdown were observed. Later deterministic edge hardening preserved
+the candidate hash. The user subsequently approved the terrain, tree, outcrop,
+entrance, chamber, and cross-Chunk tunnel direction with deferred rendering
+limitations. The production visual revision now uses algorithm version `2`;
+the deterministic sampler therefore generated a new canonical contract rather
+than reusing candidate version-1 values. Its configuration fingerprint is
+`56cb2f243319c7cf275ade89f480f9208ce5c1f85334eb225e6b56ed18e3012a`
+and its 81-Chunk aggregate hash is
+`ec2c76a97f36d34b7360ae9abbb0be60fb8790f275fdaf5227a7daeae9754353`.
+Native macOS verification remains unrun.

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.overlord.assets.AssetManager;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.renderer.texture.TextureAtlasMetadata;
+import com.overlord.voxel.BlockFace;
 import java.awt.image.BufferedImage;
 import java.io.InputStream;
 import java.security.MessageDigest;
@@ -45,6 +46,48 @@ class GaiaProductionAssetsTest {
                 catalog.blockRegistry()
                         .require(ResourceLocation.parse("gaia:stone"))
                         .id());
+        var oakLog =
+                catalog.blockRegistry()
+                        .require(ResourceLocation.parse("gaia:oak_log"));
+        var oakLeaves =
+                catalog.blockRegistry()
+                        .require(ResourceLocation.parse("gaia:oak_leaves"));
+        assertEquals(4, oakLog.id());
+        assertEquals(5, oakLeaves.id());
+        assertEquals(
+                ResourceLocation.parse("gaia:oak_log_top"),
+                oakLog.textures().get(BlockFace.UP));
+        assertEquals(
+                ResourceLocation.parse("gaia:oak_log_top"),
+                oakLog.textures().get(BlockFace.DOWN));
+        for (BlockFace side :
+                new BlockFace[] {
+                    BlockFace.NORTH,
+                    BlockFace.SOUTH,
+                    BlockFace.EAST,
+                    BlockFace.WEST
+                }) {
+            assertEquals(
+                    ResourceLocation.parse("gaia:oak_log_side"),
+                    oakLog.textures().get(side));
+        }
+        for (BlockFace face : BlockFace.values()) {
+            assertEquals(
+                    ResourceLocation.parse("gaia:oak_leaves"),
+                    oakLeaves.textures().get(face));
+        }
+        assertEquals(
+                ResourceLocation.parse("gaia:oak_log"),
+                oakLog.item().id());
+        assertEquals(
+                ResourceLocation.parse("gaia:oak_leaves"),
+                oakLeaves.item().id());
+        assertEquals(ResourceLocation.parse("gaia:opaque"), oakLog.material());
+        assertEquals(
+                ResourceLocation.parse("gaia:opaque"),
+                oakLeaves.material());
+        assertTrue(oakLog.flammable());
+        assertTrue(oakLeaves.flammable());
 
         TextureAtlasMetadata atlas = catalog.blockAtlas();
         assertEquals(
@@ -69,6 +112,12 @@ class GaiaProductionAssetsTest {
                 80,
                 atlas.requireRegion(ResourceLocation.parse("gaia:missing"))
                         .x());
+        assertRegion(
+                atlas, "gaia:oak_log_side", 80, 48);
+        assertRegion(
+                atlas, "gaia:oak_log_top", 96, 48);
+        assertRegion(
+                atlas, "gaia:oak_leaves", 112, 48);
         assertTrue(catalog.report().diagnostics().isEmpty());
     }
 
@@ -117,6 +166,32 @@ class GaiaProductionAssetsTest {
 
         assertTrue(containsOpaqueBlack);
         assertTrue(containsOpaquePurple);
+
+        assertTileIsFullyOpaque(atlas, 80, 48);
+        assertTileIsFullyOpaque(atlas, 96, 48);
+        assertTileIsFullyOpaque(atlas, 112, 48);
+    }
+
+    private static void assertRegion(
+            TextureAtlasMetadata atlas,
+            String id,
+            int expectedX,
+            int expectedY) {
+        var region =
+                atlas.requireRegion(ResourceLocation.parse(id));
+        assertEquals(expectedX, region.x());
+        assertEquals(expectedY, region.y());
+        assertEquals(16, region.width());
+        assertEquals(16, region.height());
+    }
+
+    private static void assertTileIsFullyOpaque(
+            BufferedImage atlas, int startX, int startY) {
+        for (int y = startY; y < startY + 16; y++) {
+            for (int x = startX; x < startX + 16; x++) {
+                assertEquals(255, (atlas.getRGB(x, y) >>> 24) & 0xff);
+            }
+        }
     }
 
     private static String hashArgbRegion(

@@ -111,10 +111,10 @@ class GameBootstrapStructureTest {
         assertTrue(source.contains("catalog.renderAssets()"));
         assertTrue(
                 source.contains(
-                        "GaiaWorldGenerator.createDefault()"));
+                        "GaiaWorldGenerator.createVisualRevisionCandidate()"));
         assertTrue(
                 source.contains(
-                        "WorldGenerationConfig.defaults()"));
+                        "WorldGenerationConfig.visualRevisionCandidate()"));
         assertTrue(
                 source.contains(
                         "new SafeSpawnSelector()"));

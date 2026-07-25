@@ -84,9 +84,9 @@ public final class SafeSpawnSelector {
                     int z = (int) candidateZ;
                     int maximumSupportY =
                             worldHeight - effectiveClearance - 1;
-                    for (int supportY = 0;
-                            supportY <= maximumSupportY;
-                            supportY++) {
+                    for (int supportY = maximumSupportY;
+                            supportY >= 0;
+                            supportY--) {
                         if (world.getBlock(x, supportY, z) == 0
                                 || !hasClearance(
                                         world,
@@ -107,6 +107,7 @@ public final class SafeSpawnSelector {
                                         < 0) {
                             best = candidate;
                         }
+                        break;
                     }
                 }
             }
