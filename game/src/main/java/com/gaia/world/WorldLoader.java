@@ -1,7 +1,15 @@
 package com.gaia.world;
 
+import com.gaia.world.generation.GenerationContext;
+import com.gaia.world.generation.GenerationStageResult;
+import com.gaia.world.generation.WorldGenerationResult;
+import com.gaia.world.generation.WorldGenerator;
 import com.overlord.config.GameConfig;
+import com.overlord.voxel.ChunkGenerationMode;
+import com.overlord.voxel.ChunkGenerationResult;
+import com.overlord.voxel.ChunkGenerationTicket;
 import com.overlord.voxel.ChunkKey;
+import com.overlord.voxel.ChunkRepository;
 import com.overlord.voxel.World;
 import java.util.LinkedHashSet;
 import java.util.Objects;
@@ -12,16 +20,19 @@ import org.joml.Vector3f;
 public final class WorldLoader {
     private static final int CHUNK_RADIUS = 2;
 
-    private final GaiaWorldGenerator worldGenerator;
-    private final byte fallbackGroundId;
+    private final WorldGenerator worldGenerator;
+    private final GenerationContext generationContext;
 
     public WorldLoader(
-            GaiaWorldGenerator worldGenerator,
-            byte fallbackGroundId) {
+            WorldGenerator worldGenerator,
+            GenerationContext generationContext) {
         this.worldGenerator =
                 Objects.requireNonNull(
                         worldGenerator, "worldGenerator");
-        this.fallbackGroundId = fallbackGroundId;
+        this.generationContext =
+                Objects.requireNonNull(
+                        generationContext,
+                        "generationContext");
     }
 
     public WorldLoadResult load(World world) {
@@ -34,7 +45,7 @@ public final class WorldLoader {
             for (int chunkZ = -CHUNK_RADIUS; chunkZ < CHUNK_RADIUS; chunkZ++) {
                 checkCancelled();
                 ChunkKey key = new ChunkKey(chunkX, chunkZ);
-                worldGenerator.generateChunk(world, key);
+                generateChunk(world.chunks(), key);
                 generated.add(key);
             }
         }
@@ -43,13 +54,6 @@ public final class WorldLoader {
         int spawnX = 0;
         int spawnZ = 0;
         int highestBlockY = findHighestBlock(world, spawnX, spawnZ);
-        if (highestBlockY <= 0) {
-            for (int y = 0; y < 30; y++) {
-                world.setBlock(
-                        spawnX, y, spawnZ, fallbackGroundId);
-            }
-            highestBlockY = 29;
-        }
 
         int playerFeetY = highestBlockY + 1;
         Vector3f playerFeetPosition =
@@ -58,6 +62,56 @@ public final class WorldLoader {
                         playerFeetY,
                         spawnZ + 0.5f);
         return new WorldLoadResult(generated, playerFeetPosition);
+    }
+
+    private void generateChunk(
+            ChunkRepository chunks, ChunkKey key) {
+        ChunkGenerationTicket ticket =
+                chunks.beginGeneration(
+                        key, ChunkGenerationMode.INITIAL);
+        try {
+            WorldGenerationResult generated =
+                    worldGenerator.generate(
+                            generationContext, key);
+            if (!generated.succeeded()) {
+                throw stageFailure(key, generated);
+            }
+            ChunkGenerationResult committed =
+                    chunks.commitGeneration(
+                            ticket,
+                            generated.chunkData()
+                                    .orElseThrow());
+            if (committed.status()
+                    != ChunkGenerationResult.Status.COMMITTED) {
+                throw new IllegalStateException(
+                        "Initial generation commit failed for "
+                                + key
+                                + ": "
+                                + committed.status());
+            }
+        } catch (RuntimeException | Error failure) {
+            chunks.failGeneration(ticket, failure);
+            throw failure;
+        }
+    }
+
+    private static IllegalStateException stageFailure(
+            ChunkKey key,
+            WorldGenerationResult generated) {
+        GenerationStageResult failedStage =
+                generated.failedStage().orElseThrow(
+                        () ->
+                                new IllegalStateException(
+                                        "World generator failed "
+                                                + "without a failed stage"));
+        Throwable cause =
+                failedStage.failure().orElseThrow();
+        return new IllegalStateException(
+                "World generation failed for "
+                        + key
+                        + " at stage "
+                        + failedStage.stageId(),
+                cause);
     }
 
     private static void checkCancelled() {
