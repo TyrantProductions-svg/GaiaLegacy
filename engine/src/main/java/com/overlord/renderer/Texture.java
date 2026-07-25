@@ -7,7 +7,7 @@ import java.util.Objects;
 
 import static org.lwjgl.opengl.GL30C.*;
 
-public class Texture {
+public class Texture implements TextureBinding {
     private final MainThreadGuard mainThreadGuard;
     private int textureId;
     private int width;
@@ -57,6 +57,7 @@ public class Texture {
         glBindTexture(GL_TEXTURE_2D, textureId);
     }
 
+    @Override
     public void bind(int textureUnit) {
         mainThreadGuard.assertMainThread("texture unit bind");
         glActiveTexture(GL_TEXTURE0 + textureUnit);
