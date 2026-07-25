@@ -95,12 +95,12 @@ manual checklist, and intentional-update rules are in
 
 ## Unfinished work
 
-- Final branch-wide Engine-owner and Game/shared-owner reviews are pending the
-  root orchestrator. This handoff records task-level reviews and a
-  documentation audit only; it does not claim final cross-owner approval.
-- The post-Game-owner-fix clean test/build and standalone packaged-resource
-  verification both passed. A root-orchestrated final owner re-review remains
-  pending.
+- Final branch-wide review is complete: the Engine owner and Game/shared owner
+  both returned **APPROVED**, with no remaining Critical, Important, or Minor
+  findings. The final Game-owner approval followed deterministic hardening of
+  the commit/success cancellation-race tests at `1af813e`.
+- The root-orchestrated post-review `clean test build` and standalone
+  packaged-resource verification both passed at final HEAD.
 - Task 9's proposed new documentation-source assertions and their explicit
   RED run were not added in this documentation-only delegation because
   production and test code were out of scope. The existing Task 8 architecture
@@ -417,8 +417,12 @@ material findings:
   rebuild semantics and active-ticket failure. The mandatory post-fix race and
   lock-order review found no additional Important or Minor issue.
 
-Final branch-wide Engine-owner and Game/shared-owner review verdict:
-**PENDING ROOT ORCHESTRATION**. No final phase approval is claimed here.
+Final branch-wide owner-review verdict: **APPROVED**.
+
+- Engine owner: **APPROVED**, with no Critical, Important, or Minor findings.
+- Game/shared owner: **APPROVED**, with no Critical, Important, or Minor
+  findings after all review fixes and the deterministic cancellation-gate test
+  hardening.
 
 ## Known risks
 
@@ -499,7 +503,7 @@ Final `git diff --stat origin/main` including the Game-owner fixes and updated
 handoff:
 
 ```text
-73 files changed, 12635 insertions(+), 266 deletions(-)
+73 files changed, 12639 insertions(+), 266 deletions(-)
 ```
 
 Suggested overall commit message:
@@ -542,7 +546,7 @@ Suggested pull request description:
 - Windows clean test/build at atomic-cancellation fix HEAD: 757/757, zero
   failure/error/skip
 - standalone packaged-resource verification passed
-- final branch-wide owner re-review remains pending root orchestration
+- final branch-wide Engine-owner and Game/shared-owner reviews: APPROVED
 
 ## Manual follow-up
 

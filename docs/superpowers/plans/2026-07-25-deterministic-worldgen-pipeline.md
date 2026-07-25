@@ -1547,10 +1547,11 @@ git commit -m "test(worldgen): lock deterministic generation snapshots"
   production behavior.
 
 **2026-07-25 execution note:** the documentation delegate completed Steps 3
-and 6 without changing production or test code. The root orchestrator retains
-Steps 1-2, the final branch-wide owner reviews in Step 4, and the post-doc
-clean/package verification in Step 5. Step 7 is complete only after the
-documentation commit and ignored coordination report exist.
+and 6 without changing production or test code. The root orchestrator
+completed the final branch-wide owner reviews in Step 4 and the post-doc,
+post-review clean/package verification in Step 5. Steps 1-2 were intentionally
+not added during the documentation-only delegation and remain recorded as an
+unfinished optional documentation-test addition. Step 7 is complete.
 
 - [ ] **Step 1: Add documentation/source assertions before docs**
 
@@ -1596,14 +1597,14 @@ The baseline describes the new repository generation transaction, CPU Pipeline,
 finite loader, failure state, safe spawn, and debug rebuild without claiming
 unperformed Windows interactive or native macOS verification.
 
-- [ ] **Step 4: Run branch-wide engine and game owner reviews**
+- [x] **Step 4: Run branch-wide engine and game owner reviews**
 
 Review `origin/main..HEAD` across engine, game, shared docs, resources, tests,
 and build files. Classify Critical, Important, and Minor findings. Resolve
 every Critical and Important finding through a focused RED/GREEN regression
 before final verification. Re-run both owners after fixes.
 
-- [ ] **Step 5: Run final automated verification**
+- [x] **Step 5: Run final automated verification**
 
 ```powershell
 .\gradlew.bat clean test build --console=plain --no-daemon
@@ -1642,7 +1643,7 @@ macOS, run `./gradlew clean test build` and `./gradlew :game`, then compare the
 recorded aggregate hash. If either platform is unavailable, mark it **NOT
 RUN**, not passed.
 
-- [ ] **Step 7: Commit documentation and report without publishing**
+- [x] **Step 7: Commit documentation and report without publishing**
 
 ```powershell
 git add docs/architecture/current-baseline.md `
