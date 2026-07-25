@@ -1177,8 +1177,15 @@ class ChunkMeshManagerTest {
 
     private static ChunkRepository generatedRepository() {
         ChunkRepository repository = new ChunkRepository();
-        repository.generate(
-                KEY, chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
+        ChunkGenerationTicket ticket =
+                repository.beginGeneration(
+                        KEY, ChunkGenerationMode.INITIAL);
+        ChunkGenerationResult result =
+                repository.commitGeneration(
+                        ticket, filledGenerationData(KEY, (byte) 1));
+        assertEquals(
+                ChunkGenerationResult.Status.COMMITTED,
+                result.status());
         return repository;
     }
 
