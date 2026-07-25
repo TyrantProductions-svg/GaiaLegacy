@@ -34,8 +34,13 @@ hash format. Public initial load and debug rebuild calls enqueue onto the one
 injected world-generation `ExecutorService` owned by `GameBootstrap`. Each
 public future is bridged to the exact submitted task, so `cancel(true)` signals
 the generation loops and interrupts that task. Initial and rebuild paths check
-the signal before every publication/commit boundary. The synchronous
-orchestration helpers are not public API.
+the signal before every publication/commit boundary. A shared operation gate
+then makes cancellation atomic with each repository commit and with successful
+state/future completion. If cancellation wins the gate, no later commit or
+`SUCCEEDED` transition is allowed. If a commit or success action wins, a
+concurrently waiting cancellation attempt returns `false`; rebuild cancellation
+between keys still preserves already committed prior-key outcomes. The
+synchronous orchestration helpers are not public API.
 
 ## Version 1 configuration
 

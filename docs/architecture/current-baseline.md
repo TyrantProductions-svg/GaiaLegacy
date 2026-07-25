@@ -211,7 +211,14 @@ constructor-injected `ExecutorService`; `GameBootstrap` owns one dedicated
 through the existing barrier. Each public `CompletableFuture` retains the
 exact submitted `Future`; cancellation signals the generation operation and
 propagates `cancel(true)` to the owned task. The loader checks that signal
-before every initial publication and rebuild commit.
+before every initial publication and rebuild commit. Cancellation, each
+repository commit, and successful loader-state/future completion share one
+operation gate. A successful cancellation decision prevents every later
+commit and `SUCCEEDED` transition. A commit or success action that wins the
+gate makes the concurrently waiting cancellation attempt return `false`
+without interrupting the owned task. Cancellation can still win between
+rebuild keys, preserving already committed prior-key outcomes and terminally
+failing only the active ticket.
 
 `loadAsync` reserves the load lifecycle synchronously before submission.
 Duplicate calls reject before enqueue, a rejected submission rolls the
@@ -417,11 +424,13 @@ objects, and only then tears down Engine/OpenGL. Explicit per-key unload uses
 the same main-thread manager boundary. Phase 3 deliberately adds no automatic
 streaming or culling policy.
 
-The Game-owner review fixes at `349c81c` and async-contract follow-up at
-`9f18cf6` added an end-to-end default loader snapshot, strict biome math,
-Stage-cancellation propagation, cancellable submitted-task bridging,
-synchronous lifecycle reservation, active cancellation exclusivity, and
-immutable rebuild-request coverage. The locked aggregate remains
+The Game-owner review fixes at `349c81c`, async-contract follow-up at
+`9f18cf6`, and atomic-gate follow-up at `72a08dd` added an end-to-end default
+loader snapshot, strict biome math, Stage-cancellation propagation,
+cancellable submitted-task bridging, synchronous lifecycle reservation,
+active cancellation exclusivity, immutable rebuild-request coverage, and
+atomic cancellation/commit/success winner semantics. The locked aggregate
+remains
 `161f6c10773c8dfd84e6961183e8706d5a0ec00750e727e83c4a08afcfbd5ce8`.
 The Phase 4 work did not launch the interactive Windows game and had no native
 macOS environment; neither interactive behavior nor native macOS verification

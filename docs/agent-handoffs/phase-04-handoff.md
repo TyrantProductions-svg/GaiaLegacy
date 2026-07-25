@@ -6,7 +6,7 @@ Base: `origin/main` at
 `f1ca80beb47616025bea21615d7e3fccaa5b31c6`
 
 Reviewed implementation and architecture-guard HEAD:
-`9f18cf614de6e1bacbd3d72ab004e594842e7ec9`
+`72a08dd602d031120674332c6fcd4f4c4b4d36a8`
 
 ## Completed work
 
@@ -62,6 +62,12 @@ Reviewed implementation and architecture-guard HEAD:
   cancelled running load remains exclusive until its worker is terminal.
 - Snapshotted, null-validated, and sorted rebuild keys before the async
   boundary so caller mutation cannot change an accepted request.
+- Added one shared operation gate for public cancellation, every repository
+  commit, and successful loader-state/future completion. A cancellation winner
+  prevents later commit or `SUCCEEDED`; a commit/success winner makes the
+  concurrently waiting cancellation attempt return `false` without
+  interrupting the owned task. Cancellation between rebuild keys preserves
+  already committed prior-key results and fails the active ticket.
 - Preserved Phase 7 gameplay mutation exclusion: generation never uses
   `WorldMutationService`, block-change events, inventory, world items, or
   live-world block mutation.
@@ -282,8 +288,9 @@ tracked branch changes.
 
 ## Test commands and results
 
-The final Game-owner async-contract verification was run on Windows against
-implementation commit `9f18cf614de6e1bacbd3d72ab004e594842e7ec9`.
+The final Game-owner atomic-cancellation verification was run on Windows
+against implementation commit
+`72a08dd602d031120674332c6fcd4f4c4b4d36a8`.
 
 Game-owner fix integration:
 
@@ -291,12 +298,26 @@ Game-owner fix integration:
 .\gradlew.bat :game:test --rerun-tasks --console=plain --no-daemon
 ```
 
-- Passed: 27 suites, 226 tests, 0 failures, 0 errors, 0 skipped.
+- Passed in the final clean build: 27 suites, 231 tests, 0 failures, 0 errors,
+  0 skipped.
 - Includes the canonical 81-Chunk default loader, async load/rebuild executor,
   running and queued cancellation, duplicate lifecycle reservation,
-  submission rollback, immutable rebuild requests, exact
-  exceptional/rejection behavior, `StrictMath.exp`, unchanged locked
-  snapshots, and Stage-cancellation propagation.
+  submission rollback, immutable rebuild requests, cancellation/commit/success
+  gate winner races, partial prior-key rebuild cancellation, exact
+  exceptional/rejection behavior, `StrictMath.exp`, unchanged locked snapshots,
+  and Stage-cancellation propagation.
+
+Focused WorldLoader async/race suite:
+
+```powershell
+.\gradlew.bat :game:test `
+  --tests com.gaia.world.WorldLoaderTest `
+  --console=plain --no-daemon
+```
+
+- Passed: 34 tests, 0 failures.
+- The five new tests first failed against the ungated bridge at the expected
+  pre-commit, pre-success, commit-winner, and success-winner assertions.
 
 Focused determinism, boundary, and architecture:
 
@@ -330,8 +351,8 @@ Full Windows automated verification:
 
 - Passed: `BUILD SUCCESSFUL`; all 18 Gradle tasks passed.
 - Engine JUnit XML: 50 suites, 526 tests, 0 failures, 0 errors, 0 skipped.
-- Game JUnit XML: 27 suites, 226 tests, 0 failures, 0 errors, 0 skipped.
-- Total: 77 suites, 752 tests, 0 failures, 0 errors, 0 skipped.
+- Game JUnit XML: 27 suites, 231 tests, 0 failures, 0 errors, 0 skipped.
+- Total: 77 suites, 757 tests, 0 failures, 0 errors, 0 skipped.
 - The clean build included packaged-resource verification.
 
 Standalone packaged-resource verification:
@@ -388,6 +409,13 @@ material findings:
   read-only race review then found and fixed one related exclusivity gap:
   running cancellation now retains the reservation until the old worker and
   ticket are terminal.
+- Final Game-owner review found one Important check-to-action race:
+  cancellation could complete the public future between an ordinary signal
+  check and repository commit or final success. `72a08dd` resolves it with a
+  versioned shared operation gate. Five deterministic RED/GREEN barrier tests
+  cover cancel, commit, and success winners, including partial prior-key
+  rebuild semantics and active-ticket failure. The mandatory post-fix race and
+  lock-order review found no additional Important or Minor issue.
 
 Final branch-wide Engine-owner and Game/shared-owner review verdict:
 **PENDING ROOT ORCHESTRATION**. No final phase approval is claimed here.
@@ -445,6 +473,11 @@ Final branch-wide Engine-owner and Game/shared-owner review verdict:
 - Preserve synchronous load reservation/rejection/rollback and snapshot
   rebuild keys before enqueue. Running cancellation must retain exclusive load
   ownership until terminal cleanup.
+- Preserve the shared operation gate across public cancellation, repository
+  commit suppliers, and successful loader-state/future terminalization. A
+  successful cancel must prevent later commit/`SUCCEEDED`; a concurrently
+  winning commit or success action must make that cancel attempt return
+  `false`. Do not acquire the gate while holding repository locks.
 - Preserve `CancellationException` as cancellation across Stage, loader,
   future, ticket, and no-publication boundaries.
 - Preserve Phase 7 gameplay mutation exclusion. Generation must not emit
@@ -466,7 +499,7 @@ Final `git diff --stat origin/main` including the Game-owner fixes and updated
 handoff:
 
 ```text
-73 files changed, 12156 insertions(+), 266 deletions(-)
+73 files changed, 12635 insertions(+), 266 deletions(-)
 ```
 
 Suggested overall commit message:
@@ -506,7 +539,7 @@ Suggested pull request description:
 
 - focused determinism/boundary/architecture suite: 17/17
 - locked snapshot suite: 2/2 in repeated separate Gradle processes
-- Windows clean test/build at async-contract fix HEAD: 752/752, zero
+- Windows clean test/build at atomic-cancellation fix HEAD: 757/757, zero
   failure/error/skip
 - standalone packaged-resource verification passed
 - final branch-wide owner re-review remains pending root orchestration
