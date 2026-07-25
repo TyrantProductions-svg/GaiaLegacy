@@ -20,7 +20,18 @@ public final class RenderStateScope implements AutoCloseable {
         Objects.requireNonNull(backend, "backend");
         Objects.requireNonNull(requested, "requested");
         RenderStateSnapshot incoming = backend.capture();
-        backend.apply(requested);
+        try {
+            backend.apply(requested);
+        } catch (RuntimeException | Error failure) {
+            try {
+                backend.restore(incoming);
+            } catch (RuntimeException | Error restoreFailure) {
+                if (restoreFailure != failure) {
+                    failure.addSuppressed(restoreFailure);
+                }
+            }
+            throw failure;
+        }
         return new RenderStateScope(backend, incoming);
     }
 
