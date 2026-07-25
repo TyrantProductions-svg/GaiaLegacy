@@ -141,7 +141,31 @@ public final class ChunkMeshBuilder implements ChunkMesher {
         BlockSize neighborSize = input.getBlockSize(x, y, z);
         float neighborSizeInUnits = neighborSize.units();
 
-        return neighborSizeInUnits >= selfSizeInUnits;
+        if (neighborSizeInUnits >= selfSizeInUnits) {
+            return true;
+        }
+
+        return isNeighborAligned(input, x, y, z, direction, neighborSizeInUnits, selfSizeInUnits);
+    }
+
+    private boolean isNeighborAligned(
+            ChunkMeshInput input,
+            int x, int y, int z,
+            FaceDirection direction,
+            float neighborSize,
+            float selfSize) {
+        switch (direction) {
+            case NORTH:
+            case SOUTH:
+            case WEST:
+            case EAST:
+                return false;
+            case UP:
+            case DOWN:
+                return neighborSize >= selfSize;
+            default:
+                return false;
+        }
     }
 
     private static int computeTextureVariant(int x, int y, int z) {

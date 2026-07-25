@@ -16,6 +16,7 @@ public class GaiaWorldGenerator {
     private static final int OCTAVES = 4;
     private static final double PERSISTENCE = 0.5;
     private static final double SCALE = 0.02;
+    private static final int GRID_SCALE = 8;
     
     private static final PerlinNoise perlinNoise = new PerlinNoise(SEED);
 
@@ -42,33 +43,48 @@ public class GaiaWorldGenerator {
         Objects.requireNonNull(world, "world")
                 .generate(
                         Objects.requireNonNull(key, "key"),
-                        chunk -> {
-                            generateBaseTerrain(chunk, key.x(), key.z());
-                            addDetailLayers(chunk, key.x(), key.z());
-                        });
+                        chunk -> generateTerrain(chunk, key.x(), key.z()));
     }
 
-    private void generateBaseTerrain(Chunk chunk, int chunkX, int chunkZ) {
+    private void generateTerrain(Chunk chunk, int chunkX, int chunkZ) {
+        double[][] heightMap = computeHeightMap(chunkX, chunkZ);
+        
+        generateBaseLayer(chunk, heightMap, chunkX, chunkZ);
+        
+        generateDetailLayer(chunk, heightMap, chunkX, chunkZ);
+    }
+
+    private double[][] computeHeightMap(int chunkX, int chunkZ) {
+        double[][] heights = new double[GameConfig.Chunk.SIZE][GameConfig.Chunk.SIZE];
+        
         for (int x = 0; x < GameConfig.Chunk.SIZE; x++) {
             for (int z = 0; z < GameConfig.Chunk.SIZE; z++) {
                 int worldX = chunkX * GameConfig.Chunk.SIZE + x;
                 int worldZ = chunkZ * GameConfig.Chunk.SIZE + z;
                 
-                double noiseValue = perlinNoise.octaveNoise2D(worldX * SCALE, worldZ * SCALE, OCTAVES, PERSISTENCE);
-                int height = GameConfig.WorldGeneration.BASE_HEIGHT + (int) (noiseValue * GameConfig.WorldGeneration.HEIGHT_VARIATION);
+                double noiseValue = perlinNoise.octaveNoise2D(
+                        worldX * SCALE, 
+                        worldZ * SCALE, 
+                        OCTAVES, 
+                        PERSISTENCE
+                );
                 
-                height = Math.max(1, height);
+                heights[x][z] = GameConfig.WorldGeneration.BASE_HEIGHT + 
+                        (noiseValue * GameConfig.WorldGeneration.HEIGHT_VARIATION);
+            }
+        }
+        
+        return heights;
+    }
+
+    private void generateBaseLayer(Chunk chunk, double[][] heightMap, int chunkX, int chunkZ) {
+        for (int x = 0; x < GameConfig.Chunk.SIZE; x++) {
+            for (int z = 0; z < GameConfig.Chunk.SIZE; z++) {
+                double exactHeight = heightMap[x][z];
+                int solidHeight = (int) Math.floor(exactHeight);
                 
-                for (int y = 0; y < height; y++) {
-                    byte blockType;
-                    if (y == height - 1) {
-                        blockType = grassId;
-                    } else if (y > height - 4) {
-                        blockType = dirtId;
-                    } else {
-                        blockType = stoneId;
-                    }
-                    
+                for (int y = 0; y < solidHeight; y++) {
+                    byte blockType = selectBlockType(y, solidHeight);
                     chunk.setBlock(x, y, z, blockType);
                     chunk.setBlockSize(x, y, z, BlockSize.SIZE_16);
                 }
@@ -76,93 +92,88 @@ public class GaiaWorldGenerator {
         }
     }
 
-    private void addDetailLayers(Chunk chunk, int chunkX, int chunkZ) {
+    private void generateDetailLayer(Chunk chunk, double[][] heightMap, int chunkX, int chunkZ) {
         for (int x = 0; x < GameConfig.Chunk.SIZE; x++) {
             for (int z = 0; z < GameConfig.Chunk.SIZE; z++) {
+                double exactHeight = heightMap[x][z];
+                int baseHeight = (int) Math.floor(exactHeight);
+                double fractionalPart = exactHeight - baseHeight;
+                
+                if (fractionalPart < 0.01) {
+                    continue;
+                }
+                
                 int worldX = chunkX * GameConfig.Chunk.SIZE + x;
                 int worldZ = chunkZ * GameConfig.Chunk.SIZE + z;
                 
-                double noiseValue = perlinNoise.octaveNoise2D(worldX * SCALE, worldZ * SCALE, OCTAVES, PERSISTENCE);
-                int baseHeight = GameConfig.WorldGeneration.BASE_HEIGHT + (int) (noiseValue * GameConfig.WorldGeneration.HEIGHT_VARIATION);
-                baseHeight = Math.max(1, baseHeight);
+                fillTransition(chunk, x, z, baseHeight, fractionalPart, worldX, worldZ);
+            }
+        }
+    }
+
+    private void fillTransition(Chunk chunk, int x, int z, int baseY, double fraction, int worldX, int worldZ) {
+        byte surfaceBlock = chunk.getBlock(x, baseY - 1, z);
+        if (surfaceBlock == airId) {
+            surfaceBlock = grassId;
+        }
+        
+        BlockSize[] sizes = {BlockSize.SIZE_8, BlockSize.SIZE_4, BlockSize.SIZE_2};
+        double[] thresholds = {0.5, 0.25, 0.125};
+        
+        for (int i = 0; i < sizes.length; i++) {
+            double sizeInUnits = sizes[i].units();
+            double threshold = thresholds[i];
+            
+            if (fraction >= threshold) {
+                int detailY = baseY;
                 
-                addSurfaceDetails(chunk, x, z, baseHeight, worldX, worldZ);
+                if (canPlaceBlock(chunk, x, detailY, z, sizes[i])) {
+                    chunk.setBlock(x, detailY, z, surfaceBlock);
+                    chunk.setBlockSize(x, detailY, z, sizes[i]);
+                    break;
+                }
             }
         }
     }
 
-    private void addSurfaceDetails(Chunk chunk, int localX, int localZ, int baseHeight, int worldX, int worldZ) {
-        byte surfaceBlock = chunk.getBlock(localX, baseHeight - 1, localZ);
-        
-        for (int dy = 0; dy < 4; dy++) {
-            int detailY = baseHeight + dy;
-            if (detailY >= GameConfig.Chunk.MAX_HEIGHT) break;
-            
-            double heightFactor = 1.0 - (dy * 0.25);
-            double density = 0.15 * heightFactor;
-            
-            double detailNoise = perlinNoise.octaveNoise2D(
-                    worldX * SCALE * 2.0, 
-                    worldZ * SCALE * 2.0, 
-                    2, 
-                    0.5
-            ) * 0.5 + 0.5;
-            
-            if (detailNoise < density) {
-                continue;
-            }
-            
-            boolean supported = isSupported(chunk, localX, detailY, localZ);
-            if (!supported) {
-                continue;
-            }
-            
-            BlockSize size = selectDetailSize(dy, worldX, detailY, worldZ);
-            if (size == null) {
-                continue;
-            }
-            
-            if (chunk.getBlock(localX, detailY, localZ) == airId) {
-                chunk.setBlock(localX, detailY, localZ, surfaceBlock);
-                chunk.setBlockSize(localX, detailY, localZ, size);
-            }
+    private boolean canPlaceBlock(Chunk chunk, int x, int y, int z, BlockSize size) {
+        if (y < 0 || y >= GameConfig.Chunk.MAX_HEIGHT) {
+            return false;
         }
+        
+        if (chunk.getBlock(x, y, z) != airId) {
+            return false;
+        }
+        
+        return isSupported(chunk, x, y, z, size);
     }
 
-    private boolean isSupported(Chunk chunk, int x, int y, int z) {
-        if (y <= 0) return false;
+    private boolean isSupported(Chunk chunk, int x, int y, int z, BlockSize size) {
+        if (y <= 0) {
+            return false;
+        }
         
-        int checkY = y - 1;
-        byte blockBelow = chunk.getBlock(x, checkY, z);
-        if (blockBelow != airId) {
+        int supportY = y - 1;
+        
+        if (chunk.getBlock(x, supportY, z) != airId) {
             return true;
         }
         
-        if (z > 0 && chunk.getBlock(x, checkY, z - 1) != airId) return true;
-        if (z < GameConfig.Chunk.SIZE - 1 && chunk.getBlock(x, checkY, z + 1) != airId) return true;
-        if (x > 0 && chunk.getBlock(x - 1, checkY, z) != airId) return true;
-        if (x < GameConfig.Chunk.SIZE - 1 && chunk.getBlock(x + 1, checkY, z) != airId) return true;
+        if (x > 0 && chunk.getBlock(x - 1, supportY, z) != airId) return true;
+        if (x < GameConfig.Chunk.SIZE - 1 && chunk.getBlock(x + 1, supportY, z) != airId) return true;
+        if (z > 0 && chunk.getBlock(x, supportY, z - 1) != airId) return true;
+        if (z < GameConfig.Chunk.SIZE - 1 && chunk.getBlock(x, supportY, z + 1) != airId) return true;
         
         return false;
     }
 
-    private BlockSize selectDetailSize(int dy, int worldX, int y, int worldZ) {
-        int hash = (worldX * 73856093) ^ (y * 19349663) ^ (worldZ * 83492791);
-        int value = Math.abs(hash) % 100;
-        
-        if (dy == 0) {
-            if (value < 60) return BlockSize.SIZE_8;
-            if (value < 85) return BlockSize.SIZE_4;
-            return BlockSize.SIZE_2;
-        } else if (dy == 1) {
-            if (value < 40) return BlockSize.SIZE_8;
-            if (value < 70) return BlockSize.SIZE_4;
-            return BlockSize.SIZE_2;
-        } else if (dy == 2) {
-            if (value < 30) return BlockSize.SIZE_4;
-            return BlockSize.SIZE_2;
+    private byte selectBlockType(int y, int surfaceY) {
+        if (y == surfaceY - 1) {
+            return grassId;
+        } else if (y > surfaceY - 4) {
+            return dirtId;
         } else {
-            return BlockSize.SIZE_2;
+            return stoneId;
         }
     }
 }

@@ -161,8 +161,10 @@ public class PhysicsManager {
                                           CollisionResult result) {
         float blockHeight = getBlockHeight(x, feetBlockY, z);
         float blockTop = feetBlockY + blockHeight;
+        float playerFeetY = (float) camera.getPosition().y - GameConfig.Player.HEIGHT;
+        float stepHeight = blockTop - playerFeetY;
         
-        if (blockHeight <= GameConfig.Player.MAX_STEP_HEIGHT) {
+        if (stepHeight > 0 && stepHeight <= GameConfig.Player.MAX_STEP_HEIGHT) {
             float spaceAbove = GameConfig.Player.HEIGHT + GameConfig.Physics.COLLISION_TOLERANCE;
             int checkY = feetBlockY + 1;
             float currentHeight = blockHeight;
