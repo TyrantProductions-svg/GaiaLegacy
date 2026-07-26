@@ -44,6 +44,36 @@ class RendererStructureTest {
     }
 
     @Test
+    void initializesTheWorldShaderWithEveryRequiredUniformAndManualGammaState()
+            throws IOException {
+        String source =
+                Files.readString(
+                        Path.of(
+                                "src/main/java/com/overlord/renderer/"
+                                        + "Renderer.java"));
+
+        for (String uniform :
+                java.util.List.of(
+                        "projection",
+                        "view",
+                        "model",
+                        "textureAtlas",
+                        "sunDirection",
+                        "ambientStrength",
+                        "directionalStrength",
+                        "fogColor",
+                        "fogStart",
+                        "fogEnd")) {
+            assertTrue(
+                    source.contains("\"" + uniform + "\""),
+                    "Missing required world uniform: " + uniform);
+        }
+        assertTrue(source.contains("glDisable(GL_FRAMEBUFFER_SRGB);"));
+        assertFalse(source.contains("glEnable(GL_FRAMEBUFFER_SRGB)"));
+        assertTrue(source.contains("visualSettings);"));
+    }
+
+    @Test
     void removesTheInlineShaderImplementation() {
         assertFalse(
                 Files.exists(

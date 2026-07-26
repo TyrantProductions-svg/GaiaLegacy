@@ -1,5 +1,7 @@
 package com.overlord.renderer;
 
+import static org.lwjgl.opengl.GL11C.glDisable;
+import static org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_SRGB;
 import static org.lwjgl.opengl.GL30C.glClearColor;
 import static org.lwjgl.opengl.GL30C.glViewport;
 
@@ -97,7 +99,13 @@ public final class Renderer implements ChunkRenderBackend {
                                     "projection",
                                     "view",
                                     "model",
-                                    "textureAtlas"));
+                                    "textureAtlas",
+                                    "sunDirection",
+                                    "ambientStrength",
+                                    "directionalStrength",
+                                    "fogColor",
+                                    "fogStart",
+                                    "fogEnd"));
             initializedTexture =
                     new Texture(
                             mainThreadGuard,
@@ -120,6 +128,7 @@ public final class Renderer implements ChunkRenderBackend {
             Matrix4f initializedProjection =
                     createProjection(width, height);
 
+            glDisable(GL_FRAMEBUFFER_SRGB);
             glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
             if (width > 0 && height > 0) {
                 glViewport(0, 0, width, height);
@@ -214,7 +223,8 @@ public final class Renderer implements ChunkRenderBackend {
                                     projectionMatrix,
                                     "projection matrix"),
                             requireInitialized(camera, "camera")
-                                    .getViewMatrix());
+                                    .getViewMatrix(),
+                            visualSettings);
             requireInitialized(renderPipeline, "render pipeline")
                     .render(context, frameQueue);
         } finally {

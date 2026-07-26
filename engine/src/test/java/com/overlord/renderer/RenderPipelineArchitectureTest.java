@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.overlord.assets.AssetManager;
+import com.overlord.assets.ResourceLocation;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -197,6 +199,82 @@ class RenderPipelineArchitectureTest {
     }
 
     @Test
+    void worldShadersKeepTheLinearLightingFogAndSingleGammaContract() {
+        AssetManager assets = new AssetManager(getClass().getClassLoader());
+        String vertex =
+                assets.readUtf8(
+                        ResourceLocation.parse("overlord:shaders/world.vert"));
+        String fragment =
+                assets.readUtf8(
+                        ResourceLocation.parse("overlord:shaders/world.frag"));
+
+        assertEquals("#version 410 core", vertex.lines().findFirst().orElseThrow());
+        assertEquals("#version 410 core", fragment.lines().findFirst().orElseThrow());
+        assertTrue(vertex.contains("layout (location = 0) in vec3 aPosition;"));
+        assertTrue(vertex.contains("layout (location = 1) in vec2 aUv;"));
+        assertTrue(vertex.contains("layout (location = 2) in vec3 aNormal;"));
+        assertTrue(vertex.contains("layout (location = 3) in float aFaceLight;"));
+        assertTrue(vertex.contains("layout (location = 4) in float aAmbientOcclusion;"));
+
+        String vertexMain = methodBody(vertex, "main");
+        assertTrue(vertexMain.contains("aNormal"));
+        assertTrue(
+                vertexMain.contains(
+                        "float vertexLight = mod(aFaceLight, 16.0) / 15.0;"));
+        assertTrue(vertexMain.contains("aAmbientOcclusion"));
+        assertTrue(vertexMain.contains("vec4 viewPosition = view * worldPosition;"));
+        assertTrue(vertexMain.contains("length(viewPosition.xyz)"));
+
+        assertTrue(fragment.contains("vec3 srgbToLinear(vec3 srgb)"));
+        assertTrue(fragment.contains("lessThanEqual(srgb, vec3(0.04045))"));
+        assertTrue(fragment.contains("srgb / 12.92"));
+        assertTrue(fragment.contains("vec3(2.4)"));
+        assertTrue(fragment.contains("vec3 linearToSrgb(vec3 linear)"));
+        assertTrue(fragment.contains("lessThanEqual(linear, vec3(0.0031308))"));
+        assertTrue(fragment.contains("linear * 12.92"));
+        assertTrue(fragment.contains("vec3(1.0 / 2.4)"));
+
+        String fragmentMain = methodBody(fragment, "main");
+        assertInOrder(
+                fragmentMain,
+                "texture(textureAtlas, texCoord)",
+                "srgbToLinear(sampledColor.rgb)",
+                "combinedLight",
+                "ambientOcclusion",
+                "smoothstep(fogStart, fogEnd, viewDistance)",
+                "mix(litColor, fogColor, fogAmount)",
+                "linearToSrgb(foggedColor)",
+                "sampledColor.a");
+        int encode = fragmentMain.indexOf("linearToSrgb(foggedColor)");
+        assertFalse(fragmentMain.substring(encode).contains("pow("));
+        assertTrue(
+                fragmentMain.trim().endsWith(
+                        "fragmentColor = vec4(linearToSrgb(foggedColor), sampledColor.a);"));
+    }
+
+    @Test
+    void productionKeepsFramebufferSrgbDisabledForTheManualGammaPath()
+            throws IOException {
+        String renderer = read(JAVA.resolve("com/overlord/renderer/Renderer.java"));
+        assertTrue(renderer.contains("glDisable(GL_FRAMEBUFFER_SRGB);"));
+
+        try (Stream<Path> sources = Files.walk(MAIN)) {
+            List<Path> enables =
+                    sources.filter(Files::isRegularFile)
+                            .filter(
+                                    source ->
+                                            read(source)
+                                                    .contains(
+                                                            "glEnable(GL_FRAMEBUFFER_SRGB)"))
+                            .toList();
+            assertTrue(
+                    enables.isEmpty(),
+                    "Manual gamma path forbids framebuffer sRGB enablement: "
+                            + enables);
+        }
+    }
+
+    @Test
     void helperContractsRejectUnsupportedVersionsAndGuardOrder() {
         assertTrue(unsupportedGlslVersions("#version 410 core").isEmpty());
         for (int version : List.of(411, 419, 420, 421, 430, 450)) {
@@ -351,6 +429,18 @@ class RenderPipelineArchitectureTest {
             }
         }
         return List.copyOf(unsupported);
+    }
+
+    private static void assertInOrder(String source, String... tokens) {
+        int previous = -1;
+        for (String token : tokens) {
+            int current = source.indexOf(token);
+            assertTrue(current >= 0, "Missing shader token: " + token);
+            assertTrue(
+                    current > previous,
+                    "Shader token is out of order: " + token);
+            previous = current;
+        }
     }
 
     private static String methodBody(String source, String methodName) {
