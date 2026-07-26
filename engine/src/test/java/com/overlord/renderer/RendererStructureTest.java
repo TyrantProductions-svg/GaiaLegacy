@@ -84,6 +84,18 @@ class RendererStructureTest {
     }
 
     @Test
+    void surfaceUpdatesUseOnlyFramebufferDimensionsAndPauseZeroFramebufferFrames() throws IOException {
+        String source = Files.readString(Path.of("src/main/java/com/overlord/renderer/Renderer.java"));
+        assertTrue(source.contains("void updateSurface(RenderSurfaceMetrics surfaceMetrics)"));
+        assertFalse(source.contains("resizeFramebuffer("));
+        assertTrue(source.contains("next.framebufferWidth() <= 0 || next.framebufferHeight() <= 0"));
+        assertTrue(source.contains("previous.framebufferWidth() != next.framebufferWidth()"));
+        assertTrue(source.contains("if (surfaceMetrics.framebufferWidth() <= 0 || surfaceMetrics.framebufferHeight() <= 0) return;"));
+        assertTrue(source.contains("metricsCollector.beginFrame("));
+        assertTrue(source.contains("metricsCollector.finishFrame();"));
+    }
+
+    @Test
     void initializesTheWorldShaderWithEveryRequiredUniformAndManualGammaState()
             throws IOException {
         String source =
@@ -139,14 +151,14 @@ class RendererStructureTest {
 
         assertThrows(
                 IllegalStateException.class,
-                () -> renderer.init(new Camera(), 800, 600));
+                () -> renderer.init(new Camera(), new RenderSurfaceMetrics(800, 600, 800, 600, 1.0f, 1.0f)));
         assertSame(activeQueue, queueField.get(renderer));
 
         renderer.cleanup();
 
         assertThrows(
                 ResourceLookupAttempt.class,
-                () -> renderer.init(new Camera(), 800, 600));
+                () -> renderer.init(new Camera(), new RenderSurfaceMetrics(800, 600, 800, 600, 1.0f, 1.0f)));
     }
 
     @Test

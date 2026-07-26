@@ -15,6 +15,7 @@ import static org.lwjgl.glfw.GLFW.glfwCreateWindow;
 import static org.lwjgl.glfw.GLFW.glfwDefaultWindowHints;
 import static org.lwjgl.glfw.GLFW.glfwDestroyWindow;
 import static org.lwjgl.glfw.GLFW.glfwGetFramebufferSize;
+import static org.lwjgl.glfw.GLFW.glfwGetWindowContentScale;
 import static org.lwjgl.glfw.GLFW.glfwGetPrimaryMonitor;
 import static org.lwjgl.glfw.GLFW.glfwGetVideoMode;
 import static org.lwjgl.glfw.GLFW.glfwGetWindowSize;
@@ -22,6 +23,7 @@ import static org.lwjgl.glfw.GLFW.glfwInit;
 import static org.lwjgl.glfw.GLFW.glfwMakeContextCurrent;
 import static org.lwjgl.glfw.GLFW.glfwPollEvents;
 import static org.lwjgl.glfw.GLFW.glfwSetFramebufferSizeCallback;
+import static org.lwjgl.glfw.GLFW.glfwSetWindowContentScaleCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetInputMode;
 import static org.lwjgl.glfw.GLFW.glfwSetWindowPos;
 import static org.lwjgl.glfw.GLFW.glfwSetWindowSizeCallback;
@@ -34,6 +36,8 @@ import static org.lwjgl.glfw.GLFW.glfwWindowShouldClose;
 import com.overlord.config.GameConfig;
 import com.overlord.core.thread.MainThreadGuard;
 import java.nio.IntBuffer;
+import java.nio.FloatBuffer;
+import com.overlord.renderer.RenderSurfaceMetrics;
 import java.util.Objects;
 import java.util.Optional;
 import org.lwjgl.glfw.GLFWVidMode;
@@ -123,14 +127,17 @@ public class Window {
             IntBuffer logicalHeight = stack.mallocInt(1);
             IntBuffer framebufferWidth = stack.mallocInt(1);
             IntBuffer framebufferHeight = stack.mallocInt(1);
+            FloatBuffer scaleX = stack.mallocFloat(1);
+            FloatBuffer scaleY = stack.mallocFloat(1);
             glfwGetWindowSize(window, logicalWidth, logicalHeight);
             glfwGetFramebufferSize(window, framebufferWidth, framebufferHeight);
+            glfwGetWindowContentScale(window, scaleX, scaleY);
             metrics =
-                    new WindowMetrics(
+                    new WindowMetrics(new RenderSurfaceMetrics(
                             logicalWidth.get(0),
                             logicalHeight.get(0),
                             framebufferWidth.get(0),
-                            framebufferHeight.get(0));
+                            framebufferHeight.get(0), scaleX.get(0), scaleY.get(0)));
         }
     }
 
@@ -139,6 +146,8 @@ public class Window {
                 window, (ignored, width, height) -> metrics.updateLogicalSize(width, height));
         glfwSetFramebufferSizeCallback(
                 window, (ignored, width, height) -> metrics.updateFramebufferSize(width, height));
+        glfwSetWindowContentScaleCallback(
+                window, (ignored, x, y) -> metrics.updateContentScale(x, y));
     }
 
     public void setCursorCaptured(boolean captured) {
@@ -196,8 +205,10 @@ public class Window {
         return metrics.framebufferHeight();
     }
 
-    public Optional<WindowMetrics.FramebufferSize> consumeFramebufferResize() {
-        mainThreadGuard.assertMainThread("framebuffer resize consumption");
-        return metrics.consumeFramebufferResize();
+    public Optional<RenderSurfaceMetrics> consumeSurfaceUpdate() {
+        mainThreadGuard.assertMainThread("surface update consumption");
+        return metrics.consumeSurfaceUpdate();
     }
+
+    public RenderSurfaceMetrics currentSurfaceMetrics() { return metrics.current(); }
 }

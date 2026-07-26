@@ -16,11 +16,11 @@ public final class Main {
             while (engine.isRunning() && !engine.getWindow().shouldClose()) {
                 engine.getWindow().pollEvents();
                 engine.getWindow()
-                        .consumeFramebufferResize()
+                        .consumeSurfaceUpdate()
                         .ifPresent(
                                 size ->
                                         engine.getRenderer()
-                                                .resizeFramebuffer(size.width(), size.height()));
+                                                .updateSurface(size));
                 engine.getRenderer().renderFrame(
                         new RenderFrameInput(List.of(), frameClock.tick(), 0));
                 engine.getWindow().swapBuffers();

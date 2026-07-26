@@ -47,12 +47,12 @@ public final class GameLoop {
                 break;
             }
 
-            window.consumeFramebufferResize()
+            window.consumeSurfaceUpdate()
                     .ifPresent(
                             size ->
                                     context.engine()
                                             .getRenderer()
-                                            .resizeFramebuffer(size.width(), size.height()));
+                                            .updateSurface(size));
 
             if (state == State.LOADING) {
                 completeLoadingIfReady();

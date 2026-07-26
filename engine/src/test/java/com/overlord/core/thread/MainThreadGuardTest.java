@@ -63,7 +63,7 @@ class MainThreadGuardTest {
             ExecutionException failure =
                     assertThrows(
                             ExecutionException.class,
-                            () -> worker.submit(() -> renderer.resizeFramebuffer(800, 600)).get());
+                            () -> worker.submit(() -> renderer.updateSurface(new com.overlord.renderer.RenderSurfaceMetrics(800, 600, 800, 600, 1.0f, 1.0f))).get());
 
             assertInstanceOf(IllegalStateException.class, failure.getCause());
         } finally {

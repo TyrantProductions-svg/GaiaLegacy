@@ -44,6 +44,7 @@ public final class Renderer implements ChunkRenderBackend {
     private RenderPipeline renderPipeline;
     private Matrix4f projectionMatrix;
     private FullscreenTriangle fullscreenTriangle;
+    private RenderSurfaceMetrics surfaceMetrics;
 
     public Renderer(
             MainThreadGuard mainThreadGuard,
@@ -82,7 +83,7 @@ public final class Renderer implements ChunkRenderBackend {
                 Objects.requireNonNull(visualSettings, "visualSettings");
     }
 
-    public void init(Camera camera, int width, int height) {
+    public void init(Camera camera, RenderSurfaceMetrics surfaceMetrics) {
         mainThreadGuard.assertMainThread("renderer initialization");
         ensureNotInitialized();
         Camera initializedCamera = Objects.requireNonNull(camera, "camera");
@@ -148,13 +149,14 @@ public final class Renderer implements ChunkRenderBackend {
                     new RenderPipeline(
                             List.of(skyPass, worldPass, debugPass));
             RenderQueue initializedQueue = new RenderQueue();
-            Matrix4f initializedProjection =
-                    createProjection(width, height);
+            this.surfaceMetrics = Objects.requireNonNull(surfaceMetrics, "surfaceMetrics");
+            Matrix4f initializedProjection = createProjection(
+                    surfaceMetrics.framebufferWidth(), surfaceMetrics.framebufferHeight());
 
             glDisable(GL_FRAMEBUFFER_SRGB);
             glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
-            if (width > 0 && height > 0) {
-                glViewport(0, 0, width, height);
+            if (surfaceMetrics.framebufferWidth() > 0 && surfaceMetrics.framebufferHeight() > 0) {
+                glViewport(0, 0, surfaceMetrics.framebufferWidth(), surfaceMetrics.framebufferHeight());
             }
 
             this.camera = initializedCamera;
@@ -223,13 +225,16 @@ public final class Renderer implements ChunkRenderBackend {
         Objects.requireNonNull(object, "object").mesh().cleanup();
     }
 
-    public void resizeFramebuffer(int width, int height) {
-        mainThreadGuard.assertMainThread("framebuffer resize");
-        if (width <= 0 || height <= 0) {
-            return;
+    public void updateSurface(RenderSurfaceMetrics surfaceMetrics) {
+        mainThreadGuard.assertMainThread("render surface update");
+        RenderSurfaceMetrics next = Objects.requireNonNull(surfaceMetrics, "surfaceMetrics");
+        RenderSurfaceMetrics previous = this.surfaceMetrics;
+        this.surfaceMetrics = next;
+        if (next.framebufferWidth() <= 0 || next.framebufferHeight() <= 0) return;
+        if (previous == null || previous.framebufferWidth() != next.framebufferWidth() || previous.framebufferHeight() != next.framebufferHeight()) {
+            glViewport(0, 0, next.framebufferWidth(), next.framebufferHeight());
+            rebuildProjection(next.framebufferWidth(), next.framebufferHeight());
         }
-        glViewport(0, 0, width, height);
-        rebuildProjection(width, height);
     }
 
     public RenderMetrics metrics() {
@@ -245,6 +250,7 @@ public final class Renderer implements ChunkRenderBackend {
         metricsCollector.beginFrame(
                 frameInput.frameDeltaSeconds(), frameInput.meshQueueDepth());
         try {
+            if (surfaceMetrics.framebufferWidth() <= 0 || surfaceMetrics.framebufferHeight() <= 0) return;
             Material frameMaterial =
                     requireInitialized(worldMaterial, "world material");
             Matrix4f frameProjection =

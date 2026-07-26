@@ -106,8 +106,7 @@ public class Engine {
 
             initializedRenderer.init(
                     initializedCamera,
-                    initializedWindow.getFramebufferWidth(),
-                    initializedWindow.getFramebufferHeight());
+                    initializedWindow.currentSurfaceMetrics());
             initializedWindow.setCursorCaptured(true);
             schedulerStarted = true;
             taskScheduler.start();
