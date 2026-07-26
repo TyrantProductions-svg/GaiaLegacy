@@ -15,6 +15,13 @@ import com.overlord.renderer.material.MaterialDefinition;
 import com.overlord.renderer.material.RenderType;
 import com.overlord.renderer.queue.RenderQueue;
 import com.overlord.renderer.shader.ShaderBinding;
+import com.overlord.renderer.state.BlendMode;
+import com.overlord.renderer.state.RenderStateBackend;
+import com.overlord.renderer.state.RenderStateSnapshot;
+import com.overlord.renderer.state.RenderStateSpec;
+import com.overlord.renderer.visual.GammaPath;
+import com.overlord.renderer.visual.LinearColor;
+import com.overlord.renderer.visual.RenderVisualSettings;
 import com.overlord.voxel.ChunkKey;
 import java.util.ArrayList;
 import java.util.List;
@@ -24,6 +31,10 @@ import org.joml.Vector3fc;
 import org.junit.jupiter.api.Test;
 
 class RenderPipelineTest {
+    private static final RenderStateSpec SKY_STATE =
+            new RenderStateSpec(
+                    false, false, BlendMode.DISABLED, false);
+
     @Test
     void rendersPassesInConfiguredOrderAndClearsQueue() {
         List<String> calls = new ArrayList<>();
@@ -80,8 +91,91 @@ class RenderPipelineTest {
         assertEquals(4.0f, context.view().m30());
     }
 
+    @Test
+    void skyPassClearsBeforeUseUploadsGradientDrawsOnceAndRestoresState() {
+        List<String> calls = new ArrayList<>();
+        RecordingRenderStateBackend stateBackend =
+                new RecordingRenderStateBackend(calls);
+        RecordingShader shader = new RecordingShader(calls);
+        RenderVisualSettings settings = visualSettings();
+
+        new SkyRenderPass(
+                        stateBackend,
+                        shader,
+                        () -> calls.add("draw"))
+                .render(
+                        new RenderContext(
+                                new Matrix4f(),
+                                new Matrix4f(),
+                                settings),
+                        new RenderQueue());
+
+        assertEquals(
+                List.of(
+                        "capture",
+                        "apply:" + SKY_STATE,
+                        "clear",
+                        "shader.use",
+                        "uniform.skyHorizon",
+                        "uniform.skyTop",
+                        "draw",
+                        "restore"),
+                calls);
+        assertEquals(
+                new org.joml.Vector3f(0.41f, 0.42f, 0.43f),
+                shader.skyHorizon);
+        assertEquals(
+                new org.joml.Vector3f(0.11f, 0.12f, 0.13f),
+                shader.skyTop);
+    }
+
+    @Test
+    void skyPassRestoresIncomingStateWhenTheDrawFails() {
+        List<String> calls = new ArrayList<>();
+        RecordingRenderStateBackend stateBackend =
+                new RecordingRenderStateBackend(calls);
+        RecordingShader shader = new RecordingShader(calls);
+        IllegalStateException expected =
+                new IllegalStateException("sky draw failed");
+
+        IllegalStateException escaped =
+                assertThrows(
+                        IllegalStateException.class,
+                        () ->
+                                new SkyRenderPass(
+                                                stateBackend,
+                                                shader,
+                                                () -> {
+                                                    calls.add("draw");
+                                                    throw expected;
+                                                })
+                                        .render(
+                                                new RenderContext(
+                                                        new Matrix4f(),
+                                                        new Matrix4f(),
+                                                        visualSettings()),
+                                                new RenderQueue()));
+
+        assertSame(expected, escaped);
+        assertEquals("restore", calls.get(calls.size() - 1));
+        assertEquals(1, calls.stream().filter("draw"::equals).count());
+    }
+
     private static RenderContext context() {
         return new RenderContext(new Matrix4f(), new Matrix4f());
+    }
+
+    private static RenderVisualSettings visualSettings() {
+        return new RenderVisualSettings(
+                new org.joml.Vector3f(1.0f, 2.0f, 3.0f),
+                0.2f,
+                0.6f,
+                new LinearColor(0.11f, 0.12f, 0.13f),
+                new LinearColor(0.41f, 0.42f, 0.43f),
+                new LinearColor(0.41f, 0.42f, 0.43f),
+                10.0f,
+                20.0f,
+                GammaPath.SHADER_SRGB_DECODE_ENCODE);
     }
 
     private static RenderQueue queueWithItem() {
@@ -134,5 +228,74 @@ class RenderPipelineTest {
         @Override public void setInt(String uniform, int value) {}
         @Override public void setFloat(String uniform, float value) {}
         @Override public void setVector3(String uniform, Vector3fc value) {}
+    }
+
+    private static final class RecordingShader implements ShaderBinding {
+        private final List<String> calls;
+        private org.joml.Vector3f skyHorizon;
+        private org.joml.Vector3f skyTop;
+
+        private RecordingShader(List<String> calls) {
+            this.calls = calls;
+        }
+
+        @Override public int programId() { return 0; }
+        @Override public void use() { calls.add("shader.use"); }
+        @Override public void setMatrix4(String uniform, Matrix4fc value) {}
+        @Override public void setInt(String uniform, int value) {}
+        @Override public void setFloat(String uniform, float value) {}
+        @Override
+        public void setVector3(String uniform, Vector3fc value) {
+            org.joml.Vector3f copied = new org.joml.Vector3f(value);
+            if (uniform.equals("skyHorizon")) {
+                skyHorizon = copied;
+            } else if (uniform.equals("skyTop")) {
+                skyTop = copied;
+            }
+            calls.add("uniform." + uniform);
+        }
+    }
+
+    private static final class RecordingRenderStateBackend
+            implements RenderStateBackend {
+        private final List<String> calls;
+
+        private RecordingRenderStateBackend(List<String> calls) {
+            this.calls = calls;
+        }
+
+        @Override
+        public RenderStateSnapshot capture() {
+            calls.add("capture");
+            return new RenderStateSnapshot(
+                    true,
+                    true,
+                    true,
+                    1,
+                    2,
+                    3,
+                    4,
+                    5,
+                    6,
+                    true,
+                    7,
+                    8,
+                    9);
+        }
+
+        @Override
+        public void apply(RenderStateSpec state) {
+            calls.add("apply:" + state);
+        }
+
+        @Override
+        public void restore(RenderStateSnapshot snapshot) {
+            calls.add("restore");
+        }
+
+        @Override
+        public void clearColorAndDepth() {
+            calls.add("clear");
+        }
     }
 }

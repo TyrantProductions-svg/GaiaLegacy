@@ -86,6 +86,12 @@ class RenderPipelineArchitectureTest {
                         JAVA.resolve(
                                 "com/overlord/renderer/state/"
                                         + "OpenGlRenderStateBackend.java"),
+                        JAVA.resolve(
+                                "com/overlord/renderer/"
+                                        + "OpenGlFullscreenTriangleBackend.java"),
+                        JAVA.resolve(
+                                "com/overlord/renderer/"
+                                        + "FullscreenTriangle.java"),
                         JAVA.resolve("com/overlord/renderer/Mesh.java"),
                         JAVA.resolve("com/overlord/renderer/Texture.java"),
                         JAVA.resolve("com/overlord/renderer/Renderer.java"),
@@ -199,6 +205,47 @@ class RenderPipelineArchitectureTest {
     }
 
     @Test
+    void fullscreenTriangleUsesOnlyAGuardedEmptyVao() {
+        String geometry =
+                read(
+                        JAVA.resolve(
+                                "com/overlord/renderer/"
+                                        + "FullscreenTriangle.java"));
+        String backend =
+                read(
+                        JAVA.resolve(
+                                "com/overlord/renderer/"
+                                        + "OpenGlFullscreenTriangleBackend.java"));
+
+        assertTrue(
+                geometry.contains(
+                        "private final MainThreadGuard mainThreadGuard"));
+        assertGuardBeforeFirstCall(
+                methodBody(
+                        geometry,
+                        "FullscreenTriangle",
+                        "FullscreenTriangleBackend backend"),
+                "mainThreadGuard.assertMainThread(",
+                "backend.");
+        for (String method : List.of("draw", "cleanup")) {
+            assertGuardBeforeFirstCall(
+                    methodBody(geometry, method),
+                    "mainThreadGuard.assertMainThread(",
+                    "backend.");
+        }
+        assertTrue(backend.contains("glGenVertexArrays()"));
+        assertTrue(backend.contains("glBindVertexArray(vertexArrayId)"));
+        assertTrue(
+                backend.contains(
+                        "glDrawArrays(GL_TRIANGLES, firstVertex, vertexCount)"));
+        assertTrue(backend.contains("glDeleteVertexArrays(vertexArrayId)"));
+        assertFalse(geometry.contains("Buffer"));
+        assertFalse(backend.contains("Buffer"));
+        assertFalse(geometry.contains("glGenBuffers"));
+        assertFalse(backend.contains("glGenBuffers"));
+    }
+
+    @Test
     void worldShadersKeepTheLinearLightingFogAndSingleGammaContract() {
         AssetManager assets = new AssetManager(getClass().getClassLoader());
         String vertex =
@@ -250,6 +297,85 @@ class RenderPipelineArchitectureTest {
         assertTrue(
                 fragmentMain.trim().endsWith(
                         "fragmentColor = vec4(linearToSrgb(foggedColor), sampledColor.a);"));
+    }
+
+    @Test
+    void skyShadersUseVertexIdGradientAndTheWorldOutputTransferFunction() {
+        AssetManager assets = new AssetManager(getClass().getClassLoader());
+        String vertex =
+                assets.readUtf8(
+                        ResourceLocation.parse(
+                                "overlord:shaders/sky.vert"));
+        String fragment =
+                assets.readUtf8(
+                        ResourceLocation.parse(
+                                "overlord:shaders/sky.frag"));
+
+        assertEquals(
+                "#version 410 core",
+                vertex.lines().findFirst().orElseThrow());
+        assertEquals(
+                "#version 410 core",
+                fragment.lines().findFirst().orElseThrow());
+        assertTrue(vertex.contains("gl_VertexID"));
+        assertFalse(vertex.contains("layout (location"));
+        assertFalse(vertex.contains(" in vec"));
+        assertTrue(fragment.contains("uniform vec3 skyHorizon;"));
+        assertTrue(fragment.contains("uniform vec3 skyTop;"));
+        assertTrue(
+                fragment.contains(
+                        "mix(skyHorizon, skyTop,"));
+
+        for (String token :
+                List.of(
+                        "vec3 linearToSrgb(vec3 linear)",
+                        "lessThanEqual(linear, vec3(0.0031308))",
+                        "linear * 12.92",
+                        "vec3(1.0 / 2.4)",
+                        "1.055 * pow(linear",
+                        "vec3(0.055)")) {
+            assertTrue(fragment.contains(token), "Missing sky encode token: " + token);
+        }
+        assertTrue(
+                methodBody(fragment, "main")
+                        .trim()
+                        .endsWith(
+                                "fragmentColor = vec4(linearToSrgb(linearSky), 1.0);"));
+    }
+
+    @Test
+    void rendererOwnsSkyResourcesAndCleansThemInReverseCreationOrder() {
+        String renderer =
+                read(JAVA.resolve("com/overlord/renderer/Renderer.java"));
+
+        assertTrue(renderer.contains("private ShaderProgram worldShaderProgram;"));
+        assertTrue(renderer.contains("private ShaderProgram skyShaderProgram;"));
+        assertTrue(renderer.contains("private Texture textureAtlas;"));
+        assertTrue(renderer.contains("private FullscreenTriangle fullscreenTriangle;"));
+        assertInOrder(
+                methodBody(renderer, "init"),
+                "initializedWorldProgram =",
+                "initializedSkyProgram =",
+                "initializedTexture =",
+                "initializedTriangle =");
+        assertInOrder(
+                sourceSection(
+                        renderer,
+                        "public void cleanup()",
+                        "private void clearInitializedFields()"),
+                "runCleanup(triangleToClean",
+                "runCleanup(textureToClean",
+                "runCleanup(skyProgramToClean",
+                "runCleanup(worldProgramToClean");
+        assertInOrder(
+                sourceSection(
+                        renderer,
+                        "private static void cleanupAfterInitializationFailure(",
+                        "private static void suppressCleanup("),
+                "suppressCleanup(triangle",
+                "suppressCleanup(texture",
+                "suppressCleanup(skyProgram",
+                "suppressCleanup(worldProgram");
     }
 
     @Test
@@ -441,6 +567,15 @@ class RenderPipelineArchitectureTest {
                     "Shader token is out of order: " + token);
             previous = current;
         }
+    }
+
+    private static String sourceSection(
+            String source, String startToken, String endToken) {
+        int start = source.indexOf(startToken);
+        assertTrue(start >= 0, "Missing section start: " + startToken);
+        int end = source.indexOf(endToken, start + startToken.length());
+        assertTrue(end > start, "Missing section end: " + endToken);
+        return source.substring(start, end);
     }
 
     private static String methodBody(String source, String methodName) {

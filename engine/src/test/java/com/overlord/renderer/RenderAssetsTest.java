@@ -37,6 +37,18 @@ class RenderAssetsTest {
         assertEquals(
                 RenderAssets.DEFAULT_WORLD_FRAGMENT_SHADER,
                 assets.worldFragmentShader());
+        assertEquals(
+                ResourceLocation.parse("overlord:shaders/sky.vert"),
+                RenderAssets.DEFAULT_SKY_VERTEX_SHADER);
+        assertEquals(
+                ResourceLocation.parse("overlord:shaders/sky.frag"),
+                RenderAssets.DEFAULT_SKY_FRAGMENT_SHADER);
+        assertEquals(
+                RenderAssets.DEFAULT_SKY_VERTEX_SHADER,
+                assets.skyVertexShader());
+        assertEquals(
+                RenderAssets.DEFAULT_SKY_FRAGMENT_SHADER,
+                assets.skyFragmentShader());
     }
 
     @Test
