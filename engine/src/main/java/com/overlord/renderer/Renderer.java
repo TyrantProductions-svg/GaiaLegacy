@@ -45,6 +45,7 @@ public final class Renderer implements ChunkRenderBackend {
     private Matrix4f projectionMatrix;
     private FullscreenTriangle fullscreenTriangle;
     private RenderSurfaceMetrics surfaceMetrics;
+    private RenderSurfaceController surfaceController;
 
     public Renderer(
             MainThreadGuard mainThreadGuard,
@@ -150,6 +151,7 @@ public final class Renderer implements ChunkRenderBackend {
                             List.of(skyPass, worldPass, debugPass));
             RenderQueue initializedQueue = new RenderQueue();
             this.surfaceMetrics = Objects.requireNonNull(surfaceMetrics, "surfaceMetrics");
+            this.surfaceController = new RenderSurfaceController(surfaceMetrics);
             Matrix4f initializedProjection = createProjection(
                     surfaceMetrics.framebufferWidth(), surfaceMetrics.framebufferHeight());
 
@@ -230,8 +232,9 @@ public final class Renderer implements ChunkRenderBackend {
         RenderSurfaceMetrics next = Objects.requireNonNull(surfaceMetrics, "surfaceMetrics");
         RenderSurfaceMetrics previous = this.surfaceMetrics;
         this.surfaceMetrics = next;
+        boolean rebuild = surfaceController.update(next);
         if (next.framebufferWidth() <= 0 || next.framebufferHeight() <= 0) return;
-        if (previous == null || previous.framebufferWidth() != next.framebufferWidth() || previous.framebufferHeight() != next.framebufferHeight()) {
+        if (rebuild) {
             glViewport(0, 0, next.framebufferWidth(), next.framebufferHeight());
             rebuildProjection(next.framebufferWidth(), next.framebufferHeight());
         }
@@ -250,7 +253,7 @@ public final class Renderer implements ChunkRenderBackend {
         metricsCollector.beginFrame(
                 frameInput.frameDeltaSeconds(), frameInput.meshQueueDepth());
         try {
-            if (surfaceMetrics.framebufferWidth() <= 0 || surfaceMetrics.framebufferHeight() <= 0) return;
+            if (!surfaceController.drawable()) return;
             Material frameMaterial =
                     requireInitialized(worldMaterial, "world material");
             Matrix4f frameProjection =

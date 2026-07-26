@@ -89,8 +89,8 @@ class RendererStructureTest {
         assertTrue(source.contains("void updateSurface(RenderSurfaceMetrics surfaceMetrics)"));
         assertFalse(source.contains("resizeFramebuffer("));
         assertTrue(source.contains("next.framebufferWidth() <= 0 || next.framebufferHeight() <= 0"));
-        assertTrue(source.contains("previous.framebufferWidth() != next.framebufferWidth()"));
-        assertTrue(source.contains("if (surfaceMetrics.framebufferWidth() <= 0 || surfaceMetrics.framebufferHeight() <= 0) return;"));
+        assertTrue(source.contains("boolean rebuild = surfaceController.update(next);"));
+        assertTrue(source.contains("if (!surfaceController.drawable()) return;"));
         assertTrue(source.contains("metricsCollector.beginFrame("));
         assertTrue(source.contains("metricsCollector.finishFrame();"));
     }
