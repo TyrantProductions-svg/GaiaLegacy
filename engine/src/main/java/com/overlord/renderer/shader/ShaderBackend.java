@@ -31,5 +31,9 @@ interface ShaderBackend {
 
     void uploadInt(int location, int value);
 
+    void uploadFloat(int location, float value);
+
+    void uploadVector3(int location, float x, float y, float z);
+
     void deleteProgram(int programId);
 }

@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.overlord.assets.AssetManager;
+import com.overlord.assets.ResourceLocation;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -84,6 +86,12 @@ class RenderPipelineArchitectureTest {
                         JAVA.resolve(
                                 "com/overlord/renderer/state/"
                                         + "OpenGlRenderStateBackend.java"),
+                        JAVA.resolve(
+                                "com/overlord/renderer/"
+                                        + "OpenGlFullscreenTriangleBackend.java"),
+                        JAVA.resolve(
+                                "com/overlord/renderer/"
+                                        + "FullscreenTriangle.java"),
                         JAVA.resolve("com/overlord/renderer/Mesh.java"),
                         JAVA.resolve("com/overlord/renderer/Texture.java"),
                         JAVA.resolve("com/overlord/renderer/Renderer.java"),
@@ -189,11 +197,311 @@ class RenderPipelineArchitectureTest {
         assertTrue(
                 buildScript.contains(
                         "assets/overlord/shaders/world.frag"));
+        assertTrue(buildScript.contains("assets/overlord/shaders/sky.vert"));
+        assertTrue(buildScript.contains("assets/overlord/shaders/sky.frag"));
         assertTrue(
                 taskBlockDependsOn(
                         buildScript,
                         "check",
                         "verifyPackagedShaderResources"));
+    }
+
+    @Test
+    void frustumMathIsImmutablePureCpuAndOwnsNoChunkLifecycle()
+            throws IOException {
+        Path frustumDirectory =
+                JAVA.resolve("com/overlord/renderer/frustum");
+        List<Path> sources = allJavaSources(frustumDirectory);
+
+        assertEquals(
+                List.of("Frustum.java", "FrustumPlane.java"),
+                sources.stream()
+                        .map(source -> source.getFileName().toString())
+                        .sorted()
+                        .toList());
+        for (Path source : sources) {
+            String code = sanitizeCode(read(source));
+            assertFalse(code.contains("org.lwjgl"));
+            assertFalse(code.contains("OpenGl"));
+            assertFalse(code.contains("Renderer"));
+            assertFalse(code.contains("ChunkRepository"));
+            assertFalse(code.contains("ChunkMeshManager"));
+            assertFalse(code.contains("unload"));
+            assertFalse(code.contains("remove("));
+            assertFalse(code.contains("repository."));
+            assertFalse(code.contains("clear("));
+        }
+    }
+
+    @Test
+    void fullscreenTriangleUsesOnlyAGuardedEmptyVao() {
+        String geometry =
+                read(
+                        JAVA.resolve(
+                                "com/overlord/renderer/"
+                                        + "FullscreenTriangle.java"));
+        String backend =
+                read(
+                        JAVA.resolve(
+                                "com/overlord/renderer/"
+                                        + "OpenGlFullscreenTriangleBackend.java"));
+
+        assertTrue(
+                geometry.contains(
+                        "private final MainThreadGuard mainThreadGuard"));
+        assertGuardBeforeFirstCall(
+                methodBody(
+                        geometry,
+                        "FullscreenTriangle",
+                        "FullscreenTriangleBackend backend"),
+                "mainThreadGuard.assertMainThread(",
+                "backend.");
+        for (String method : List.of("draw", "cleanup")) {
+            assertGuardBeforeFirstCall(
+                    methodBody(geometry, method),
+                    "mainThreadGuard.assertMainThread(",
+                    "backend.");
+        }
+        assertTrue(backend.contains("glGenVertexArrays()"));
+        assertTrue(backend.contains("glBindVertexArray(vertexArrayId)"));
+        assertTrue(
+                backend.contains(
+                        "glDrawArrays(GL_TRIANGLES, firstVertex, vertexCount)"));
+        assertTrue(backend.contains("glDeleteVertexArrays(vertexArrayId)"));
+        assertFalse(geometry.contains("Buffer"));
+        assertFalse(backend.contains("Buffer"));
+        assertFalse(geometry.contains("glGenBuffers"));
+        assertFalse(backend.contains("glGenBuffers"));
+    }
+
+    @Test
+    void worldShadersKeepTheLinearLightingFogAndSingleGammaContract() {
+        AssetManager assets = new AssetManager(getClass().getClassLoader());
+        String vertex =
+                assets.readUtf8(
+                        ResourceLocation.parse("overlord:shaders/world.vert"));
+        String fragment =
+                assets.readUtf8(
+                        ResourceLocation.parse("overlord:shaders/world.frag"));
+
+        assertEquals("#version 410 core", vertex.lines().findFirst().orElseThrow());
+        assertEquals("#version 410 core", fragment.lines().findFirst().orElseThrow());
+        assertTrue(vertex.contains("layout (location = 0) in vec3 aPosition;"));
+        assertTrue(vertex.contains("layout (location = 1) in vec2 aUv;"));
+        assertTrue(vertex.contains("layout (location = 2) in vec3 aNormal;"));
+        assertTrue(vertex.contains("layout (location = 3) in float aFaceLight;"));
+        assertTrue(vertex.contains("layout (location = 4) in float aAmbientOcclusion;"));
+
+        String vertexMain = methodBody(vertex, "main");
+        assertTrue(vertexMain.contains("aNormal"));
+        assertTrue(
+                vertexMain.contains(
+                        "float vertexLight = mod(aFaceLight, 16.0) / 15.0;"));
+        assertTrue(vertexMain.contains("aAmbientOcclusion"));
+        assertTrue(vertexMain.contains("vec4 viewPosition = view * worldPosition;"));
+        assertTrue(vertexMain.contains("length(viewPosition.xyz)"));
+
+        assertTrue(fragment.contains("vec3 srgbToLinear(vec3 srgb)"));
+        assertTrue(fragment.contains("lessThanEqual(srgb, vec3(0.04045))"));
+        assertTrue(fragment.contains("srgb / 12.92"));
+        assertTrue(fragment.contains("vec3(2.4)"));
+        assertTrue(fragment.contains("vec3 linearToSrgb(vec3 linear)"));
+        assertTrue(fragment.contains("lessThanEqual(linear, vec3(0.0031308))"));
+        assertTrue(fragment.contains("linear * 12.92"));
+        assertTrue(fragment.contains("vec3(1.0 / 2.4)"));
+
+        String fragmentMain = methodBody(fragment, "main");
+        assertInOrder(
+                fragmentMain,
+                "texture(textureAtlas, texCoord)",
+                "srgbToLinear(sampledColor.rgb)",
+                "combinedLight",
+                "ambientOcclusion",
+                "smoothstep(fogStart, fogEnd, viewDistance)",
+                "mix(litColor, fogColor, fogAmount)",
+                "linearToSrgb(foggedColor)",
+                "sampledColor.a");
+        int encode = fragmentMain.indexOf("linearToSrgb(foggedColor)");
+        assertFalse(fragmentMain.substring(encode).contains("pow("));
+        assertTrue(
+                fragmentMain.trim().endsWith(
+                        "fragmentColor = vec4(linearToSrgb(foggedColor), sampledColor.a);"));
+    }
+
+    @Test
+    void skyShadersUseVertexIdGradientAndTheWorldOutputTransferFunction() {
+        AssetManager assets = new AssetManager(getClass().getClassLoader());
+        String vertex =
+                assets.readUtf8(
+                        ResourceLocation.parse(
+                                "overlord:shaders/sky.vert"));
+        String fragment =
+                assets.readUtf8(
+                        ResourceLocation.parse(
+                                "overlord:shaders/sky.frag"));
+
+        assertEquals(
+                "#version 410 core",
+                vertex.lines().findFirst().orElseThrow());
+        assertEquals(
+                "#version 410 core",
+                fragment.lines().findFirst().orElseThrow());
+        assertTrue(vertex.contains("gl_VertexID"));
+        assertFalse(vertex.contains("layout (location"));
+        assertFalse(vertex.contains(" in vec"));
+        assertTrue(fragment.contains("uniform vec3 skyHorizon;"));
+        assertTrue(fragment.contains("uniform vec3 skyTop;"));
+        assertTrue(
+                fragment.contains(
+                        "mix(skyHorizon, skyTop,"));
+
+        for (String token :
+                List.of(
+                        "vec3 linearToSrgb(vec3 linear)",
+                        "lessThanEqual(linear, vec3(0.0031308))",
+                        "linear * 12.92",
+                        "vec3(1.0 / 2.4)",
+                        "1.055 * pow(linear",
+                        "vec3(0.055)")) {
+            assertTrue(fragment.contains(token), "Missing sky encode token: " + token);
+        }
+        assertTrue(
+                methodBody(fragment, "main")
+                        .trim()
+                        .endsWith(
+                                "fragmentColor = vec4(linearToSrgb(linearSky), 1.0);"));
+    }
+
+    @Test
+    void phase5bShadersRemainGlsl410WithoutComputeOrStorageBuffers() throws IOException {
+        Path shaderDirectory = MAIN.resolve("resources/assets/overlord/shaders");
+        List<Path> shaders;
+        try (Stream<Path> paths = Files.list(shaderDirectory)) {
+            shaders =
+                    paths.filter(path -> path.toString().endsWith(".vert") || path.toString().endsWith(".frag"))
+                            .sorted()
+                            .toList();
+        }
+        assertEquals(
+                List.of("sky.frag", "sky.vert", "world.frag", "world.vert"),
+                shaders.stream().map(path -> path.getFileName().toString()).toList());
+        for (Path shader : shaders) {
+            String source = read(shader);
+            assertEquals("#version 410 core", source.lines().findFirst().orElseThrow(), shader::toString);
+            String code = sanitizeCode(source);
+            assertFalse(code.contains("layout(local_size"), shader::toString);
+            assertFalse(code.contains("buffer "), shader::toString);
+            assertFalse(code.contains("430"), shader::toString);
+        }
+    }
+
+    @Test
+    void phase5bProductionUsesNoOpenGlFeaturesBeyond41OrComputeStorage() throws IOException {
+        List<String> forbidden =
+                List.of(
+                        "GL42C",
+                        "GL43C",
+                        "GL44C",
+                        "GL45C",
+                        "GL46C",
+                        "GL_COMPUTE_SHADER",
+                        "GL_SHADER_STORAGE_BUFFER",
+                        "glDispatchCompute",
+                        "glMemoryBarrier",
+                        "glBindImageTexture");
+        try (Stream<Path> sources = Files.walk(MAIN.resolve("java"))) {
+            List<Path> offenders =
+                    sources.filter(Files::isRegularFile)
+                            .filter(source -> source.toString().endsWith(".java"))
+                            .filter(source -> !forbiddenCodeTokens(read(source), forbidden).isEmpty())
+                            .toList();
+            assertTrue(offenders.isEmpty(), "Unsupported OpenGL features found in " + offenders);
+        }
+
+        assertTrue(forbiddenCodeTokens("// GL43C\n\"glDispatchCompute\"", forbidden).isEmpty());
+        assertEquals(List.of("glDispatchCompute"), forbiddenCodeTokens("glDispatchCompute(1, 1, 1);", forbidden));
+    }
+
+    @Test
+    void rendererOwnsSkyResourcesAndCleansThemInReverseCreationOrder() {
+        String renderer =
+                read(JAVA.resolve("com/overlord/renderer/Renderer.java"));
+
+        assertTrue(renderer.contains("private ShaderProgram worldShaderProgram;"));
+        assertTrue(renderer.contains("private ShaderProgram skyShaderProgram;"));
+        assertTrue(renderer.contains("private Texture textureAtlas;"));
+        assertTrue(renderer.contains("private FullscreenTriangle fullscreenTriangle;"));
+        assertInOrder(
+                methodBody(renderer, "init"),
+                "initializedWorldProgram =",
+                "initializedSkyProgram =",
+                "initializedTexture =",
+                "initializedTriangle =");
+        assertInOrder(
+                sourceSection(
+                        renderer,
+                        "public void cleanup()",
+                        "private void clearInitializedFields()"),
+                "runCleanup(triangleToClean",
+                "runCleanup(textureToClean",
+                "runCleanup(skyProgramToClean",
+                "runCleanup(worldProgramToClean");
+        assertInOrder(
+                sourceSection(
+                        renderer,
+                        "private static void cleanupAfterInitializationFailure(",
+                        "private static void suppressCleanup("),
+                "suppressCleanup(triangle",
+                "suppressCleanup(texture",
+                "suppressCleanup(skyProgram",
+                "suppressCleanup(worldProgram");
+    }
+
+    @Test
+    void productionKeepsFramebufferSrgbDisabledForTheManualGammaPath()
+            throws IOException {
+        String renderer = read(JAVA.resolve("com/overlord/renderer/Renderer.java"));
+        assertTrue(renderer.contains("glDisable(GL_FRAMEBUFFER_SRGB);"));
+
+        try (Stream<Path> sources = Files.walk(MAIN)) {
+            List<Path> enables =
+                    sources.filter(Files::isRegularFile)
+                            .filter(
+                                    source ->
+                                            hasCodeToken(
+                                                    read(source),
+                                                    "glEnable(GL_FRAMEBUFFER_SRGB)"))
+                            .toList();
+            assertTrue(
+                    enables.isEmpty(),
+                    "Manual gamma path forbids framebuffer sRGB enablement: "
+                            + enables);
+        }
+    }
+
+    @Test
+    void texturePolicyUsesNearestSingleLevelSamplingWithoutMipmaps() {
+        String texture = read(JAVA.resolve("com/overlord/renderer/Texture.java"));
+        String code = sanitizeCode(texture);
+
+        for (String required :
+                List.of(
+                        "backend.setTextureParameter(GL_TEXTURE_MIN_FILTER, GL_NEAREST);",
+                        "backend.setTextureParameter(GL_TEXTURE_MAG_FILTER, GL_NEAREST);",
+                        "backend.setTextureParameter(GL_TEXTURE_BASE_LEVEL, 0);",
+                        "backend.setTextureParameter(GL_TEXTURE_MAX_LEVEL, 0);")) {
+            assertTrue(code.contains(required), "Missing texture policy: " + required);
+        }
+        assertTrue(
+                forbiddenCodeTokens(
+                                texture,
+                                List.of(
+                                        "glGenerateMipmap",
+                                        "generateMipmaps",
+                                        "GL_LINEAR_MIPMAP",
+                                        "GL_NEAREST_MIPMAP"))
+                        .isEmpty(),
+                "Texture policy must not create or select mipmaps");
     }
 
     @Test
@@ -351,6 +659,36 @@ class RenderPipelineArchitectureTest {
             }
         }
         return List.copyOf(unsupported);
+    }
+
+    private static List<String> forbiddenCodeTokens(String source, List<String> forbidden) {
+        String code = sanitizeCode(source);
+        return forbidden.stream().filter(code::contains).toList();
+    }
+
+    private static boolean hasCodeToken(String source, String token) {
+        return sanitizeCode(source).contains(token);
+    }
+
+    private static void assertInOrder(String source, String... tokens) {
+        int previous = -1;
+        for (String token : tokens) {
+            int current = source.indexOf(token);
+            assertTrue(current >= 0, "Missing shader token: " + token);
+            assertTrue(
+                    current > previous,
+                    "Shader token is out of order: " + token);
+            previous = current;
+        }
+    }
+
+    private static String sourceSection(
+            String source, String startToken, String endToken) {
+        int start = source.indexOf(startToken);
+        assertTrue(start >= 0, "Missing section start: " + startToken);
+        int end = source.indexOf(endToken, start + startToken.length());
+        assertTrue(end > start, "Missing section end: " + endToken);
+        return source.substring(start, end);
     }
 
     private static String methodBody(String source, String methodName) {

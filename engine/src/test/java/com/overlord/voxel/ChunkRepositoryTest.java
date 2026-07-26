@@ -149,14 +149,59 @@ class ChunkRepositoryTest {
     }
 
     @Test
-    void compareAndSetCornerReturnsCardinalNeighborsButNoDiagonal() {
+    void compareAndSetCornerReturnsOrderedCardinalAndDiagonalRevisions() {
         ChunkKey target = new ChunkKey(0, 0);
         ChunkKey east = target.east();
         ChunkKey south = target.south();
         ChunkKey diagonal = new ChunkKey(1, 1);
         ChunkRepository repository =
                 generatedChunks(target, east, south, diagonal);
-        long diagonalRevision = repository.revision(diagonal);
+        Map<ChunkKey, Long> previousRevisions =
+                Map.of(
+                        target, repository.revision(target),
+                        east, repository.revision(east),
+                        south, repository.revision(south),
+                        diagonal, repository.revision(diagonal));
+
+        ChunkMutationOutcome outcome =
+                repository.compareAndSetBlock(
+                        GameConfig.Chunk.SIZE - 1,
+                        4,
+                        GameConfig.Chunk.SIZE - 1,
+                        (byte) 0,
+                        (byte) 6);
+
+        assertEquals(
+                List.of(target, east, south, diagonal),
+                List.copyOf(outcome.dirtyChunks()));
+        assertEquals(
+                repository.revision(target),
+                outcome.dirtyRevisions().get(target));
+        assertEquals(
+                repository.revision(east),
+                outcome.dirtyRevisions().get(east));
+        assertEquals(
+                repository.revision(south),
+                outcome.dirtyRevisions().get(south));
+        assertEquals(
+                repository.revision(diagonal),
+                outcome.dirtyRevisions().get(diagonal));
+        assertEquals(4, Set.copyOf(outcome.dirtyRevisions().values()).size());
+        for (Map.Entry<ChunkKey, Long> previous :
+                previousRevisions.entrySet()) {
+            assertTrue(
+                    outcome.dirtyRevisions().get(previous.getKey())
+                            > previous.getValue());
+        }
+    }
+
+    @Test
+    void compareAndSetCornerOmitsMissingDiagonalWithoutAllocatingRevision() {
+        ChunkKey target = new ChunkKey(0, 0);
+        ChunkKey east = target.east();
+        ChunkKey south = target.south();
+        ChunkKey diagonal = target.southEast();
+        ChunkRepository repository = generatedChunks(target, east, south);
 
         ChunkMutationOutcome outcome =
                 repository.compareAndSetBlock(
@@ -169,17 +214,9 @@ class ChunkRepositoryTest {
         assertEquals(
                 List.of(target, east, south),
                 List.copyOf(outcome.dirtyChunks()));
-        assertEquals(
-                repository.revision(target),
-                outcome.dirtyRevisions().get(target));
-        assertEquals(
-                repository.revision(east),
-                outcome.dirtyRevisions().get(east));
-        assertEquals(
-                repository.revision(south),
-                outcome.dirtyRevisions().get(south));
-        assertFalse(outcome.dirtyChunks().contains(diagonal));
-        assertEquals(diagonalRevision, repository.revision(diagonal));
+        assertFalse(outcome.dirtyRevisions().containsKey(diagonal));
+        assertEquals(0L, repository.revision(diagonal));
+        assertFalse(repository.contains(diagonal));
     }
 
     @Test
@@ -430,23 +467,23 @@ class ChunkRepositoryTest {
     }
 
     @Test
-    void cornerChangesDirtyTwoOrthogonalNeighborsWithoutDiagonals() {
-        assertCornerDirtiesOnly(
+    void cornerChangesDirtyTwoCardinalsAndOneDiagonal() {
+        assertCornerDirtiesLoadedNeighbors(
                 0,
                 0,
                 new ChunkKey(0, 0).west(),
                 new ChunkKey(0, 0).north());
-        assertCornerDirtiesOnly(
+        assertCornerDirtiesLoadedNeighbors(
                 GameConfig.Chunk.SIZE - 1,
                 0,
                 new ChunkKey(0, 0).east(),
                 new ChunkKey(0, 0).north());
-        assertCornerDirtiesOnly(
+        assertCornerDirtiesLoadedNeighbors(
                 0,
                 GameConfig.Chunk.SIZE - 1,
                 new ChunkKey(0, 0).west(),
                 new ChunkKey(0, 0).south());
-        assertCornerDirtiesOnly(
+        assertCornerDirtiesLoadedNeighbors(
                 GameConfig.Chunk.SIZE - 1,
                 GameConfig.Chunk.SIZE - 1,
                 new ChunkKey(0, 0).east(),
@@ -467,15 +504,10 @@ class ChunkRepositoryTest {
     }
 
     @Test
-    void successfulGenerationDirtiesEachPresentCardinalNeighborOnce() {
+    void successfulGenerationDirtiesEachPresentMeshingNeighborOnce() {
         ChunkRepository repository = new ChunkRepository();
         ChunkKey center = new ChunkKey(0, 0);
-        Set<ChunkKey> neighbors =
-                Set.of(
-                        center.north(),
-                        center.south(),
-                        center.west(),
-                        center.east());
+        Set<ChunkKey> neighbors = allMeshingNeighbors(center);
         for (ChunkKey neighbor : neighbors) {
             repository.generate(
                     neighbor,
@@ -590,7 +622,7 @@ class ChunkRepositoryTest {
         assertTrue(repository.revision(target) > targetRevision);
         assertTrue(repository.revision(east) > eastRevision);
         assertTrue(repository.revision(south) > southRevision);
-        assertEquals(diagonalRevision, repository.revision(diagonal));
+        assertTrue(repository.revision(diagonal) > diagonalRevision);
         assertEquals(
                 1,
                 Byte.toUnsignedInt(
@@ -942,24 +974,40 @@ class ChunkRepositoryTest {
     }
 
     @Test
-    void claimMeshingAtomicallyCapturesCenterAndCardinalSnapshots() {
+    void claimMeshingAtomicallyCapturesImmutableThreeByThreeSnapshots() {
         ChunkRepository repository = new ChunkRepository();
         ChunkKey center = new ChunkKey(0, 0);
-        ChunkKey east = center.east();
-        repository.generate(
-                center, chunk -> chunk.setBlock(1, 2, 3, (byte) 4));
-        repository.generate(
-                east, chunk -> chunk.setBlock(0, 2, 3, (byte) 5));
+        generateMarker(repository, center, (byte) 1);
+        generateMarker(repository, center.north(), (byte) 2);
+        generateMarker(repository, center.north().east(), (byte) 3);
+        generateMarker(repository, center.east(), (byte) 4);
+        generateMarker(repository, center.south().east(), (byte) 5);
+        generateMarker(repository, center.south(), (byte) 6);
+        generateMarker(repository, center.south().west(), (byte) 7);
+        generateMarker(repository, center.west(), (byte) 8);
+        generateMarker(repository, center.north().west(), (byte) 9);
 
         Optional<ChunkMeshInput> claimed = repository.claimMeshing(center);
 
         ChunkMeshInput input = claimed.orElseThrow();
         assertEquals(ChunkState.MESHING, repository.state(center));
-        assertEquals(4, Byte.toUnsignedInt(input.center().getBlock(1, 2, 3)));
-        assertEquals(5, Byte.toUnsignedInt(input.east().getBlock(0, 2, 3)));
-        assertEquals(0, input.north().revision());
-        assertEquals(0, input.south().revision());
-        assertEquals(0, input.west().revision());
+        assertEquals(1, Byte.toUnsignedInt(input.center().getBlock(1, 2, 3)));
+        assertEquals(2, Byte.toUnsignedInt(input.north().getBlock(1, 2, 3)));
+        assertEquals(3, Byte.toUnsignedInt(input.northEast().getBlock(1, 2, 3)));
+        assertEquals(4, Byte.toUnsignedInt(input.east().getBlock(1, 2, 3)));
+        assertEquals(5, Byte.toUnsignedInt(input.southEast().getBlock(1, 2, 3)));
+        assertEquals(6, Byte.toUnsignedInt(input.south().getBlock(1, 2, 3)));
+        assertEquals(7, Byte.toUnsignedInt(input.southWest().getBlock(1, 2, 3)));
+        assertEquals(8, Byte.toUnsignedInt(input.west().getBlock(1, 2, 3)));
+        assertEquals(9, Byte.toUnsignedInt(input.northWest().getBlock(1, 2, 3)));
+        assertFalse(
+                Arrays.stream(ChunkMeshInput.class.getDeclaredFields())
+                        .map(Field::getType)
+                        .anyMatch(
+                                type ->
+                                        type == World.class
+                                                || type == Chunk.class
+                                                || type == ChunkRepository.class));
         assertTrue(repository.claimMeshing(center).isEmpty());
     }
 
@@ -1049,6 +1097,49 @@ class ChunkRepositoryTest {
     }
 
     @Test
+    void diagonalMutationInvalidatesClaimedTargetRevision() {
+        ChunkKey target = new ChunkKey(0, 0);
+        ChunkKey diagonal = target.southEast();
+        ChunkRepository repository = generatedChunks(target, diagonal);
+        long claimedRevision =
+                repository
+                        .claimMeshing(target)
+                        .orElseThrow()
+                        .center()
+                        .revision();
+
+        assertTrue(
+                repository.setBlock(
+                        diagonal.worldOriginX(),
+                        1,
+                        diagonal.worldOriginZ(),
+                        (byte) 2));
+
+        assertTrue(repository.revision(target) > claimedRevision);
+        assertFalse(repository.markReadyForUpload(target, claimedRevision));
+        assertEquals(ChunkState.DIRTY, repository.state(target));
+    }
+
+    @Test
+    void diagonalUnloadInvalidatesClaimedTargetRevision() {
+        ChunkKey target = new ChunkKey(0, 0);
+        ChunkKey diagonal = target.southEast();
+        ChunkRepository repository = generatedChunks(target, diagonal);
+        long claimedRevision =
+                repository
+                        .claimMeshing(target)
+                        .orElseThrow()
+                        .center()
+                        .revision();
+
+        assertTrue(repository.beginUnload(diagonal));
+
+        assertTrue(repository.revision(target) > claimedRevision);
+        assertFalse(repository.markReadyForUpload(target, claimedRevision));
+        assertEquals(ChunkState.DIRTY, repository.state(target));
+    }
+
+    @Test
     void currentReadyResultTransitionsClaimToReadyForUpload() {
         ChunkRepository repository = new ChunkRepository();
         ChunkKey key = new ChunkKey(0, 0);
@@ -1108,21 +1199,14 @@ class ChunkRepositoryTest {
     }
 
     @Test
-    void beginUnloadInvalidatesWorkAndDirtiesCardinalNeighborsOnce() {
+    void beginUnloadInvalidatesWorkAndDirtiesMeshingNeighborsOnce() {
         ChunkKey center = new ChunkKey(0, 0);
-        Set<ChunkKey> neighbors =
-                Set.of(
-                        center.north(),
-                        center.south(),
-                        center.west(),
-                        center.east());
+        Set<ChunkKey> neighbors = allMeshingNeighbors(center);
+        List<ChunkKey> loaded = new ArrayList<>();
+        loaded.add(center);
+        loaded.addAll(neighbors);
         ChunkRepository repository =
-                generatedChunks(
-                        center,
-                        center.north(),
-                        center.south(),
-                        center.west(),
-                        center.east());
+                generatedChunks(loaded.toArray(ChunkKey[]::new));
         long centerRevision = repository.revision(center);
         long claimedRevision =
                 repository
@@ -1319,6 +1403,24 @@ class ChunkRepositoryTest {
         return generatedPair(new ChunkKey(0, 0), new ChunkKey(1, 0));
     }
 
+    private static Set<ChunkKey> allMeshingNeighbors(ChunkKey center) {
+        return Set.of(
+                center.north(),
+                center.northEast(),
+                center.east(),
+                center.southEast(),
+                center.south(),
+                center.southWest(),
+                center.west(),
+                center.northWest());
+    }
+
+    private static void generateMarker(
+            ChunkRepository repository, ChunkKey key, byte marker) {
+        repository.generate(
+                key, chunk -> chunk.setBlock(1, 2, 3, marker));
+    }
+
     private static void assertEdgeOutcome(
             int localX, int localZ, ChunkKey neighbor) {
         ChunkKey target = new ChunkKey(0, 0);
@@ -1363,7 +1465,7 @@ class ChunkRepositoryTest {
         return repository;
     }
 
-    private static void assertCornerDirtiesOnly(
+    private static void assertCornerDirtiesLoadedNeighbors(
             int localX,
             int localZ,
             ChunkKey firstNeighbor,
@@ -1389,7 +1491,7 @@ class ChunkRepositoryTest {
         assertTrue(repository.revision(center) > centerRevision);
         assertTrue(repository.revision(firstNeighbor) > firstRevision);
         assertTrue(repository.revision(secondNeighbor) > secondRevision);
-        assertEquals(diagonalRevision, repository.revision(diagonal));
+        assertTrue(repository.revision(diagonal) > diagonalRevision);
     }
 
     @SuppressWarnings("unchecked")

@@ -49,9 +49,11 @@ class GameLoopStructureTest {
         assertTrue(
                 compact.contains(
                         "context.engine().getRenderer().renderFrame("
+                                + "newRenderFrameInput("
                                 + "state==State.RUNNING?"
-                                + "context.chunkMeshes().renderObjects():"
-                                + "List.of())"));
+                                + "List.copyOf(context.chunkMeshes().renderObjects()):"
+                                + "List.of(),frameDeltaSeconds,"
+                                + "context.chunkMeshes().meshQueueDepth()))"));
 
         int schedule = compact.indexOf("chunkMeshes().scheduleEligible()");
         int process =

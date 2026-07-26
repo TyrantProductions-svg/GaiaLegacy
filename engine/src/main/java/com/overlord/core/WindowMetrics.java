@@ -1,57 +1,49 @@
 package com.overlord.core;
 
 import java.util.Optional;
+import com.overlord.renderer.RenderSurfaceMetrics;
 
 public final class WindowMetrics {
-    private int logicalWidth;
-    private int logicalHeight;
-    private int framebufferWidth;
-    private int framebufferHeight;
-    private FramebufferSize pendingFramebufferResize;
+    private RenderSurfaceMetrics current;
+    private RenderSurfaceMetrics pending;
 
     public WindowMetrics(
             int logicalWidth, int logicalHeight, int framebufferWidth, int framebufferHeight) {
-        validateDimensions(logicalWidth, logicalHeight);
-        validateDimensions(framebufferWidth, framebufferHeight);
-        this.logicalWidth = logicalWidth;
-        this.logicalHeight = logicalHeight;
-        this.framebufferWidth = framebufferWidth;
-        this.framebufferHeight = framebufferHeight;
+        this(new RenderSurfaceMetrics(logicalWidth, logicalHeight, framebufferWidth, framebufferHeight, 1.0f, 1.0f));
+    }
+    public WindowMetrics(RenderSurfaceMetrics initial) {
+        current = java.util.Objects.requireNonNull(initial, "initial");
     }
 
     public void updateLogicalSize(int width, int height) {
-        validateDimensions(width, height);
-        logicalWidth = width;
-        logicalHeight = height;
+        update(new RenderSurfaceMetrics(width, height, current.framebufferWidth(), current.framebufferHeight(), current.contentScaleX(), current.contentScaleY()));
     }
 
     public void updateFramebufferSize(int width, int height) {
-        validateDimensions(width, height);
-        framebufferWidth = width;
-        framebufferHeight = height;
-        pendingFramebufferResize = new FramebufferSize(width, height);
+        update(new RenderSurfaceMetrics(current.logicalWidth(), current.logicalHeight(), width, height, current.contentScaleX(), current.contentScaleY()));
     }
 
-    public Optional<FramebufferSize> consumeFramebufferResize() {
-        FramebufferSize resize = pendingFramebufferResize;
-        pendingFramebufferResize = null;
-        return Optional.ofNullable(resize);
+    public void updateContentScale(float x, float y) { update(new RenderSurfaceMetrics(current.logicalWidth(), current.logicalHeight(), current.framebufferWidth(), current.framebufferHeight(), x, y)); }
+    public Optional<RenderSurfaceMetrics> consumeSurfaceUpdate() {
+        RenderSurfaceMetrics update = pending; pending = null; return Optional.ofNullable(update);
     }
+    public RenderSurfaceMetrics current() { return current; }
+    private void update(RenderSurfaceMetrics update) { current = update; pending = update; }
 
     public int logicalWidth() {
-        return logicalWidth;
+        return current.logicalWidth();
     }
 
     public int logicalHeight() {
-        return logicalHeight;
+        return current.logicalHeight();
     }
 
     public int framebufferWidth() {
-        return framebufferWidth;
+        return current.framebufferWidth();
     }
 
     public int framebufferHeight() {
-        return framebufferHeight;
+        return current.framebufferHeight();
     }
 
     private static void validateDimensions(int width, int height) {
@@ -60,9 +52,4 @@ public final class WindowMetrics {
         }
     }
 
-    public record FramebufferSize(int width, int height) {
-        public FramebufferSize {
-            validateDimensions(width, height);
-        }
-    }
 }

@@ -24,6 +24,18 @@ public final class ChunkDirtyTracker {
         if (localZ == GameConfig.Chunk.SIZE - 1) {
             affected.add(target.south());
         }
+        if (localX == 0 && localZ == 0) {
+            affected.add(target.northWest());
+        } else if (localX == GameConfig.Chunk.SIZE - 1
+                && localZ == 0) {
+            affected.add(target.northEast());
+        } else if (localX == 0
+                && localZ == GameConfig.Chunk.SIZE - 1) {
+            affected.add(target.southWest());
+        } else if (localX == GameConfig.Chunk.SIZE - 1
+                && localZ == GameConfig.Chunk.SIZE - 1) {
+            affected.add(target.southEast());
+        }
         return affected;
     }
 
@@ -33,6 +45,19 @@ public final class ChunkDirtyTracker {
         neighbors.add(target.south());
         neighbors.add(target.west());
         neighbors.add(target.east());
+        return neighbors;
+    }
+
+    public Set<ChunkKey> meshingNeighbors(ChunkKey target) {
+        Set<ChunkKey> neighbors = new LinkedHashSet<>();
+        neighbors.add(target.north());
+        neighbors.add(target.northEast());
+        neighbors.add(target.east());
+        neighbors.add(target.southEast());
+        neighbors.add(target.south());
+        neighbors.add(target.southWest());
+        neighbors.add(target.west());
+        neighbors.add(target.northWest());
         return neighbors;
     }
 

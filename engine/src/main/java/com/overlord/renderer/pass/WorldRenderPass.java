@@ -8,8 +8,11 @@ import com.overlord.renderer.state.BlendMode;
 import com.overlord.renderer.state.RenderStateBackend;
 import com.overlord.renderer.state.RenderStateScope;
 import com.overlord.renderer.state.RenderStateSpec;
+import com.overlord.renderer.visual.LinearColor;
+import com.overlord.renderer.visual.RenderVisualSettings;
 import java.util.List;
 import java.util.Objects;
+import org.joml.Vector3f;
 
 public final class WorldRenderPass implements RenderPass {
     private static final RenderStateSpec OPAQUE_STATE =
@@ -59,6 +62,19 @@ public final class WorldRenderPass implements RenderPass {
         shader.setMatrix4("view", context.view());
         shader.setMatrix4("model", item.object().modelMatrix());
         shader.setInt("textureAtlas", 0);
+        RenderVisualSettings settings = context.visualSettings();
+        shader.setVector3("sunDirection", settings.sunDirection());
+        shader.setFloat("ambientStrength", settings.ambientStrength());
+        shader.setFloat(
+                "directionalStrength", settings.directionalStrength());
+        LinearColor fogColor = settings.fogColor();
+        shader.setVector3(
+                "fogColor",
+                new Vector3f(
+                        fogColor.red(), fogColor.green(), fogColor.blue()));
+        shader.setFloat("fogStart", settings.fogStart());
+        shader.setFloat("fogEnd", settings.fogEnd());
         item.object().mesh().draw();
+        context.metricsRecorder().recordDraw(item.object().mesh().vertexCount() / 3L);
     }
 }

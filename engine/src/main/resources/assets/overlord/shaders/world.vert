@@ -8,8 +8,18 @@ uniform mat4 projection;
 uniform mat4 view;
 uniform mat4 model;
 out vec2 texCoord;
+out vec3 surfaceNormal;
+out float faceLight;
+out float ambientOcclusion;
+out float viewDistance;
 void main() {
-    gl_Position =
-        projection * view * model * vec4(aPosition, 1.0);
+    vec4 worldPosition = model * vec4(aPosition, 1.0);
+    vec4 viewPosition = view * worldPosition;
+    gl_Position = projection * viewPosition;
     texCoord = aUv;
+    surfaceNormal = mat3(model) * aNormal;
+    float vertexLight = mod(aFaceLight, 16.0) / 15.0;
+    faceLight = vertexLight;
+    ambientOcclusion = aAmbientOcclusion;
+    viewDistance = length(viewPosition.xyz);
 }

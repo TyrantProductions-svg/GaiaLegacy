@@ -149,7 +149,8 @@ public final class ChunkRepository {
                 Chunk.fromCanonicalBytes(
                         data.worldHeight(), data.copyBlocks());
         long committedRevision;
-        Set<ChunkKey> changedEdges = Set.of();
+        ChangedMeshingBoundaries changedBoundaries =
+                ChangedMeshingBoundaries.NONE;
         synchronized (generationAttempts) {
             GenerationAttempt attempt =
                     liveAttempt(ticket);
@@ -194,9 +195,9 @@ public final class ChunkRepository {
                         generationAttempts.byKey.remove(key, attempt);
                         return conflictResult(key);
                     }
-                    changedEdges =
-                            changedHorizontalEdges(
-                                    key, entry.chunk, detached);
+                    changedBoundaries =
+                            changedMeshingBoundaries(
+                                    entry.chunk, detached);
                     entry.chunk = detached;
                     entry.revision = nextRevision();
                     entry.failure = null;
@@ -211,11 +212,11 @@ public final class ChunkRepository {
 
         if (ticket.mode() == ChunkGenerationMode.INITIAL) {
             for (ChunkKey neighbor :
-                    dirtyTracker.horizontalNeighbors(key)) {
+                    dirtyTracker.meshingNeighbors(key)) {
                 dirtyIfPresent(neighbor);
             }
         } else {
-            dirtyChangedLoadedNeighbors(changedEdges);
+            dirtyChangedLoadedNeighbors(key, changedBoundaries);
         }
         return new ChunkGenerationResult(
                 ChunkGenerationResult.Status.COMMITTED,
@@ -315,7 +316,7 @@ public final class ChunkRepository {
                 throw failure;
             }
         }
-        for (ChunkKey neighbor : dirtyTracker.horizontalNeighbors(key)) {
+        for (ChunkKey neighbor : dirtyTracker.meshingNeighbors(key)) {
             dirtyIfPresent(neighbor);
         }
     }
@@ -508,12 +509,44 @@ public final class ChunkRepository {
                                                 key.north(),
                                                 0,
                                                 worldHeight));
+        ChunkSnapshot northEast =
+                snapshot(key.north().east())
+                        .orElseGet(
+                                () ->
+                                        ChunkSnapshot.empty(
+                                                key.north().east(),
+                                                0,
+                                                worldHeight));
+        ChunkSnapshot east =
+                snapshot(key.east())
+                        .orElseGet(
+                                () ->
+                                        ChunkSnapshot.empty(
+                                                key.east(),
+                                                0,
+                                                worldHeight));
+        ChunkSnapshot southEast =
+                snapshot(key.south().east())
+                        .orElseGet(
+                                () ->
+                                        ChunkSnapshot.empty(
+                                                key.south().east(),
+                                                0,
+                                                worldHeight));
         ChunkSnapshot south =
                 snapshot(key.south())
                         .orElseGet(
                                 () ->
                                         ChunkSnapshot.empty(
                                                 key.south(),
+                                                0,
+                                                worldHeight));
+        ChunkSnapshot southWest =
+                snapshot(key.south().west())
+                        .orElseGet(
+                                () ->
+                                        ChunkSnapshot.empty(
+                                                key.south().west(),
                                                 0,
                                                 worldHeight));
         ChunkSnapshot west =
@@ -524,12 +557,12 @@ public final class ChunkRepository {
                                                 key.west(),
                                                 0,
                                                 worldHeight));
-        ChunkSnapshot east =
-                snapshot(key.east())
+        ChunkSnapshot northWest =
+                snapshot(key.north().west())
                         .orElseGet(
                                 () ->
                                         ChunkSnapshot.empty(
-                                                key.east(),
+                                                key.north().west(),
                                                 0,
                                                 worldHeight));
 
@@ -552,9 +585,13 @@ public final class ChunkRepository {
                     new ChunkMeshInput(
                             center.orElseThrow(),
                             north,
+                            northEast,
+                            east,
+                            southEast,
                             south,
+                            southWest,
                             west,
-                            east));
+                            northWest));
         }
     }
 
@@ -626,7 +663,7 @@ public final class ChunkRepository {
             entry.revision = nextRevision();
             entry.state = ChunkState.UNLOADING;
         }
-        for (ChunkKey neighbor : dirtyTracker.horizontalNeighbors(key)) {
+        for (ChunkKey neighbor : dirtyTracker.meshingNeighbors(key)) {
             dirtyIfPresent(neighbor);
         }
         return true;
@@ -727,55 +764,87 @@ public final class ChunkRepository {
         }
     }
 
-    private Set<ChunkKey> changedHorizontalEdges(
-            ChunkKey key, Chunk oldChunk, Chunk replacement) {
+    private ChangedMeshingBoundaries changedMeshingBoundaries(
+            Chunk oldChunk, Chunk replacement) {
         boolean northChanged = false;
         boolean southChanged = false;
         boolean westChanged = false;
         boolean eastChanged = false;
+        boolean northWestChanged = false;
+        boolean northEastChanged = false;
+        boolean southWestChanged = false;
+        boolean southEastChanged = false;
         int last = GameConfig.Chunk.SIZE - 1;
         for (int y = 0; y < worldHeight; y++) {
             for (int horizontal = 0;
                     horizontal < GameConfig.Chunk.SIZE;
                     horizontal++) {
-                northChanged |=
+                boolean northCellChanged =
                         oldChunk.getBlock(horizontal, y, 0)
                                 != replacement.getBlock(horizontal, y, 0);
-                southChanged |=
+                boolean southCellChanged =
                         oldChunk.getBlock(horizontal, y, last)
                                 != replacement.getBlock(
                                         horizontal, y, last);
-                westChanged |=
+                boolean westCellChanged =
                         oldChunk.getBlock(0, y, horizontal)
                                 != replacement.getBlock(
                                         0, y, horizontal);
-                eastChanged |=
+                boolean eastCellChanged =
                         oldChunk.getBlock(last, y, horizontal)
                                 != replacement.getBlock(
                                         last, y, horizontal);
+                northChanged |= northCellChanged;
+                southChanged |= southCellChanged;
+                westChanged |= westCellChanged;
+                eastChanged |= eastCellChanged;
+                if (horizontal == 0) {
+                    northWestChanged |= northCellChanged;
+                    southWestChanged |= southCellChanged;
+                }
+                if (horizontal == last) {
+                    northEastChanged |= northCellChanged;
+                    southEastChanged |= southCellChanged;
+                }
             }
         }
 
-        Set<ChunkKey> changed = new HashSet<>();
-        if (northChanged) {
-            changed.add(key.north());
-        }
-        if (southChanged) {
-            changed.add(key.south());
-        }
-        if (westChanged) {
-            changed.add(key.west());
-        }
-        if (eastChanged) {
-            changed.add(key.east());
-        }
-        return Set.copyOf(changed);
+        return new ChangedMeshingBoundaries(
+                northChanged,
+                northEastChanged,
+                eastChanged,
+                southEastChanged,
+                southChanged,
+                southWestChanged,
+                westChanged,
+                northWestChanged);
     }
 
     private void dirtyChangedLoadedNeighbors(
-            Set<ChunkKey> changedEdges) {
-        for (ChunkKey neighbor : changedEdges) {
-            dirtyIfPresent(neighbor);
+            ChunkKey key, ChangedMeshingBoundaries changed) {
+        if (changed.north()) {
+            dirtyIfPresent(key.north());
+        }
+        if (changed.northEast()) {
+            dirtyIfPresent(key.northEast());
+        }
+        if (changed.east()) {
+            dirtyIfPresent(key.east());
+        }
+        if (changed.southEast()) {
+            dirtyIfPresent(key.southEast());
+        }
+        if (changed.south()) {
+            dirtyIfPresent(key.south());
+        }
+        if (changed.southWest()) {
+            dirtyIfPresent(key.southWest());
+        }
+        if (changed.west()) {
+            dirtyIfPresent(key.west());
+        }
+        if (changed.northWest()) {
+            dirtyIfPresent(key.northWest());
         }
     }
 
@@ -914,5 +983,26 @@ public final class ChunkRepository {
         private Entry(Chunk chunk) {
             this.chunk = chunk;
         }
+    }
+
+    private record ChangedMeshingBoundaries(
+            boolean north,
+            boolean northEast,
+            boolean east,
+            boolean southEast,
+            boolean south,
+            boolean southWest,
+            boolean west,
+            boolean northWest) {
+        private static final ChangedMeshingBoundaries NONE =
+                new ChangedMeshingBoundaries(
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false);
     }
 }

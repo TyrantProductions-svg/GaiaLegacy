@@ -151,6 +151,18 @@ class ChunkMeshManagerTest {
                 1,
                 Byte.toUnsignedInt(
                         observedInput.get().center().getBlock(1, 1, 1)));
+        assertEquals(KEY.north(), observedInput.get().north().key());
+        assertEquals(
+                KEY.north().east(), observedInput.get().northEast().key());
+        assertEquals(KEY.east(), observedInput.get().east().key());
+        assertEquals(
+                KEY.south().east(), observedInput.get().southEast().key());
+        assertEquals(KEY.south(), observedInput.get().south().key());
+        assertEquals(
+                KEY.south().west(), observedInput.get().southWest().key());
+        assertEquals(KEY.west(), observedInput.get().west().key());
+        assertEquals(
+                KEY.north().west(), observedInput.get().northWest().key());
         assertEquals(2, Byte.toUnsignedInt(repository.getBlock(1, 1, 1)));
     }
 
@@ -179,6 +191,69 @@ class ChunkMeshManagerTest {
         manager.drainCompletedCpuWork();
 
         assertEquals(ChunkState.DIRTY, repository.state(KEY));
+    }
+
+    @Test
+    void diagonalMutationRejectsPendingCpuResultBeforeUpload() {
+        ChunkRepository repository = generatedRepository();
+        ChunkKey diagonal = KEY.southEast();
+        repository.generate(
+                diagonal,
+                chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
+        markRenderable(repository, diagonal);
+        ManualExecutor executor = new ManualExecutor();
+        FakeRenderBackend backend = new FakeRenderBackend();
+        ChunkMeshManager manager =
+                new ChunkMeshManager(
+                        repository,
+                        ChunkMeshManagerTest::meshFor,
+                        executor,
+                        backend,
+                        MainThreadGuard.captureCurrentThread(),
+                        2);
+        assertEquals(1, manager.scheduleEligible());
+        long claimedRevision = repository.revision(KEY);
+
+        assertTrue(
+                repository.setBlock(
+                        diagonal.worldOriginX(),
+                        1,
+                        diagonal.worldOriginZ(),
+                        (byte) 2));
+        executor.runAll();
+
+        assertTrue(repository.revision(KEY) > claimedRevision);
+        assertEquals(1, manager.drainCompletedCpuWork());
+        assertEquals(0, manager.processMainThreadWork());
+        assertEquals(0, backend.uploadCalls);
+        assertTrue(manager.renderObjects().isEmpty());
+        assertEquals(ChunkState.DIRTY, repository.state(KEY));
+    }
+
+    @Test
+    void diagonalUnloadRejectsPendingReplacementAndPreservesInstalledObject() {
+        UploadFixture fixture = uploadedFixture();
+        ChunkRenderObject installed =
+                fixture.manager.renderObjects().iterator().next();
+        ChunkKey diagonal = KEY.southEast();
+        fixture.repository.generate(
+                diagonal,
+                chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
+        markRenderable(fixture.repository, diagonal);
+        assertEquals(1, fixture.manager.scheduleEligible());
+        long claimedRevision = fixture.repository.revision(KEY);
+
+        fixture.manager.unload(diagonal);
+        fixture.executor.runAll();
+
+        assertTrue(fixture.repository.revision(KEY) > claimedRevision);
+        assertEquals(1, fixture.manager.drainCompletedCpuWork());
+        assertEquals(0, fixture.manager.processMainThreadWork());
+        assertEquals(1, fixture.backend.uploadCalls);
+        assertEquals(
+                List.of(installed),
+                List.copyOf(fixture.manager.renderObjects()));
+        assertEquals(ChunkState.DIRTY, fixture.repository.state(KEY));
     }
 
     @Test
@@ -484,6 +559,42 @@ class ChunkMeshManagerTest {
 
         assertTrue(fixture.manager.allRenderable(Set.of()));
         assertFalse(fixture.manager.allRenderable(Set.of(KEY)));
+    }
+
+    @Test
+    void meshQueueDepthTracksAwaitingAndRetainedFailedUploadsWithoutObservationMutation() {
+        UploadFixture fixture = readyFixture(1, 1);
+
+        assertEquals(1, fixture.manager.meshQueueDepth());
+        fixture.manager.renderObjects();
+        assertEquals(1, fixture.manager.meshQueueDepth());
+
+        fixture.backend.nextUploadFailure = new IllegalStateException("upload failed");
+        assertEquals(1, fixture.manager.processMainThreadWork());
+        assertEquals(1, fixture.manager.meshQueueDepth());
+
+        fixture.manager.retry(fixture.keys.get(0));
+        assertEquals(1, fixture.manager.meshQueueDepth());
+        assertEquals(1, fixture.manager.processMainThreadWork());
+        assertEquals(0, fixture.manager.meshQueueDepth());
+    }
+
+    @Test
+    void meshQueueDepthDropsForStaleUnloadAndCloseDiscards() {
+        UploadFixture stale = readyFixture(1, 2);
+        dirtyBuild(stale, stale.keys.get(0));
+        assertEquals(2, stale.manager.meshQueueDepth());
+        assertEquals(1, stale.manager.processMainThreadWork());
+        assertEquals(0, stale.manager.meshQueueDepth());
+
+        UploadFixture unloading = readyFixture(1, 1);
+        unloading.manager.unload(unloading.keys.get(0));
+        unloading.manager.processMainThreadWork();
+        assertEquals(0, unloading.manager.meshQueueDepth());
+
+        UploadFixture closing = readyFixture(1, 1);
+        closing.manager.close();
+        assertEquals(0, closing.manager.meshQueueDepth());
     }
 
     @Test
@@ -1207,6 +1318,18 @@ class ChunkMeshManagerTest {
                 ChunkGenerationResult.Status.COMMITTED,
                 result.status());
         return repository;
+    }
+
+    private static void markRenderable(
+            ChunkRepository repository, ChunkKey key) {
+        long revision =
+                repository
+                        .claimMeshing(key)
+                        .orElseThrow()
+                        .center()
+                        .revision();
+        assertTrue(repository.markReadyForUpload(key, revision));
+        assertTrue(repository.markRenderable(key, revision));
     }
 
     private static ChunkGenerationData filledGenerationData(

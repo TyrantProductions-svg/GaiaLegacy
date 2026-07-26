@@ -127,8 +127,9 @@ class GameBootstrapStructureTest {
                         "newGaiaResourceLoader(assetManager).load();"));
         assertTrue(
                 compact.contains(
-                        "newEngine(mainThreadGuard,"
-                                + "catalog.renderAssets(),assetManager);"));
+                        "RenderVisualSettingsvisualSettings="
+                                + "RenderVisualSettings.milestoneOneDefaults();"));
+        assertTrue(compact.contains("newEngine(mainThreadGuard,catalog.renderAssets(),assetManager,visualSettings);"));
         assertTrue(
                 source.contains(
                         "GaiaWorldGenerator.createVisualRevisionCandidate()"));
@@ -228,6 +229,8 @@ class GameBootstrapStructureTest {
         assertTrue(
                 buildScript.contains(
                         "assets/overlord/shaders/world.frag"));
+        assertTrue(buildScript.contains("assets/overlord/shaders/sky.vert"));
+        assertTrue(buildScript.contains("assets/overlord/shaders/sky.frag"));
         assertTrue(
                 taskBlockDependsOn(
                         buildScript,

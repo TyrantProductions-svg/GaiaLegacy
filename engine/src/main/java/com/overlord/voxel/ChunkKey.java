@@ -36,4 +36,20 @@ public record ChunkKey(int x, int z) {
     public ChunkKey east() {
         return new ChunkKey(x + 1, z);
     }
+
+    public ChunkKey northWest() {
+        return new ChunkKey(x - 1, z - 1);
+    }
+
+    public ChunkKey northEast() {
+        return new ChunkKey(x + 1, z - 1);
+    }
+
+    public ChunkKey southWest() {
+        return new ChunkKey(x - 1, z + 1);
+    }
+
+    public ChunkKey southEast() {
+        return new ChunkKey(x + 1, z + 1);
+    }
 }

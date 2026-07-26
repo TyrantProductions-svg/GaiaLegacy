@@ -2,13 +2,18 @@
 
 ## Snapshot
 
-This document describes the Phase 5A render-pipeline architecture on
-`feat/render-pipeline-core`, based on `origin/main` at
-`647d91d5fcab15a0acdd60e7898729e35182f71e`. The current final-review
-implementation HEAD is `0ea3fa7b45162d6fb4fd48953fb61b49bb780c3f`.
-Task 9 documentation was committed at `e400f6f` after the initial owner fixes;
-the later `0ea3fa7` cleanup fix follows that documentation commit. Phase 5A
-preserves the Phase 3 independent-Chunk
+The current snapshot is the Phase 5B visual rendering upgrade on
+`feat/rendering-visual-upgrade`, based on `origin/main` at
+`438859d722efb58349ada6d2100fc84f1556780c`. Its reviewed implementation HEAD
+is `c247ec1aeb1cf683f17568e4df983cd3034768d0`; the Task 13 documentation commit
+follows that implementation without changing production, tests, or builds.
+
+The historical Phase 5A render-pipeline baseline was developed on
+`feat/render-pipeline-core` from `origin/main`
+`647d91d5fcab15a0acdd60e7898729e35182f71e`. Its final-review implementation
+HEAD was `0ea3fa7b45162d6fb4fd48953fb61b49bb780c3f`; Task 9 documentation was
+committed at `e400f6f` before the later `0ea3fa7` cleanup fix. Phase 5A
+preserved the Phase 3 independent-Chunk
 mesh lifecycle, approved Phase 4 deterministic world, Phase 6 fixed-step
 physics foundation, and Phase 7 interaction/inventory contracts while
 replacing inline shaders and direct world drawing with JAR-safe shader
@@ -280,6 +285,46 @@ The user approved the terrain, decoration, and cave direction with deferred
 rendering limitations and later confirmed that an entrance was found.
 
 ## Renderer
+
+### Phase 5B visual rendering baseline
+
+Phase 5B extends the existing renderer with shader-linear lighting, ambient
+occlusion, sky/fog, conservative frustum culling, DPI-aware surface handling,
+and frame-local observability. The normative details are in
+`docs/architecture/phase-05b-rendering-contract.md`.
+
+The current defaults are normalized sun input `(-0.45, 0.85, -0.30)`, ambient
+`0.38`, directional `0.72`, linear sky top `(0.035, 0.160, 0.470)`, linear
+horizon/fog `(0.350, 0.570, 0.780)`, and fog `64` through `160`. Atlas colors
+are decoded in the world fragment shader, lit and fogged in linear space, then
+encoded once. The sky shader encodes its linear gradient once. Framebuffer
+sRGB remains disabled to avoid a second encoding.
+
+Workers now mesh from a 3-by-3 immutable horizontal snapshot neighborhood,
+including diagonals. AO uses two side samples and a corner sample per face
+corner, with factors 1.00/0.82/0.65/0.45 and both sides taking precedence.
+Chunk dirty propagation includes diagonal halo dependencies. GPU creation,
+upload, replacement, release, rendering, resize, and cleanup remain on the
+context-owning main thread; stale work is still rejected by repository
+revision/lifecycle checks.
+
+Frustum tests use normalized planes and a conservative 0.01 epsilon. A zero
+framebuffer suppresses drawing but still completes frame cleanup and metrics;
+a positive restoration rebuilds the viewport/projection. Metrics reset each
+frame and report FPS, frame time, visible Chunks, draw calls, triangles, and
+mesh queue depth without implying a profiling baseline.
+
+Fresh Task 13 Windows automation at `c247ec1` passed `clean test build` and
+all three standalone resource checks. XML totals are Engine 69 suites / 642
+tests and Game 30 suites / 251 tests (99 suites / 893 tests total), with zero
+failures, errors, and skips. Development and installDist acceptance both
+exited `0`; metrics stabilized near 100 FPS, camera rotation changed visible
+and draw counts, resize/input/focus behavior passed, and the installed shader
+and texture resources rendered normally. Exact numeric player position and
+orientation were not captured, so no same-view FPS comparison is claimed.
+Both code-owner reviews approved the implementation contingent on this
+documentation refresh; their documentation currency finding is resolved here.
+Native macOS remains **NOT RUN**.
 
 `Window` initializes GLFW, requests an OpenGL 4.1 core forward-compatible
 context, makes it current, then creates LWJGL OpenGL capabilities. `Renderer`

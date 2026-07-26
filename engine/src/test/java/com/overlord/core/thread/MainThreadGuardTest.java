@@ -1,6 +1,7 @@
 package com.overlord.core.thread;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -11,6 +12,7 @@ import com.overlord.renderer.Mesh;
 import com.overlord.renderer.RenderAssets;
 import com.overlord.renderer.Renderer;
 import com.overlord.renderer.Texture;
+import com.overlord.renderer.texture.TextureBackend;
 import com.overlord.renderer.shader.ShaderProgram;
 import com.overlord.renderer.shader.ShaderSourceSet;
 import com.overlord.renderer.state.OpenGlRenderStateBackend;
@@ -61,7 +63,7 @@ class MainThreadGuardTest {
             ExecutionException failure =
                     assertThrows(
                             ExecutionException.class,
-                            () -> worker.submit(() -> renderer.resizeFramebuffer(800, 600)).get());
+                            () -> worker.submit(() -> renderer.updateSurface(new com.overlord.renderer.RenderSurfaceMetrics(800, 600, 800, 600, 1.0f, 1.0f))).get());
 
             assertInstanceOf(IllegalStateException.class, failure.getCause());
         } finally {
@@ -82,6 +84,35 @@ class MainThreadGuardTest {
                             () -> worker.submit(() -> new Texture(guard, image)).get());
 
             assertInstanceOf(IllegalStateException.class, failure.getCause());
+        } finally {
+            worker.shutdownNow();
+            assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void textureRejectsWorkerBindAndCleanupBeforeBackendCalls()
+            throws InterruptedException {
+        MainThreadGuard guard = MainThreadGuard.captureCurrentThread();
+        CountingTextureBackend backend = new CountingTextureBackend();
+        Texture texture = new Texture(guard, TextureImage.missing(), backend);
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        try {
+            ExecutionException bindFailure =
+                    assertThrows(
+                            ExecutionException.class,
+                            () -> worker.submit(() -> texture.bind(2)).get());
+            ExecutionException cleanupFailure =
+                    assertThrows(
+                            ExecutionException.class,
+                            () -> worker.submit(texture::cleanup).get());
+
+            assertInstanceOf(IllegalStateException.class, bindFailure.getCause());
+            assertInstanceOf(
+                    IllegalStateException.class, cleanupFailure.getCause());
+            assertEquals(1, backend.bindCalls);
+            assertEquals(0, backend.activateCalls);
+            assertEquals(0, backend.deleteCalls);
         } finally {
             worker.shutdownNow();
             assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
@@ -147,6 +178,38 @@ class MainThreadGuardTest {
         } finally {
             worker.shutdownNow();
             assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    private static final class CountingTextureBackend implements TextureBackend {
+        private int activateCalls;
+        private int bindCalls;
+        private int deleteCalls;
+
+        @Override
+        public int createTexture() {
+            return 7;
+        }
+
+        @Override
+        public void activateTextureUnit(int textureUnit) {
+            activateCalls++;
+        }
+
+        @Override
+        public void bindTexture2d(int textureId) {
+            bindCalls++;
+        }
+
+        @Override
+        public void setTextureParameter(int parameterName, int value) {}
+
+        @Override
+        public void uploadRgba8(int width, int height, java.nio.ByteBuffer pixels) {}
+
+        @Override
+        public void deleteTexture(int textureId) {
+            deleteCalls++;
         }
     }
 }

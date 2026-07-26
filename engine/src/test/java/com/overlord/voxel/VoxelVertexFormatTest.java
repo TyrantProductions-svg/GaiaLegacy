@@ -12,6 +12,7 @@ class VoxelVertexFormatTest {
         List<VoxelVertexAttribute> attributes =
                 VoxelVertexFormat.attributes();
 
+        assertEquals(10, VoxelVertexFormat.FLOATS_PER_VERTEX);
         assertEquals(
                 List.of(
                         new VoxelVertexAttribute(0, 3, 0),
@@ -26,6 +27,7 @@ class VoxelVertexFormatTest {
         assertEquals(20, attributes.get(2).byteOffset());
         assertEquals(32, attributes.get(3).byteOffset());
         assertEquals(36, attributes.get(4).byteOffset());
+        assertEquals(15, VoxelVertexFormat.DEFAULT_LIGHT_LEVEL);
         assertThrows(
                 UnsupportedOperationException.class,
                 () -> attributes.add(new VoxelVertexAttribute(5, 1, 10)));

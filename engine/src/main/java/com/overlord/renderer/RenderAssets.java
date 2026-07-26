@@ -10,17 +10,39 @@ public record RenderAssets(
         TextureImage blockAtlas,
         MaterialDefinition worldMaterial,
         ResourceLocation worldVertexShader,
-        ResourceLocation worldFragmentShader) {
+        ResourceLocation worldFragmentShader,
+        ResourceLocation skyVertexShader,
+        ResourceLocation skyFragmentShader) {
     public static final ResourceLocation DEFAULT_WORLD_VERTEX_SHADER =
             ResourceLocation.parse("overlord:shaders/world.vert");
     public static final ResourceLocation DEFAULT_WORLD_FRAGMENT_SHADER =
             ResourceLocation.parse("overlord:shaders/world.frag");
+    public static final ResourceLocation DEFAULT_SKY_VERTEX_SHADER =
+            ResourceLocation.parse("overlord:shaders/sky.vert");
+    public static final ResourceLocation DEFAULT_SKY_FRAGMENT_SHADER =
+            ResourceLocation.parse("overlord:shaders/sky.frag");
 
     public RenderAssets {
         Objects.requireNonNull(blockAtlas, "blockAtlas");
         Objects.requireNonNull(worldMaterial, "worldMaterial");
         Objects.requireNonNull(worldVertexShader, "worldVertexShader");
         Objects.requireNonNull(worldFragmentShader, "worldFragmentShader");
+        Objects.requireNonNull(skyVertexShader, "skyVertexShader");
+        Objects.requireNonNull(skyFragmentShader, "skyFragmentShader");
+    }
+
+    public RenderAssets(
+            TextureImage blockAtlas,
+            MaterialDefinition worldMaterial,
+            ResourceLocation worldVertexShader,
+            ResourceLocation worldFragmentShader) {
+        this(
+                blockAtlas,
+                worldMaterial,
+                worldVertexShader,
+                worldFragmentShader,
+                DEFAULT_SKY_VERTEX_SHADER,
+                DEFAULT_SKY_FRAGMENT_SHADER);
     }
 
     public static RenderAssets missing() {
@@ -34,6 +56,8 @@ public record RenderAssets(
                         0.5f,
                         missing),
                 DEFAULT_WORLD_VERTEX_SHADER,
-                DEFAULT_WORLD_FRAGMENT_SHADER);
+                DEFAULT_WORLD_FRAGMENT_SHADER,
+                DEFAULT_SKY_VERTEX_SHADER,
+                DEFAULT_SKY_FRAGMENT_SHADER);
     }
 }

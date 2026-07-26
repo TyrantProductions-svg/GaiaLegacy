@@ -84,7 +84,9 @@ tasks.register('verifyInstalledShaderResources') {
         def engineJar = engineJars[0]
         def required = [
             'assets/overlord/shaders/world.vert',
-            'assets/overlord/shaders/world.frag'
+            'assets/overlord/shaders/world.frag',
+            'assets/overlord/shaders/sky.vert',
+            'assets/overlord/shaders/sky.frag'
         ]
         new java.util.zip.ZipFile(engineJar).withCloseable { zip ->
             required.each { path ->

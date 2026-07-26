@@ -19,6 +19,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import org.joml.Matrix4f;
+import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
 class ShaderProgramTest {
@@ -152,17 +153,21 @@ class ShaderProgramTest {
         FakeShaderBackend backend = new FakeShaderBackend();
         backend.uniformLocation("projection", 17);
         backend.uniformLocation("textureAtlas", 23);
+        backend.uniformLocation("fogStart", 29);
+        backend.uniformLocation("sunDirection", 31);
         ShaderProgram program =
                 new ShaderProgram(
                         MainThreadGuard.captureCurrentThread(),
                         sources(),
-                        List.of("projection", "textureAtlas"),
+                        List.of("projection", "textureAtlas", "fogStart", "sunDirection"),
                         backend);
 
         Matrix4f matrix = new Matrix4f().translate(2.0f, 3.0f, 4.0f);
         program.use();
         program.setMatrix4("projection", matrix);
         program.setInt("textureAtlas", 4);
+        program.setFloat("fogStart", 64.0f);
+        program.setVector3("sunDirection", new Vector3f(-0.45f, 0.85f, -0.30f));
         program.cleanup();
         program.cleanup();
 
@@ -175,7 +180,49 @@ class ShaderProgramTest {
         assertArrayEquals(matrix.get(new float[16]), backend.matrixValues().get(0));
         assertEquals(List.of(23), backend.intLocations());
         assertEquals(List.of(4), backend.intValues());
+        assertEquals(List.of(29), backend.floatLocations());
+        assertEquals(List.of(64.0f), backend.floatValues());
+        assertEquals(List.of(31), backend.vector3Locations());
+        assertEquals(List.of(new Vector3f(-0.45f, 0.85f, -0.30f)), backend.vector3Values());
         assertEquals(List.of(201), backend.deletedPrograms());
+    }
+
+    @Test
+    void rejectsNonFiniteScalarAndVectorUniformsBeforeBackendCalls() {
+        FakeShaderBackend backend = new FakeShaderBackend();
+        ShaderProgram program =
+                new ShaderProgram(
+                        MainThreadGuard.captureCurrentThread(),
+                        sources(),
+                        List.of("fogStart", "sunDirection"),
+                        backend);
+
+        assertThrows(IllegalArgumentException.class, () -> program.setFloat("fogStart", Float.NaN));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> program.setVector3("sunDirection", new Vector3f(0.0f, Float.POSITIVE_INFINITY, 0.0f)));
+        assertEquals(List.of(), backend.floatLocations());
+        assertEquals(List.of(), backend.vector3Locations());
+    }
+
+    @Test
+    void rejectsWorkerThreadUniformUploadsBeforeBackendCalls() throws InterruptedException {
+        MainThreadGuard guard = MainThreadGuard.captureCurrentThread();
+        FakeShaderBackend backend = new FakeShaderBackend();
+        ShaderProgram program = new ShaderProgram(guard, sources(), List.of("fogStart"), backend);
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        try {
+            ExecutionException failure =
+                    assertThrows(
+                            ExecutionException.class,
+                            () -> worker.submit(() -> program.setFloat("fogStart", 64.0f)).get());
+
+            assertInstanceOf(IllegalStateException.class, failure.getCause());
+            assertEquals(List.of(), backend.floatLocations());
+        } finally {
+            worker.shutdownNow();
+            assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
+        }
     }
 
     @Test
@@ -247,6 +294,10 @@ class ShaderProgramTest {
         private final List<float[]> matrixValues = new ArrayList<>();
         private final List<Integer> intLocations = new ArrayList<>();
         private final List<Integer> intValues = new ArrayList<>();
+        private final List<Integer> floatLocations = new ArrayList<>();
+        private final List<Float> floatValues = new ArrayList<>();
+        private final List<Integer> vector3Locations = new ArrayList<>();
+        private final List<Vector3f> vector3Values = new ArrayList<>();
         private final Map<Integer, String> compileFailures = new HashMap<>();
         private final Map<Integer, RuntimeException> shaderDeleteFailures = new HashMap<>();
         private final Map<String, Integer> uniformLocations = new HashMap<>();
@@ -322,6 +373,22 @@ class ShaderProgramTest {
 
         List<Integer> intValues() {
             return intValues;
+        }
+
+        List<Integer> floatLocations() {
+            return floatLocations;
+        }
+
+        List<Float> floatValues() {
+            return floatValues;
+        }
+
+        List<Integer> vector3Locations() {
+            return vector3Locations;
+        }
+
+        List<Vector3f> vector3Values() {
+            return vector3Values;
         }
 
         int uniformLocationCalls(String name) {
@@ -422,6 +489,20 @@ class ShaderProgramTest {
             calls++;
             intLocations.add(location);
             intValues.add(value);
+        }
+
+        @Override
+        public void uploadFloat(int location, float value) {
+            calls++;
+            floatLocations.add(location);
+            floatValues.add(value);
+        }
+
+        @Override
+        public void uploadVector3(int location, float x, float y, float z) {
+            calls++;
+            vector3Locations.add(location);
+            vector3Values.add(new Vector3f(x, y, z));
         }
 
         @Override

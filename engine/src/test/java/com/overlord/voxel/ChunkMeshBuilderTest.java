@@ -58,8 +58,8 @@ class ChunkMeshBuilderTest {
             assertFaceUBounds(
                     vertices,
                     face * 60,
-                    face * 16.0f / 96.0f,
-                    (face + 1) * 16.0f / 96.0f);
+                    (face * 16.0f + 0.5f) / 96.0f,
+                    (face * 16.0f + 15.5f) / 96.0f);
             assertFaceVertexData(
                     vertices,
                     face * 60,
@@ -114,8 +114,7 @@ class ChunkMeshBuilderTest {
 
         ChunkMeshData data =
                 meshBuilder.build(
-                        new ChunkMeshInput(
-                                center, null, null, null, east));
+                        meshInput(center, null, east, null, null));
 
         assertEquals(360, data.vertices().length);
     }
@@ -137,8 +136,7 @@ class ChunkMeshBuilderTest {
 
         ChunkMeshData data =
                 builder().build(
-                        new ChunkMeshInput(
-                                center, null, null, null, east));
+                        meshInput(center, null, east, null, null));
 
         assertEquals(300, data.vertices().length);
     }
@@ -160,8 +158,7 @@ class ChunkMeshBuilderTest {
 
         ChunkMeshData data =
                 builder().build(
-                        new ChunkMeshInput(
-                                center, null, null, west, null));
+                        meshInput(center, null, null, null, west));
 
         assertEquals(300, data.vertices().length);
     }
@@ -183,8 +180,7 @@ class ChunkMeshBuilderTest {
 
         ChunkMeshData data =
                 builder().build(
-                        new ChunkMeshInput(
-                                center, north, null, null, null));
+                        meshInput(center, north, null, null, null));
 
         assertEquals(300, data.vertices().length);
     }
@@ -206,8 +202,7 @@ class ChunkMeshBuilderTest {
 
         ChunkMeshData data =
                 builder().build(
-                        new ChunkMeshInput(
-                                center, null, south, null, null));
+                        meshInput(center, null, null, south, null));
 
         assertEquals(300, data.vertices().length);
     }
@@ -225,8 +220,7 @@ class ChunkMeshBuilderTest {
 
         ChunkMeshData data =
                 builder().build(
-                        new ChunkMeshInput(
-                                center, null, null, null, null));
+                        meshInput(center, null, null, null, null));
 
         assertEquals(360, data.vertices().length);
     }
@@ -239,8 +233,7 @@ class ChunkMeshBuilderTest {
 
         ChunkMeshData data =
                 builder().build(
-                        new ChunkMeshInput(
-                                center, null, null, null, null));
+                        meshInput(center, null, null, null, null));
 
         assertTrue(data.isEmpty());
         assertTrue(data.localBounds().isEmpty());
@@ -279,8 +272,7 @@ class ChunkMeshBuilderTest {
 
         ChunkMeshData data =
                 builder().build(
-                        new ChunkMeshInput(
-                                center, null, null, null, null));
+                        meshInput(center, null, null, null, null));
 
         assertEquals(key, data.key());
         assertEquals(42, data.revision());
@@ -291,7 +283,8 @@ class ChunkMeshBuilderTest {
         assertThrows(
                 NullPointerException.class,
                 () -> new ChunkMeshInput(
-                        null, null, null, null, null));
+                        null, null, null, null, null, null, null,
+                        null, null));
     }
 
     @Test
@@ -306,7 +299,8 @@ class ChunkMeshBuilderTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> new ChunkMeshInput(
-                        center, null, null, null, wrongEast));
+                        center, null, null, wrongEast, null, null,
+                        null, null, null));
     }
 
     @Test
@@ -321,7 +315,8 @@ class ChunkMeshBuilderTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> new ChunkMeshInput(
-                        center, null, null, null, east));
+                        center, null, null, east, null, null, null,
+                        null, null));
     }
 
     private static ChunkMeshBuilder builder() {
@@ -333,8 +328,117 @@ class ChunkMeshBuilderTest {
         ChunkSnapshot center =
                 snapshotWithBlock(
                         new ChunkKey(0, 0), 1, x, y, z, block);
+        return meshInput(center, null, null, null, null);
+    }
+
+    @Test
+    void preservesLegacyCubeGeometryAndWritesAoOnlyAtOffsetNine() {
+        ChunkKey centerKey = new ChunkKey(-4, 6);
+        ChunkSnapshot center =
+                snapshotWithBlock(
+                        centerKey,
+                        11,
+                        GameConfig.Chunk.SIZE - 1,
+                        1,
+                        0,
+                        (byte) 1);
+        ChunkSnapshot northEast =
+                snapshotWithBlock(
+                        centerKey.northEast(),
+                        3,
+                        0,
+                        2,
+                        GameConfig.Chunk.SIZE - 1,
+                        (byte) 1);
+
+        ChunkMeshData data =
+                builder()
+                        .build(
+                                new ChunkMeshInput(
+                                        center,
+                                        null,
+                                        northEast,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null));
+        float[] vertices = data.vertices();
+
+        assertEquals(36, data.vertexCount());
+        assertEquals(
+                36 * VoxelVertexFormat.FLOATS_PER_VERTEX,
+                vertices.length);
+        float[] expectedPositions = {
+            15, 1, 0, 16, 1, 0, 16, 2, 0,
+            16, 2, 0, 15, 2, 0, 15, 1, 0,
+            15, 1, 1, 16, 1, 1, 16, 2, 1,
+            16, 2, 1, 15, 2, 1, 15, 1, 1,
+            15, 2, 1, 16, 2, 1, 16, 2, 0,
+            16, 2, 0, 15, 2, 0, 15, 2, 1,
+            15, 1, 0, 16, 1, 0, 16, 1, 1,
+            16, 1, 1, 15, 1, 1, 15, 1, 0,
+            15, 1, 0, 15, 1, 1, 15, 2, 1,
+            15, 2, 1, 15, 2, 0, 15, 1, 0,
+            16, 1, 1, 16, 1, 0, 16, 2, 0,
+            16, 2, 0, 16, 2, 1, 16, 1, 1
+        };
+        for (int face = 0; face < FACE_ORDER.length; face++) {
+            float uMin = (face * 16.0f + 0.5f) / 96.0f;
+            float uMax = (face * 16.0f + 15.5f) / 96.0f;
+            float v0 = face == 2 ? 0.5f / 16.0f : 15.5f / 16.0f;
+            float v1 = face == 2 ? 15.5f / 16.0f : 0.5f / 16.0f;
+            float[] expectedUv = {
+                uMin, v0, uMax, v0, uMax, v1,
+                uMax, v1, uMin, v1, uMin, v0
+            };
+            for (int vertex = 0; vertex < 6; vertex++) {
+                int offset =
+                        (face * 6 + vertex)
+                                * VoxelVertexFormat.FLOATS_PER_VERTEX;
+                int positionOffset = (face * 6 + vertex) * 3;
+                assertFloatBits(
+                        expectedPositions[positionOffset],
+                        vertices[offset]);
+                assertFloatBits(
+                        expectedPositions[positionOffset + 1],
+                        vertices[offset + 1]);
+                assertFloatBits(
+                        expectedPositions[positionOffset + 2],
+                        vertices[offset + 2]);
+                assertFloatBits(
+                        expectedUv[vertex * 2], vertices[offset + 3]);
+                assertFloatBits(
+                        expectedUv[vertex * 2 + 1],
+                        vertices[offset + 4]);
+                assertFloatBits(
+                        FACE_NORMALS[face][0], vertices[offset + 5]);
+                assertFloatBits(
+                        FACE_NORMALS[face][1], vertices[offset + 6]);
+                assertFloatBits(
+                        FACE_NORMALS[face][2], vertices[offset + 7]);
+                assertFloatBits(FACE_LIGHTS[face], vertices[offset + 8]);
+
+                float expectedAo =
+                        (face == 0 || face == 2 || face == 5)
+                                        && (vertex == 2 || vertex == 3)
+                                ? 0.82f
+                                : 1.0f;
+                assertFloatBits(expectedAo, vertices[offset + 9]);
+            }
+        }
+    }
+
+    private static ChunkMeshInput meshInput(
+            ChunkSnapshot center,
+            ChunkSnapshot north,
+            ChunkSnapshot east,
+            ChunkSnapshot south,
+            ChunkSnapshot west) {
         return new ChunkMeshInput(
-                center, null, null, null, null);
+                center, north, null, east, null, south, null, west,
+                null);
     }
 
     private static ChunkSnapshot snapshotWithBlock(
@@ -437,5 +541,12 @@ class ChunkMeshBuilderTest {
                     EPSILON);
             assertEquals(1.0f, vertices[offset + 9], EPSILON);
         }
+    }
+
+    private static void assertFloatBits(
+            float expected, float actual) {
+        assertEquals(
+                Float.floatToIntBits(expected),
+                Float.floatToIntBits(actual));
     }
 }

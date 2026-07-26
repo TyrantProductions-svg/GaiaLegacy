@@ -1,11 +1,15 @@
 package com.overlord.renderer;
 
+import static org.lwjgl.opengl.GL11C.glDisable;
+import static org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_SRGB;
 import static org.lwjgl.opengl.GL30C.glClearColor;
 import static org.lwjgl.opengl.GL30C.glViewport;
 
 import com.overlord.assets.AssetManager;
 import com.overlord.config.GameConfig;
 import com.overlord.core.thread.MainThreadGuard;
+import com.overlord.renderer.frustum.Frustum;
+import com.overlord.renderer.metrics.RenderMetrics;
 import com.overlord.renderer.material.Material;
 import com.overlord.renderer.pass.DebugRenderPass;
 import com.overlord.renderer.pass.RenderContext;
@@ -17,9 +21,9 @@ import com.overlord.renderer.shader.ShaderProgram;
 import com.overlord.renderer.shader.ShaderResourceLoader;
 import com.overlord.renderer.shader.ShaderSourceSet;
 import com.overlord.renderer.state.OpenGlRenderStateBackend;
+import com.overlord.renderer.visual.RenderVisualSettings;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkMeshData;
-import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import org.joml.Matrix4f;
@@ -28,14 +32,20 @@ public final class Renderer implements ChunkRenderBackend {
     private final MainThreadGuard mainThreadGuard;
     private final RenderAssets renderAssets;
     private final AssetManager assetManager;
+    private final RenderVisualSettings visualSettings;
+    private final RenderMetricsCollector metricsCollector = new RenderMetricsCollector();
 
-    private ShaderProgram shaderProgram;
+    private ShaderProgram worldShaderProgram;
+    private ShaderProgram skyShaderProgram;
     private Camera camera;
     private Texture textureAtlas;
     private Material worldMaterial;
     private RenderQueue renderQueue;
     private RenderPipeline renderPipeline;
     private Matrix4f projectionMatrix;
+    private FullscreenTriangle fullscreenTriangle;
+    private RenderSurfaceMetrics surfaceMetrics;
+    private RenderSurfaceController surfaceController;
 
     public Renderer(
             MainThreadGuard mainThreadGuard,
@@ -43,13 +53,26 @@ public final class Renderer implements ChunkRenderBackend {
         this(
                 mainThreadGuard,
                 renderAssets,
-                new AssetManager(Renderer.class.getClassLoader()));
+                new AssetManager(Renderer.class.getClassLoader()),
+                RenderVisualSettings.milestoneOneDefaults());
     }
 
     public Renderer(
             MainThreadGuard mainThreadGuard,
             RenderAssets renderAssets,
             AssetManager assetManager) {
+        this(
+                mainThreadGuard,
+                renderAssets,
+                assetManager,
+                RenderVisualSettings.milestoneOneDefaults());
+    }
+
+    public Renderer(
+            MainThreadGuard mainThreadGuard,
+            RenderAssets renderAssets,
+            AssetManager assetManager,
+            RenderVisualSettings visualSettings) {
         this.mainThreadGuard =
                 Objects.requireNonNull(
                         mainThreadGuard, "mainThreadGuard");
@@ -57,30 +80,51 @@ public final class Renderer implements ChunkRenderBackend {
                 Objects.requireNonNull(renderAssets, "renderAssets");
         this.assetManager =
                 Objects.requireNonNull(assetManager, "assetManager");
+        this.visualSettings =
+                Objects.requireNonNull(visualSettings, "visualSettings");
     }
 
-    public void init(Camera camera, int width, int height) {
+    public void init(Camera camera, RenderSurfaceMetrics surfaceMetrics) {
         mainThreadGuard.assertMainThread("renderer initialization");
         ensureNotInitialized();
         Camera initializedCamera = Objects.requireNonNull(camera, "camera");
-        ShaderProgram initializedProgram = null;
+        ShaderProgram initializedWorldProgram = null;
+        ShaderProgram initializedSkyProgram = null;
         Texture initializedTexture = null;
+        FullscreenTriangle initializedTriangle = null;
         try {
-            ShaderSourceSet shaderSources =
+            ShaderSourceSet worldShaderSources =
                     new ShaderResourceLoader(assetManager)
                             .load(
                                     "world",
                                     renderAssets.worldVertexShader(),
                                     renderAssets.worldFragmentShader());
-            initializedProgram =
+            initializedWorldProgram =
                     new ShaderProgram(
                             mainThreadGuard,
-                            shaderSources,
+                            worldShaderSources,
                             List.of(
                                     "projection",
                                     "view",
                                     "model",
-                                    "textureAtlas"));
+                                    "textureAtlas",
+                                    "sunDirection",
+                                    "ambientStrength",
+                                    "directionalStrength",
+                                    "fogColor",
+                                    "fogStart",
+                                    "fogEnd"));
+            ShaderSourceSet skyShaderSources =
+                    new ShaderResourceLoader(assetManager)
+                            .load(
+                                    "sky",
+                                    renderAssets.skyVertexShader(),
+                                    renderAssets.skyFragmentShader());
+            initializedSkyProgram =
+                    new ShaderProgram(
+                            mainThreadGuard,
+                            skyShaderSources,
+                            List.of("skyHorizon", "skyTop"));
             initializedTexture =
                     new Texture(
                             mainThreadGuard,
@@ -88,11 +132,17 @@ public final class Renderer implements ChunkRenderBackend {
             Material initializedWorldMaterial =
                     new Material(
                             renderAssets.worldMaterial(),
-                            initializedProgram,
+                            initializedWorldProgram,
                             initializedTexture);
+            initializedTriangle =
+                    new FullscreenTriangle(mainThreadGuard);
             OpenGlRenderStateBackend stateBackend =
                     new OpenGlRenderStateBackend(mainThreadGuard);
-            SkyRenderPass skyPass = new SkyRenderPass(stateBackend);
+            SkyRenderPass skyPass =
+                    new SkyRenderPass(
+                            stateBackend,
+                            initializedSkyProgram,
+                            initializedTriangle::draw);
             WorldRenderPass worldPass =
                     new WorldRenderPass(stateBackend);
             DebugRenderPass debugPass = new DebugRenderPass();
@@ -100,26 +150,33 @@ public final class Renderer implements ChunkRenderBackend {
                     new RenderPipeline(
                             List.of(skyPass, worldPass, debugPass));
             RenderQueue initializedQueue = new RenderQueue();
-            Matrix4f initializedProjection =
-                    createProjection(width, height);
+            this.surfaceMetrics = Objects.requireNonNull(surfaceMetrics, "surfaceMetrics");
+            this.surfaceController = new RenderSurfaceController(surfaceMetrics);
+            Matrix4f initializedProjection = createProjection(
+                    surfaceMetrics.framebufferWidth(), surfaceMetrics.framebufferHeight());
 
+            glDisable(GL_FRAMEBUFFER_SRGB);
             glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
-            if (width > 0 && height > 0) {
-                glViewport(0, 0, width, height);
+            if (surfaceMetrics.framebufferWidth() > 0 && surfaceMetrics.framebufferHeight() > 0) {
+                glViewport(0, 0, surfaceMetrics.framebufferWidth(), surfaceMetrics.framebufferHeight());
             }
 
             this.camera = initializedCamera;
-            shaderProgram = initializedProgram;
+            worldShaderProgram = initializedWorldProgram;
+            skyShaderProgram = initializedSkyProgram;
             textureAtlas = initializedTexture;
             worldMaterial = initializedWorldMaterial;
             renderQueue = initializedQueue;
             renderPipeline = initializedPipeline;
             projectionMatrix = initializedProjection;
+            fullscreenTriangle = initializedTriangle;
         } catch (RuntimeException | Error failure) {
             clearInitializedFields();
             cleanupAfterInitializationFailure(
+                    initializedTriangle,
                     initializedTexture,
-                    initializedProgram,
+                    initializedSkyProgram,
+                    initializedWorldProgram,
                     failure);
             throw failure;
         }
@@ -170,73 +227,105 @@ public final class Renderer implements ChunkRenderBackend {
         Objects.requireNonNull(object, "object").mesh().cleanup();
     }
 
-    public void resizeFramebuffer(int width, int height) {
-        mainThreadGuard.assertMainThread("framebuffer resize");
-        if (width <= 0 || height <= 0) {
-            return;
+    public void updateSurface(RenderSurfaceMetrics surfaceMetrics) {
+        mainThreadGuard.assertMainThread("render surface update");
+        RenderSurfaceMetrics next = Objects.requireNonNull(surfaceMetrics, "surfaceMetrics");
+        this.surfaceMetrics = next;
+        boolean rebuild = surfaceController.update(next);
+        if (next.framebufferWidth() <= 0 || next.framebufferHeight() <= 0) return;
+        if (rebuild) {
+            glViewport(0, 0, next.framebufferWidth(), next.framebufferHeight());
+            rebuildProjection(next.framebufferWidth(), next.framebufferHeight());
         }
-        glViewport(0, 0, width, height);
-        rebuildProjection(width, height);
     }
 
-    public void renderFrame(Collection<ChunkRenderObject> chunks) {
+    public RenderMetrics metrics() {
+        return metricsCollector;
+    }
+
+    public void renderFrame(RenderFrameInput frameInput) {
         mainThreadGuard.assertMainThread("frame rendering");
+        Objects.requireNonNull(frameInput, "frameInput");
         RenderQueue frameQueue =
                 requireInitialized(renderQueue, "render queue");
         frameQueue.clear();
+        metricsCollector.beginFrame(
+                frameInput.frameDeltaSeconds(), frameInput.meshQueueDepth());
         try {
-            Objects.requireNonNull(chunks, "chunks");
+            if (!surfaceController.drawable()) return;
             Material frameMaterial =
                     requireInitialized(worldMaterial, "world material");
-            for (ChunkRenderObject chunk : chunks) {
-                frameQueue.submit(chunk, frameMaterial);
+            Matrix4f frameProjection =
+                    requireInitialized(
+                            projectionMatrix,
+                            "projection matrix");
+            Matrix4f frameView =
+                    requireInitialized(camera, "camera")
+                            .getViewMatrix();
+            Frustum currentFrustum =
+                    Frustum.from(frameProjection, frameView);
+            int visibleChunks = 0;
+            for (ChunkRenderObject chunk : frameInput.chunks()) {
+                if (currentFrustum.intersects(chunk.worldBounds())) {
+                    frameQueue.submit(chunk, frameMaterial);
+                    visibleChunks++;
+                }
             }
+            metricsCollector.setVisibleChunks(visibleChunks);
             RenderContext context =
                     new RenderContext(
-                            requireInitialized(
-                                    projectionMatrix,
-                                    "projection matrix"),
-                            requireInitialized(camera, "camera")
-                                    .getViewMatrix());
+                            frameProjection,
+                            frameView,
+                            visualSettings,
+                            metricsCollector);
             requireInitialized(renderPipeline, "render pipeline")
                     .render(context, frameQueue);
         } finally {
             frameQueue.clear();
+            metricsCollector.finishFrame();
         }
     }
 
     public void cleanup() {
         mainThreadGuard.assertMainThread("renderer cleanup");
+        FullscreenTriangle triangleToClean = fullscreenTriangle;
         Texture textureToClean = textureAtlas;
-        ShaderProgram programToClean = shaderProgram;
+        ShaderProgram skyProgramToClean = skyShaderProgram;
+        ShaderProgram worldProgramToClean = worldShaderProgram;
         clearInitializedFields();
 
         Throwable failure = null;
+        failure = runCleanup(triangleToClean, failure);
         failure = runCleanup(textureToClean, failure);
-        failure = runCleanup(programToClean, failure);
+        failure = runCleanup(skyProgramToClean, failure);
+        failure = runCleanup(worldProgramToClean, failure);
         if (failure != null) {
             rethrow(failure);
         }
     }
 
     private void clearInitializedFields() {
-        shaderProgram = null;
+        worldShaderProgram = null;
+        skyShaderProgram = null;
         textureAtlas = null;
         worldMaterial = null;
         renderQueue = null;
         renderPipeline = null;
         camera = null;
         projectionMatrix = null;
+        fullscreenTriangle = null;
     }
 
     private void ensureNotInitialized() {
-        if (shaderProgram != null
+        if (worldShaderProgram != null
+                || skyShaderProgram != null
                 || textureAtlas != null
                 || worldMaterial != null
                 || renderQueue != null
                 || renderPipeline != null
                 || camera != null
-                || projectionMatrix != null) {
+                || projectionMatrix != null
+                || fullscreenTriangle != null) {
             throw new IllegalStateException(
                     "Renderer is already initialized");
         }
@@ -260,11 +349,30 @@ public final class Renderer implements ChunkRenderBackend {
     }
 
     private static void cleanupAfterInitializationFailure(
+            FullscreenTriangle triangle,
             Texture texture,
-            ShaderProgram program,
+            ShaderProgram skyProgram,
+            ShaderProgram worldProgram,
             Throwable primaryFailure) {
+        suppressCleanup(triangle, primaryFailure);
         suppressCleanup(texture, primaryFailure);
-        suppressCleanup(program, primaryFailure);
+        suppressCleanup(skyProgram, primaryFailure);
+        suppressCleanup(worldProgram, primaryFailure);
+    }
+
+    private static void suppressCleanup(
+            FullscreenTriangle triangle,
+            Throwable primaryFailure) {
+        if (triangle == null) {
+            return;
+        }
+        try {
+            triangle.cleanup();
+        } catch (RuntimeException | Error cleanupFailure) {
+            if (cleanupFailure != primaryFailure) {
+                primaryFailure.addSuppressed(cleanupFailure);
+            }
+        }
     }
 
     private static void suppressCleanup(
@@ -295,6 +403,20 @@ public final class Renderer implements ChunkRenderBackend {
                 primaryFailure.addSuppressed(cleanupFailure);
             }
         }
+    }
+
+    private static Throwable runCleanup(
+            FullscreenTriangle triangle,
+            Throwable firstFailure) {
+        if (triangle == null) {
+            return firstFailure;
+        }
+        try {
+            triangle.cleanup();
+        } catch (RuntimeException | Error cleanupFailure) {
+            return appendCleanupFailure(firstFailure, cleanupFailure);
+        }
+        return firstFailure;
     }
 
     private static Throwable runCleanup(

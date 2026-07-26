@@ -157,6 +157,37 @@ class InteractionArchitectureTest {
     }
 
     @Test
+    void repositoryIsOnlyProductionOwnerOfDirtyTopology() throws IOException {
+        Path repositorySource =
+                ENGINE_MAIN.resolve(
+                        "com/overlord/voxel/ChunkRepository.java");
+        Path trackerSource =
+                ENGINE_MAIN.resolve(
+                        "com/overlord/voxel/ChunkDirtyTracker.java");
+        List<Path> offenders;
+        try (Stream<Path> sources = javaSources(ENGINE_MAIN, GAME_MAIN)) {
+            offenders =
+                    sources.filter(
+                                    source ->
+                                            !source.equals(repositorySource)
+                                                    && !source.equals(trackerSource))
+                            .filter(
+                                    source -> {
+                                        String text = read(source);
+                                        return text.contains("ChunkDirtyTracker")
+                                                || text.contains("affectedByBlock(")
+                                                || text.contains("meshingNeighbors(");
+                                    })
+                            .toList();
+        }
+
+        assertTrue(
+                offenders.isEmpty(),
+                "Dirty topology authority escaped ChunkRepository: "
+                        + offenders);
+    }
+
+    @Test
     void blockWorldAccessExposesOutcomeCompareAndSetWithoutBooleanSetBlock()
             throws Exception {
         Method compareAndSet =

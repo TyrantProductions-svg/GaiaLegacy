@@ -939,10 +939,10 @@ class GaiaResourceLoaderTest {
                 () -> assertSame(catalog.blockAtlas().requireRegion(TEST_MISSING), region),
                 () -> assertEquals(catalog.blockAtlas().width(), region.atlasWidth()),
                 () -> assertEquals(catalog.blockAtlas().height(), region.atlasHeight()),
-                () -> assertEquals(0.0f, region.uMin()),
-                () -> assertEquals(1.0f, region.uMax()),
-                () -> assertEquals(0.0f, region.vMin()),
-                () -> assertEquals(1.0f, region.vMax()),
+                () -> assertEquals(0.25f, region.uMin()),
+                () -> assertEquals(0.75f, region.uMax()),
+                () -> assertEquals(0.25f, region.vMin()),
+                () -> assertEquals(0.75f, region.vMax()),
                 () -> assertChecker(catalog.renderAssets().blockAtlas()));
     }
 
@@ -974,8 +974,8 @@ class GaiaResourceLoaderTest {
                 () -> assertEquals(image.width(), region.atlasWidth()),
                 () -> assertEquals(image.height(), region.atlasHeight()),
                 () -> assertEquals(TEST_MISSING, region.id()),
-                () -> assertEquals(0.0f, region.uMin()),
-                () -> assertEquals(1.0f, region.uMax()),
+                () -> assertEquals(0.25f, region.uMin()),
+                () -> assertEquals(0.75f, region.uMax()),
                 () ->
                         assertEquals(
                                 catalog.blockAtlas().id(),

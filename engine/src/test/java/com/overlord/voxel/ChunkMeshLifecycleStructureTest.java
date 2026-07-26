@@ -3,18 +3,20 @@ package com.overlord.voxel;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.renderer.ChunkRenderObject;
 import com.overlord.renderer.Mesh;
 import com.overlord.renderer.Renderer;
+import com.overlord.renderer.RenderFrameInput;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.List;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 class ChunkMeshLifecycleStructureTest {
@@ -59,7 +61,7 @@ class ChunkMeshLifecycleStructureTest {
                         "release", ChunkRenderObject.class);
         Method renderFrame =
                 Renderer.class.getMethod(
-                        "renderFrame", Collection.class);
+                        "renderFrame", RenderFrameInput.class);
         assertEquals(ChunkRenderObject.class, upload.getReturnType());
         assertEquals(void.class, release.getReturnType());
         assertEquals(void.class, renderFrame.getReturnType());
@@ -104,6 +106,49 @@ class ChunkMeshLifecycleStructureTest {
                 new Class<?>[] {ChunkMeshInput.class},
                 build.getParameterTypes());
         assertEquals(ChunkMeshData.class, build.getReturnType());
+    }
+
+    @Test
+    void workerMeshingUsesOnlySnapshotsAndRepositoryOwnsDiagonalInvalidation()
+            throws IOException {
+        String builder = readMainSource("com/overlord/voxel/ChunkMeshBuilder.java");
+        String manager = readMainSource("com/overlord/voxel/ChunkMeshManager.java");
+        String repository = readMainSource("com/overlord/voxel/ChunkRepository.java");
+        String workerMeshing =
+                manager.substring(
+                        manager.indexOf("private void buildMesh("),
+                        manager.indexOf("private void drainUnloads("));
+
+        assertNoCodeMatches(
+                builder,
+                List.of("\\bWorld\\b", "\\bRenderer\\b", "org\\.lwjgl", "\\bgl[A-Z]\\w*"));
+        assertNoCodeMatches(
+                workerMeshing,
+                List.of("\\bWorld\\b", "\\bRenderer\\b", "org\\.lwjgl", "\\bgl[A-Z]\\w*"));
+        assertNoCodeMatches(
+                manager,
+                List.of("dirtyChangedLoadedNeighbors", "ChangedMeshingBoundaries", "northEastChanged"));
+        assertTrue(repository.contains("private void dirtyChangedLoadedNeighbors("));
+        for (String diagonal : List.of("northEast", "southEast", "southWest", "northWest")) {
+            assertTrue(repository.contains("key." + diagonal + "()"));
+        }
+
+        assertNoCodeMatches("// World Renderer org.lwjgl glDraw\n\"glDispatchCompute\"", List.of("\\bWorld\\b", "\\bRenderer\\b", "org\\.lwjgl", "\\bgl[A-Z]\\w*"));
+        assertTrue(codeMatches("new Renderer()", "\\bRenderer\\b"));
+    }
+
+    @Test
+    void chunkMeshInputCarriesCenterAndAllEightSnapshotNeighborsWithoutMutableChunks() {
+        assertTrue(ChunkMeshInput.class.isRecord());
+        assertEquals(
+                List.of(
+                        "center", "north", "northEast", "east", "southEast", "south", "southWest", "west", "northWest"),
+                Arrays.stream(ChunkMeshInput.class.getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertTrue(
+                Arrays.stream(ChunkMeshInput.class.getRecordComponents())
+                        .allMatch(component -> component.getType().equals(ChunkSnapshot.class)));
     }
 
     @Test
@@ -166,5 +211,19 @@ class ChunkMeshLifecycleStructureTest {
                                 Modifier.isPublic(
                                         method.getModifiers()))
                 .anyMatch(method -> method.getName().equals(name));
+    }
+
+    private static void assertNoCodeMatches(String source, List<String> patterns) {
+        for (String pattern : patterns) {
+            assertFalse(codeMatches(source, pattern), "Forbidden worker-meshing dependency: " + pattern);
+        }
+    }
+
+    private static boolean codeMatches(String source, String pattern) {
+        return Pattern.compile(pattern).matcher(sanitizeCode(source)).find();
+    }
+
+    private static String sanitizeCode(String source) {
+        return source.replaceAll("(?s)/\\*.*?\\*/|//[^\\r\\n]*|\"(?:\\\\.|[^\"])*\"|'(?:\\\\.|[^'])*'", " ");
     }
 }
