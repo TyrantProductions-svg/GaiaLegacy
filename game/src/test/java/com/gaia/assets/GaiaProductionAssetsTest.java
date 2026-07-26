@@ -125,6 +125,14 @@ class GaiaProductionAssetsTest {
                 atlas, "gaia:oak_log_top", 96, 48);
         assertRegion(
                 atlas, "gaia:oak_leaves", 112, 48);
+        assertEquals(15, atlas.regions().size());
+        assertRegion(atlas, "gaia:dark_stone", 64, 0);
+        assertRegion(atlas, "gaia:magma", 96, 0);
+        assertRegion(atlas, "gaia:magma_variant_1", 112, 0);
+        assertRegion(atlas, "gaia:snow_top", 32, 16);
+        assertRegion(atlas, "gaia:snow_side", 48, 16);
+        assertRegion(atlas, "gaia:magma_variant_2", 96, 16);
+        assertRegion(atlas, "gaia:magma_variant_3", 112, 16);
         assertTrue(catalog.report().diagnostics().isEmpty());
     }
 
@@ -143,21 +151,45 @@ class GaiaProductionAssetsTest {
         assertEquals(128, atlas.getWidth());
         assertEquals(64, atlas.getHeight());
         assertEquals(
-                "1c8979cf8e6b41bc6d3e67ab5b7efff6"
-                        + "fbc2816472a120d54ca2bd2bae785a61",
+                "a51b9fa9361792d81af5bc7d14b024ef"
+                        + "3824707d2dbf5f2ccef11eef2f8ce4b0",
                 hashArgbRegion(atlas, 0, 0));
         assertEquals(
-                "87baa8f45b3b71e6ecf61fa23dce1047"
-                        + "758d58ba381dbe7e8b47a858696e217f",
+                "b7f9d6e708397056dc893c3c2cdd41fe"
+                        + "5291bacbd9fa326b61c6fd1fe6f10607",
                 hashArgbRegion(atlas, 16, 0));
         assertEquals(
-                "055bbfb1d895874d53eab4db98a32e290"
-                        + "d2b27681d728ec58cc5320c112e6de3",
+                "9ac3bc6ebaa124641000967dcafc0f8c"
+                        + "32a53e49ed66dfac8c6cb438a9d8336b",
                 hashArgbRegion(atlas, 32, 0));
         assertEquals(
-                "799040087946283e315d980e13372844b"
-                        + "1ff9f1629fbba0bcf9ae24ea13be299",
+                "d3f7b4cb0549923c7ef487e771b014f9"
+                        + "be7f5d4469d4fb034d79fb9bbc0422bb",
                 hashArgbRegion(atlas, 48, 0));
+        assertEquals(
+                "e5b2b34d81dcc396efff2c071f7f6bd3"
+                        + "b90e03b2278f8ce80c3fe98a314739f6",
+                hashArgbRegion(atlas, 0, 0, 128, 64));
+        assertEquals(
+                "c162bb0cf28de1fa5a331a49da56ad1c"
+                        + "7d66028a7247cdda98ad56f86730f6f8",
+                hashArgbRegion(atlas, 80, 0));
+        assertEquals(
+                "cc034eb5ea7ab5ce7ac2800e3c2acbeb"
+                        + "1986f11ff5794e76dddca0a575dfd136",
+                hashArgbRegion(atlas, 0, 16));
+        assertEquals(
+                "99f6a3c9a95ef6ec632be21e2b3f1bfb"
+                        + "b554f1849297524fcddf17fb5503a436",
+                hashArgbRegion(atlas, 80, 48));
+        assertEquals(
+                "dcf44c64dfb2e4a6fa2ddd78fbfb3480"
+                        + "1b71c09954a4b6994e43f4e48d3f0c5c",
+                hashArgbRegion(atlas, 96, 48));
+        assertEquals(
+                "530eca6f4d209a46d8e783111556124d"
+                        + "2ad258f9badf47bdee6dfb8e18c1acc7",
+                hashArgbRegion(atlas, 112, 48));
 
         boolean containsOpaqueBlack = false;
         boolean containsOpaquePurple = false;
@@ -204,9 +236,19 @@ class GaiaProductionAssetsTest {
     private static String hashArgbRegion(
             BufferedImage image, int startX, int startY)
             throws Exception {
+        return hashArgbRegion(image, startX, startY, 16, 16);
+    }
+
+    private static String hashArgbRegion(
+            BufferedImage image,
+            int startX,
+            int startY,
+            int width,
+            int height)
+            throws Exception {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        for (int y = startY; y < startY + 16; y++) {
-            for (int x = startX; x < startX + 16; x++) {
+        for (int y = startY; y < startY + height; y++) {
+            for (int x = startX; x < startX + width; x++) {
                 int argb = image.getRGB(x, y);
                 digest.update((byte) ((argb >>> 24) & 0xff));
                 digest.update((byte) ((argb >>> 16) & 0xff));
