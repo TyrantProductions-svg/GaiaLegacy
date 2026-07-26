@@ -44,6 +44,44 @@ class RendererStructureTest {
     }
 
     @Test
+    void renderFrameCullsOnlyCurrentQueueSubmissionsWithoutLifecycleMutation()
+            throws IOException {
+        String source =
+                Files.readString(
+                        Path.of(
+                                "src/main/java/com/overlord/renderer/"
+                                        + "Renderer.java"));
+        String renderFrame =
+                source.substring(
+                        source.indexOf("public void renderFrame("),
+                        source.indexOf("public void cleanup()"));
+
+        assertInOrder(
+                renderFrame,
+                "Frustum.from(",
+                "for (ChunkRenderObject chunk : chunks)",
+                "Objects.requireNonNull(chunk",
+                ".intersects(chunk.worldBounds())",
+                "frameQueue.submit(chunk, frameMaterial)");
+        assertEquals(1, occurrences(renderFrame, "Frustum.from("));
+        for (String forbidden :
+                java.util.List.of(
+                        "unload",
+                        "repository",
+                        "installed",
+                        ".remove(",
+                        ".clear()")) {
+            if (forbidden.equals(".clear()")) {
+                assertEquals(2, occurrences(renderFrame, forbidden));
+            } else {
+                assertFalse(
+                        renderFrame.toLowerCase().contains(forbidden),
+                        "Culling path must not contain " + forbidden);
+            }
+        }
+    }
+
+    @Test
     void initializesTheWorldShaderWithEveryRequiredUniformAndManualGammaState()
             throws IOException {
         String source =
@@ -141,6 +179,26 @@ class RendererStructureTest {
                 expectedAspect,
                 projection.m11() / projection.m00(),
                 0.0001f);
+    }
+
+    private static void assertInOrder(String source, String... tokens) {
+        int previous = -1;
+        for (String token : tokens) {
+            int current = source.indexOf(token, previous + 1);
+            assertTrue(current >= 0, "Missing token: " + token);
+            assertTrue(current > previous, "Token out of order: " + token);
+            previous = current;
+        }
+    }
+
+    private static int occurrences(String source, String token) {
+        int count = 0;
+        int index = 0;
+        while ((index = source.indexOf(token, index)) >= 0) {
+            count++;
+            index += token.length();
+        }
+        return count;
     }
 
     private static final class FailingResourceClassLoader

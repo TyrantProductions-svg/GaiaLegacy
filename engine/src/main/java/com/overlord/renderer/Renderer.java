@@ -8,6 +8,7 @@ import static org.lwjgl.opengl.GL30C.glViewport;
 import com.overlord.assets.AssetManager;
 import com.overlord.config.GameConfig;
 import com.overlord.core.thread.MainThreadGuard;
+import com.overlord.renderer.frustum.Frustum;
 import com.overlord.renderer.material.Material;
 import com.overlord.renderer.pass.DebugRenderPass;
 import com.overlord.renderer.pass.RenderContext;
@@ -239,16 +240,25 @@ public final class Renderer implements ChunkRenderBackend {
             Objects.requireNonNull(chunks, "chunks");
             Material frameMaterial =
                     requireInitialized(worldMaterial, "world material");
+            Matrix4f frameProjection =
+                    requireInitialized(
+                            projectionMatrix,
+                            "projection matrix");
+            Matrix4f frameView =
+                    requireInitialized(camera, "camera")
+                            .getViewMatrix();
+            Frustum currentFrustum =
+                    Frustum.from(frameProjection, frameView);
             for (ChunkRenderObject chunk : chunks) {
-                frameQueue.submit(chunk, frameMaterial);
+                Objects.requireNonNull(chunk, "chunk");
+                if (currentFrustum.intersects(chunk.worldBounds())) {
+                    frameQueue.submit(chunk, frameMaterial);
+                }
             }
             RenderContext context =
                     new RenderContext(
-                            requireInitialized(
-                                    projectionMatrix,
-                                    "projection matrix"),
-                            requireInitialized(camera, "camera")
-                                    .getViewMatrix(),
+                            frameProjection,
+                            frameView,
                             visualSettings);
             requireInitialized(renderPipeline, "render pipeline")
                     .render(context, frameQueue);

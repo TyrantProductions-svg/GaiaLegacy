@@ -205,6 +205,31 @@ class RenderPipelineArchitectureTest {
     }
 
     @Test
+    void frustumMathIsImmutablePureCpuAndOwnsNoChunkLifecycle()
+            throws IOException {
+        Path frustumDirectory =
+                JAVA.resolve("com/overlord/renderer/frustum");
+        List<Path> sources = allJavaSources(frustumDirectory);
+
+        assertEquals(
+                List.of("Frustum.java", "FrustumPlane.java"),
+                sources.stream()
+                        .map(source -> source.getFileName().toString())
+                        .sorted()
+                        .toList());
+        for (Path source : sources) {
+            String code = read(source);
+            assertFalse(code.contains("org.lwjgl"));
+            assertFalse(code.contains("OpenGl"));
+            assertFalse(code.contains("Renderer"));
+            assertFalse(code.contains("ChunkRepository"));
+            assertFalse(code.contains("ChunkMeshManager"));
+            assertFalse(code.contains("unload"));
+            assertFalse(code.contains("remove("));
+        }
+    }
+
+    @Test
     void fullscreenTriangleUsesOnlyAGuardedEmptyVao() {
         String geometry =
                 read(
