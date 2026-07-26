@@ -29,6 +29,7 @@ import com.overlord.physics.MassProperties;
 import com.overlord.physics.PhysicsBody;
 import com.overlord.physics.PhysicsWorld;
 import com.overlord.physics.PlayerController;
+import com.overlord.renderer.visual.RenderVisualSettings;
 import com.overlord.voxel.ChunkMeshBuilder;
 import com.overlord.voxel.ChunkMeshManager;
 import java.util.Objects;
@@ -59,11 +60,13 @@ public final class GameBootstrap {
                     new GaiaResourceLoader(assetManager).load();
             logAssetReport(catalog.report());
 
+            RenderVisualSettings visualSettings = RenderVisualSettings.milestoneOneDefaults();
             Engine engine =
                     new Engine(
                             mainThreadGuard,
                             catalog.renderAssets(),
-                            assetManager);
+                            assetManager,
+                            visualSettings);
             engine.init();
             shutdownCoordinator.register(
                     "engine",

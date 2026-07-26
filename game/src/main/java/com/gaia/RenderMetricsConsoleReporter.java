@@ -14,7 +14,8 @@ public final class RenderMetricsConsoleReporter {
     }
     public void report(RenderMetricsSnapshot metrics) {
         Objects.requireNonNull(metrics); if (!enabled) return;
-        long now = nanoTime.getAsLong(); if (lastReportNanos != Long.MIN_VALUE && now - lastReportNanos < 1_000_000_000L) return;
+        long now = nanoTime.getAsLong(); if (lastReportNanos == Long.MIN_VALUE) { lastReportNanos = now; return; }
+        if (now - lastReportNanos < 1_000_000_000L) return;
         lastReportNanos = now;
         output.printf(Locale.ROOT, "RenderMetrics fps=%.2f frameMs=%.2f visibleChunks=%d drawCalls=%d triangles=%d meshQueue=%d%n", metrics.framesPerSecond(), metrics.frameTimeMilliseconds(), metrics.visibleChunks(), metrics.drawCalls(), metrics.triangles(), metrics.meshQueueDepth());
     }
