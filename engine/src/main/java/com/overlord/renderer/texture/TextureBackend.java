@@ -3,10 +3,6 @@ package com.overlord.renderer.texture;
 import java.nio.ByteBuffer;
 
 public interface TextureBackend {
-    static TextureBackend openGl() {
-        return new OpenGlTextureBackend();
-    }
-
     int createTexture();
 
     void activateTextureUnit(int textureUnit);

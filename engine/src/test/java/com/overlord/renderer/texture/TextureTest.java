@@ -1,7 +1,6 @@
 package com.overlord.renderer.texture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -25,6 +24,47 @@ import org.junit.jupiter.api.Test;
 
 class TextureTest {
     @Test
+    void backendExposesExactlyTheSixTextureOperations()
+            throws NoSuchMethodException {
+        assertEquals(6, TextureBackend.class.getDeclaredMethods().length);
+        assertEquals(
+                int.class,
+                TextureBackend.class
+                        .getDeclaredMethod("createTexture")
+                        .getReturnType());
+        assertEquals(
+                void.class,
+                TextureBackend.class
+                        .getDeclaredMethod("activateTextureUnit", int.class)
+                        .getReturnType());
+        assertEquals(
+                void.class,
+                TextureBackend.class
+                        .getDeclaredMethod("bindTexture2d", int.class)
+                        .getReturnType());
+        assertEquals(
+                void.class,
+                TextureBackend.class
+                        .getDeclaredMethod(
+                                "setTextureParameter", int.class, int.class)
+                        .getReturnType());
+        assertEquals(
+                void.class,
+                TextureBackend.class
+                        .getDeclaredMethod(
+                                "uploadRgba8",
+                                int.class,
+                                int.class,
+                                ByteBuffer.class)
+                        .getReturnType());
+        assertEquals(
+                void.class,
+                TextureBackend.class
+                        .getDeclaredMethod("deleteTexture", int.class)
+                        .getReturnType());
+    }
+
+    @Test
     void configuresNearestClampedLevelZeroUpload() {
         RecordingTextureBackend backend = new RecordingTextureBackend();
         Texture texture =
@@ -43,10 +83,6 @@ class TextureTest {
                         GL_TEXTURE_MAX_LEVEL, 0),
                 backend.parameters());
         assertEquals(List.of(new Upload(2, 2)), backend.uploads());
-        assertFalse(
-                List.of(TextureBackend.class.getDeclaredMethods()).stream()
-                        .anyMatch(method -> method.getName().toLowerCase().contains("mipmap")));
-
         texture.bind(3);
         texture.cleanup();
         texture.cleanup();

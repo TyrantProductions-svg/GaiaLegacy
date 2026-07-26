@@ -2,6 +2,7 @@ package com.overlord.renderer;
 
 import com.overlord.core.thread.MainThreadGuard;
 import com.overlord.renderer.texture.TextureBackend;
+import com.overlord.renderer.texture.TextureBackends;
 import com.overlord.renderer.texture.TextureImage;
 import java.nio.ByteBuffer;
 import java.util.Objects;
@@ -25,7 +26,7 @@ public class Texture implements TextureBinding {
     public Texture(
             MainThreadGuard mainThreadGuard,
             TextureImage image) {
-        this(mainThreadGuard, image, TextureBackend.openGl());
+        this(mainThreadGuard, image, TextureBackends.openGl());
     }
 
     public Texture(
