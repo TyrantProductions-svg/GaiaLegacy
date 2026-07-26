@@ -20,5 +20,7 @@ class RenderFrameInputTest {
         chunks.add(null);
         assertDoesNotThrow(input.chunks()::size);
         assertThrows(UnsupportedOperationException.class, () -> input.chunks().add(null));
+        assertDoesNotThrow(() -> new RenderFrameInput(List.of(), Double.MIN_VALUE, 0));
+        assertDoesNotThrow(() -> new RenderFrameInput(List.of(), Double.MAX_VALUE, 0));
     }
 }

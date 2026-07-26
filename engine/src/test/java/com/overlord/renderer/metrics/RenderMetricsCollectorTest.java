@@ -1,6 +1,8 @@
 package com.overlord.renderer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.renderer.metrics.RenderMetricsSnapshot;
 import org.junit.jupiter.api.Test;
@@ -28,5 +30,20 @@ class RenderMetricsCollectorTest {
         collector.finishFrame();
         assertEquals(new RenderMetricsSnapshot(0.0d, 0.0d, 0, 0, 0L, 0), collector.snapshot());
         assertEquals(2, first.drawCalls());
+    }
+
+    @Test
+    void saturatesDerivedTimingMetricsForEveryAcceptedFiniteFrameDelta() {
+        RenderMetricsCollector collector = new RenderMetricsCollector();
+
+        for (double delta : new double[] {Double.MIN_VALUE, Double.MAX_VALUE}) {
+            collector.beginFrame(delta, 0);
+            assertDoesNotThrow(collector::finishFrame);
+            RenderMetricsSnapshot snapshot = collector.snapshot();
+            assertTrue(Double.isFinite(snapshot.framesPerSecond()));
+            assertTrue(snapshot.framesPerSecond() >= 0.0d);
+            assertTrue(Double.isFinite(snapshot.frameTimeMilliseconds()));
+            assertTrue(snapshot.frameTimeMilliseconds() >= 0.0d);
+        }
     }
 }

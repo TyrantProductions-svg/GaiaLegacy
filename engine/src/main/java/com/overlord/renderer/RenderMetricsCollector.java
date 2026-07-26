@@ -43,13 +43,25 @@ final class RenderMetricsCollector implements RenderMetrics, RenderMetricsRecord
     }
 
     void finishFrame() {
-        double framesPerSecond = frameDeltaSeconds == 0.0d ? 0.0d : 1.0d / frameDeltaSeconds;
+        double framesPerSecond = frameDeltaSeconds == 0.0d
+                ? 0.0d
+                : finiteOrMaximum(1.0d / frameDeltaSeconds);
         snapshot = new RenderMetricsSnapshot(
-                framesPerSecond, frameDeltaSeconds * 1000.0d, visibleChunks, drawCalls, triangles, meshQueueDepth);
+                framesPerSecond,
+                finiteOrMaximum(frameDeltaSeconds * 1000.0d),
+                visibleChunks,
+                drawCalls,
+                triangles,
+                meshQueueDepth);
     }
 
     @Override
     public RenderMetricsSnapshot snapshot() {
         return snapshot;
+    }
+
+    /** Saturates overflowed derived metrics so every accepted frame delta can be published. */
+    private static double finiteOrMaximum(double value) {
+        return Double.isFinite(value) ? value : Double.MAX_VALUE;
     }
 }
