@@ -1,5 +1,14 @@
 # Phase 5B Handoff — Visual Rendering Upgrade
 
+Final delivery HEAD:
+`f05693f4bfbdcc2b2866131aa092f12ebc5bbcba`
+
+Final branch status:
+**APPROVED AND READY FOR PULL REQUEST**
+
+The final documentation commit, post-commit verification, clean-status check,
+and branch-wide owner reviews are complete.
+
 ## Status
 
 Task 13 documentation, automated evidence, Windows manual acceptance, and
