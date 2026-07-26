@@ -11,8 +11,8 @@ class RenderSurfaceControllerTest {
         assertFalse(controller.update(new RenderSurfaceMetrics(900,700,0,0,1,1)));
         assertFalse(controller.drawable());
         assertEquals(1600, controller.lastPositive().framebufferWidth());
-        assertTrue(controller.update(new RenderSurfaceMetrics(900,700,800,600,1,1)));
+        assertTrue(controller.update(new RenderSurfaceMetrics(900,700,1600,900,1,1)));
         assertTrue(controller.drawable());
-        assertFalse(controller.update(new RenderSurfaceMetrics(900,700,800,600,2,2)));
+        assertFalse(controller.update(new RenderSurfaceMetrics(900,700,1600,900,2,2)));
     }
 }

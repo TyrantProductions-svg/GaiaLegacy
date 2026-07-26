@@ -230,7 +230,6 @@ public final class Renderer implements ChunkRenderBackend {
     public void updateSurface(RenderSurfaceMetrics surfaceMetrics) {
         mainThreadGuard.assertMainThread("render surface update");
         RenderSurfaceMetrics next = Objects.requireNonNull(surfaceMetrics, "surfaceMetrics");
-        RenderSurfaceMetrics previous = this.surfaceMetrics;
         this.surfaceMetrics = next;
         boolean rebuild = surfaceController.update(next);
         if (next.framebufferWidth() <= 0 || next.framebufferHeight() <= 0) return;

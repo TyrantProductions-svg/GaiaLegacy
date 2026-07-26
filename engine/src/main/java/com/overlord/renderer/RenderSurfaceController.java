@@ -9,7 +9,8 @@ final class RenderSurfaceController {
     }
 
     boolean update(RenderSurfaceMetrics next) {
-        boolean changed = lastPositive == null
+        boolean wasDrawable = current != null && drawable();
+        boolean changed = !wasDrawable || lastPositive == null
                 || lastPositive.framebufferWidth() != next.framebufferWidth()
                 || lastPositive.framebufferHeight() != next.framebufferHeight();
         current = next;
