@@ -229,6 +229,8 @@ class GameBootstrapStructureTest {
         assertTrue(
                 buildScript.contains(
                         "assets/overlord/shaders/world.frag"));
+        assertTrue(buildScript.contains("assets/overlord/shaders/sky.vert"));
+        assertTrue(buildScript.contains("assets/overlord/shaders/sky.frag"));
         assertTrue(
                 taskBlockDependsOn(
                         buildScript,

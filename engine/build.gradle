@@ -74,7 +74,9 @@ tasks.register('verifyPackagedShaderResources') {
         def archive = tasks.named('jar').get().archiveFile.get().asFile
         def required = [
             'assets/overlord/shaders/world.vert',
-            'assets/overlord/shaders/world.frag'
+            'assets/overlord/shaders/world.frag',
+            'assets/overlord/shaders/sky.vert',
+            'assets/overlord/shaders/sky.frag'
         ]
         new java.util.zip.ZipFile(archive).withCloseable { zip ->
             required.each { path ->
