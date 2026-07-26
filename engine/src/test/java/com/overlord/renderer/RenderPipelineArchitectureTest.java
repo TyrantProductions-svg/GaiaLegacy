@@ -220,7 +220,7 @@ class RenderPipelineArchitectureTest {
                         .sorted()
                         .toList());
         for (Path source : sources) {
-            String code = read(source);
+            String code = sanitizeCode(read(source));
             assertFalse(code.contains("org.lwjgl"));
             assertFalse(code.contains("OpenGl"));
             assertFalse(code.contains("Renderer"));
@@ -228,6 +228,8 @@ class RenderPipelineArchitectureTest {
             assertFalse(code.contains("ChunkMeshManager"));
             assertFalse(code.contains("unload"));
             assertFalse(code.contains("remove("));
+            assertFalse(code.contains("repository."));
+            assertFalse(code.contains("clear("));
         }
     }
 
@@ -371,6 +373,56 @@ class RenderPipelineArchitectureTest {
     }
 
     @Test
+    void phase5bShadersRemainGlsl410WithoutComputeOrStorageBuffers() throws IOException {
+        Path shaderDirectory = MAIN.resolve("resources/assets/overlord/shaders");
+        List<Path> shaders;
+        try (Stream<Path> paths = Files.list(shaderDirectory)) {
+            shaders =
+                    paths.filter(path -> path.toString().endsWith(".vert") || path.toString().endsWith(".frag"))
+                            .sorted()
+                            .toList();
+        }
+        assertEquals(
+                List.of("sky.frag", "sky.vert", "world.frag", "world.vert"),
+                shaders.stream().map(path -> path.getFileName().toString()).toList());
+        for (Path shader : shaders) {
+            String source = read(shader);
+            assertEquals("#version 410 core", source.lines().findFirst().orElseThrow(), shader::toString);
+            String code = sanitizeCode(source);
+            assertFalse(code.contains("layout(local_size"), shader::toString);
+            assertFalse(code.contains("buffer "), shader::toString);
+            assertFalse(code.contains("430"), shader::toString);
+        }
+    }
+
+    @Test
+    void phase5bProductionUsesNoOpenGlFeaturesBeyond41OrComputeStorage() throws IOException {
+        List<String> forbidden =
+                List.of(
+                        "GL42C",
+                        "GL43C",
+                        "GL44C",
+                        "GL45C",
+                        "GL46C",
+                        "GL_COMPUTE_SHADER",
+                        "GL_SHADER_STORAGE_BUFFER",
+                        "glDispatchCompute",
+                        "glMemoryBarrier",
+                        "glBindImageTexture");
+        try (Stream<Path> sources = Files.walk(MAIN.resolve("java"))) {
+            List<Path> offenders =
+                    sources.filter(Files::isRegularFile)
+                            .filter(source -> source.toString().endsWith(".java"))
+                            .filter(source -> !forbiddenCodeTokens(read(source), forbidden).isEmpty())
+                            .toList();
+            assertTrue(offenders.isEmpty(), "Unsupported OpenGL features found in " + offenders);
+        }
+
+        assertTrue(forbiddenCodeTokens("// GL43C\n\"glDispatchCompute\"", forbidden).isEmpty());
+        assertEquals(List.of("glDispatchCompute"), forbiddenCodeTokens("glDispatchCompute(1, 1, 1);", forbidden));
+    }
+
+    @Test
     void rendererOwnsSkyResourcesAndCleansThemInReverseCreationOrder() {
         String renderer =
                 read(JAVA.resolve("com/overlord/renderer/Renderer.java"));
@@ -416,15 +468,40 @@ class RenderPipelineArchitectureTest {
                     sources.filter(Files::isRegularFile)
                             .filter(
                                     source ->
-                                            read(source)
-                                                    .contains(
-                                                            "glEnable(GL_FRAMEBUFFER_SRGB)"))
+                                            hasCodeToken(
+                                                    read(source),
+                                                    "glEnable(GL_FRAMEBUFFER_SRGB)"))
                             .toList();
             assertTrue(
                     enables.isEmpty(),
                     "Manual gamma path forbids framebuffer sRGB enablement: "
                             + enables);
         }
+    }
+
+    @Test
+    void texturePolicyUsesNearestSingleLevelSamplingWithoutMipmaps() {
+        String texture = read(JAVA.resolve("com/overlord/renderer/Texture.java"));
+        String code = sanitizeCode(texture);
+
+        for (String required :
+                List.of(
+                        "backend.setTextureParameter(GL_TEXTURE_MIN_FILTER, GL_NEAREST);",
+                        "backend.setTextureParameter(GL_TEXTURE_MAG_FILTER, GL_NEAREST);",
+                        "backend.setTextureParameter(GL_TEXTURE_BASE_LEVEL, 0);",
+                        "backend.setTextureParameter(GL_TEXTURE_MAX_LEVEL, 0);")) {
+            assertTrue(code.contains(required), "Missing texture policy: " + required);
+        }
+        assertTrue(
+                forbiddenCodeTokens(
+                                texture,
+                                List.of(
+                                        "glGenerateMipmap",
+                                        "generateMipmaps",
+                                        "GL_LINEAR_MIPMAP",
+                                        "GL_NEAREST_MIPMAP"))
+                        .isEmpty(),
+                "Texture policy must not create or select mipmaps");
     }
 
     @Test
@@ -582,6 +659,15 @@ class RenderPipelineArchitectureTest {
             }
         }
         return List.copyOf(unsupported);
+    }
+
+    private static List<String> forbiddenCodeTokens(String source, List<String> forbidden) {
+        String code = sanitizeCode(source);
+        return forbidden.stream().filter(code::contains).toList();
+    }
+
+    private static boolean hasCodeToken(String source, String token) {
+        return sanitizeCode(source).contains(token);
     }
 
     private static void assertInOrder(String source, String... tokens) {
