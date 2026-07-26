@@ -1400,7 +1400,7 @@ git commit -m "test(rendering): guard Phase 5B visual architecture"
 - Consumes: final Phase 5B implementation, fixed seed/coordinates, metrics reporter, owner reviews.
 - Produces: normative contract, exact test/manual/platform evidence, final clean branch; no push/PR/merge.
 
-- [ ] **Step 1: Write the normative Phase 5B contract**
+- [x] **Step 1: Write the normative Phase 5B contract**
 
 Record:
 
@@ -1414,7 +1414,7 @@ Record:
 - thread/GPU ownership and Phase 3 stale lifecycle;
 - interfaces Phase 8/9/10 and later renderer work must not break.
 
-- [ ] **Step 2: Run the complete Windows automated gate**
+- [x] **Step 2: Run the complete Windows automated gate**
 
 ```powershell
 .\gradlew.bat clean test build --console=plain --no-daemon
@@ -1428,7 +1428,7 @@ Record:
 
 Parse every `TEST-*.xml` file and record Engine/Game suite, test, failure, error, and skip totals. Do not reuse Phase 5A's 823 count.
 
-- [ ] **Step 3: Run hygiene and scope checks**
+- [x] **Step 3: Run hygiene and scope checks**
 
 ```powershell
 git diff --check origin/main
@@ -1439,7 +1439,7 @@ git diff --stat origin/main...HEAD
 
 Also scan for tracked build/bin/class/crash/IDE output, absolute JDK paths, Game OpenGL, OpenGL above 4.1, GLSL above 410, compute/SSBO, engine-to-game imports, `GL_FRAMEBUFFER_SRGB` enable, mipmap generation, mutable-world meshing, renderer-driven unload, and protected worldgen/gameplay/physics diffs.
 
-- [ ] **Step 4: Run Windows development acceptance with metrics**
+- [x] **Step 4: Run Windows development acceptance with metrics**
 
 ```powershell
 $env:JAVA_TOOL_OPTIONS='-Dgaia.renderMetrics=true'
@@ -1448,7 +1448,7 @@ $env:JAVA_TOOL_OPTIONS='-Dgaia.renderMetrics=true'
 
 At the approved seed and exact recorded position/orientation, capture at least three one-second metric samples after stabilization. Inspect sky gradient, fog, face light, AO, atlas edges, camera-rotation visible-count changes, nearby Chunk stability, safe spawn, movement, jump, collision, F1, resize, focus, Alt+Tab, and Escape. Capture the Gradle/game exit code. Do not commit screenshots or logs.
 
-- [ ] **Step 5: Run installDist acceptance**
+- [x] **Step 5: Run installDist acceptance**
 
 Launch:
 
@@ -1459,11 +1459,11 @@ $env:JAVA_TOOL_OPTIONS='-Dgaia.renderMetrics=true'
 
 Repeat the core visual, culling, metrics, resize, input, and Escape checks. Record the process exit code.
 
-- [ ] **Step 6: Record the Phase 5A/5B comparison truthfully**
+- [x] **Step 6: Record the Phase 5A/5B comparison truthfully**
 
 Use the Task 0 baseline only if captured at the same seed, position, orientation, window, and scale. Otherwise state that Phase 5A FPS was not instrumented and compare structural Phase 5A draw calls against Phase 5B metrics without inventing FPS. Record visible chunks and draw calls before and after camera rotation.
 
-- [ ] **Step 7: Record native macOS status**
+- [x] **Step 7: Record native macOS status**
 
 When available:
 
@@ -1474,13 +1474,13 @@ When available:
 
 Check shader compilation, Retina logical/framebuffer/content scale, resize, lighting/fog/AO, input, and exit. If no native environment exists, write `macOS NOT RUN` and do not infer success.
 
-- [ ] **Step 8: Perform Engine-owner and Game/shared-owner reviews**
+- [x] **Step 8: Perform Engine-owner and Game/shared-owner reviews**
 
 Engine owner reviews all `engine/**` changes, especially diagonal stale ownership, texture/shader GPU cleanup, frustum math, metrics exception semantics, and surface callbacks. Game/shared owner reviews composition, reporter, build scripts, documentation, unchanged worldgen bytes, and manual evidence.
 
 Resolve every Critical, Important, and Minor finding through a focused RED/GREEN fix, rerun affected tests and the complete gate, then obtain explicit APPROVED verdicts.
 
-- [ ] **Step 9: Create the Phase 5B handoff**
+- [x] **Step 9: Create the Phase 5B handoff**
 
 `docs/agent-handoffs/phase-05b-handoff.md` must contain:
 
@@ -1498,7 +1498,7 @@ Resolve every Critical, Important, and Minor finding through a focused RED/GREEN
 - suggested commit and PR title/description;
 - explicit no-push/no-PR/no-merge status.
 
-- [ ] **Step 10: Commit Task 13 documentation**
+- [x] **Step 10: Commit Task 13 documentation**
 
 ```powershell
 git add docs/architecture/phase-05b-rendering-contract.md `
@@ -1521,6 +1521,13 @@ git ls-files --others --exclude-standard
 ```
 
 Expected: clean status, no untracked deliverables, final HEAD on `feat/rendering-visual-upgrade`, all review verdicts approved, and no push, pull request, or merge.
+
+Task 13 status at the documentation commit: Steps 1–10 are complete. Windows
+development and installDist acceptance both exited `0`; Phase 5A comparable
+FPS and exact numeric player pose were not captured; macOS is `NOT RUN`. Both
+code owners approved contingent on this documentation refresh, which resolves
+their documentation findings. Step 11 remains controller post-commit
+validation and must not be marked complete by this commit.
 
 Suggested overall commit/squash message:
 
