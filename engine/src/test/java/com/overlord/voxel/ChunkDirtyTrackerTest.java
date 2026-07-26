@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.overlord.config.GameConfig;
+import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
@@ -48,22 +49,43 @@ class ChunkDirtyTrackerTest {
     }
 
     @Test
-    void cornerChangeDirtiesOnlyTwoOrthogonalNeighbors() {
+    void cornerChangeDirtiesTwoCardinalsAndOneDiagonal() {
         assertEquals(
-                Set.of(center, center.west(), center.north()),
-                tracker.affectedByBlock(center, 0, 0));
-        assertEquals(
-                Set.of(center, center.east(), center.north()),
-                tracker.affectedByBlock(center, LAST_LOCAL_COORDINATE, 0));
-        assertEquals(
-                Set.of(center, center.west(), center.south()),
-                tracker.affectedByBlock(center, 0, LAST_LOCAL_COORDINATE));
-        assertEquals(
-                Set.of(center, center.east(), center.south()),
-                tracker.affectedByBlock(
+                List.of(
                         center,
-                        LAST_LOCAL_COORDINATE,
-                        LAST_LOCAL_COORDINATE));
+                        center.west(),
+                        center.north(),
+                        new ChunkKey(-1, -1)),
+                List.copyOf(tracker.affectedByBlock(center, 0, 0)));
+        assertEquals(
+                List.of(
+                        center,
+                        center.east(),
+                        center.north(),
+                        new ChunkKey(1, -1)),
+                List.copyOf(
+                        tracker.affectedByBlock(
+                                center, LAST_LOCAL_COORDINATE, 0)));
+        assertEquals(
+                List.of(
+                        center,
+                        center.west(),
+                        center.south(),
+                        new ChunkKey(-1, 1)),
+                List.copyOf(
+                        tracker.affectedByBlock(
+                                center, 0, LAST_LOCAL_COORDINATE)));
+        assertEquals(
+                List.of(
+                        center,
+                        center.east(),
+                        center.south(),
+                        new ChunkKey(1, 1)),
+                List.copyOf(
+                        tracker.affectedByBlock(
+                                center,
+                                LAST_LOCAL_COORDINATE,
+                                LAST_LOCAL_COORDINATE)));
     }
 
     @Test
@@ -87,5 +109,20 @@ class ChunkDirtyTrackerTest {
         assertEquals(
                 Set.of(center.north(), center.south(), center.west(), center.east()),
                 tracker.horizontalNeighbors(center));
+    }
+
+    @Test
+    void returnsAllEightMeshingNeighbors() {
+        assertEquals(
+                Set.of(
+                        center.north(),
+                        new ChunkKey(1, -1),
+                        center.east(),
+                        new ChunkKey(1, 1),
+                        center.south(),
+                        new ChunkKey(-1, 1),
+                        center.west(),
+                        new ChunkKey(-1, -1)),
+                tracker.meshingNeighbors(center));
     }
 }

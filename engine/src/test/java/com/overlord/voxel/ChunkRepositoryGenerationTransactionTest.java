@@ -24,6 +24,10 @@ class ChunkRepositoryGenerationTransactionTest {
     private static final ChunkKey SOUTH = KEY.south();
     private static final ChunkKey WEST = KEY.west();
     private static final ChunkKey EAST = KEY.east();
+    private static final ChunkKey NORTH_WEST = KEY.northWest();
+    private static final ChunkKey NORTH_EAST = KEY.northEast();
+    private static final ChunkKey SOUTH_WEST = KEY.southWest();
+    private static final ChunkKey SOUTH_EAST = KEY.southEast();
 
     @Test
     void generationQueriesAreInitiallyIdleAndNonAllocating() {
@@ -187,42 +191,31 @@ class ChunkRepositoryGenerationTransactionTest {
     }
 
     @Test
-    void laterInitialCommitInvalidatesAllLoadedHorizontalNeighbors() {
+    void laterInitialCommitInvalidatesAllLoadedMeshingNeighbors() {
         ChunkRepository repository = repository();
         ChunkKey center = new ChunkKey(0, 0);
-        commitInitial(
-                repository,
-                center.north(),
-                filled(center.north(), (byte) 1));
-        commitInitial(
-                repository,
-                center.south(),
-                filled(center.south(), (byte) 1));
-        commitInitial(
-                repository,
-                center.west(),
-                filled(center.west(), (byte) 1));
-        commitInitial(
-                repository,
-                center.east(),
-                filled(center.east(), (byte) 1));
-        long northRevision = repository.revision(center.north());
-        long southRevision = repository.revision(center.south());
-        long westRevision = repository.revision(center.west());
-        long eastRevision = repository.revision(center.east());
+        Set<ChunkKey> neighbors = allMeshingNeighbors(center);
+        for (ChunkKey neighbor : neighbors) {
+            commitInitial(
+                    repository, neighbor, filled(neighbor, (byte) 1));
+        }
+        Map<ChunkKey, Long> previousRevisions =
+                neighbors.stream()
+                        .collect(
+                                java.util.stream.Collectors.toMap(
+                                        key -> key,
+                                        repository::revision));
 
         commitInitial(
                 repository, center, filled(center, (byte) 1));
 
-        assertDirtiedAfter(
-                repository, center.north(), northRevision);
-        assertDirtiedAfter(
-                repository, center.south(), southRevision);
-        assertDirtiedAfter(
-                repository, center.west(), westRevision);
-        assertDirtiedAfter(
-                repository, center.east(), eastRevision);
-        assertEquals(5, repository.keys().size());
+        for (ChunkKey neighbor : neighbors) {
+            assertDirtiedAfter(
+                    repository,
+                    neighbor,
+                    previousRevisions.get(neighbor));
+        }
+        assertEquals(9, repository.keys().size());
     }
 
     @Test
@@ -598,6 +591,59 @@ class ChunkRepositoryGenerationTransactionTest {
     }
 
     @Test
+    void changedNorthEdgeNonCornerDirtiesOnlyLoadedNorthNeighbor() {
+        ChunkRepository repository =
+                generatedRepository(KEY, NORTH, WEST, NORTH_WEST);
+        long northRevision = repository.revision(NORTH);
+        long westRevision = repository.revision(WEST);
+        long northWestRevision = repository.revision(NORTH_WEST);
+        ChunkGenerationTicket ticket =
+                repository.beginGeneration(
+                        KEY, ChunkGenerationMode.REBUILD);
+
+        ChunkGenerationResult result =
+                repository.commitGeneration(
+                        ticket, withNorthEdgeChanged(KEY));
+
+        assertEquals(
+                ChunkGenerationResult.Status.COMMITTED,
+                result.status());
+        assertDirtiedAfter(repository, NORTH, northRevision);
+        assertEquals(westRevision, repository.revision(WEST));
+        assertEquals(
+                northWestRevision,
+                repository.revision(NORTH_WEST));
+    }
+
+    @Test
+    void changedNorthWestCornerColumnDirtiesCardinalsAndDiagonal() {
+        ChunkRepository repository =
+                generatedRepository(KEY, NORTH, WEST, NORTH_WEST, EAST);
+        Map<ChunkKey, Long> expectedDirty =
+                Map.of(
+                        NORTH, repository.revision(NORTH),
+                        WEST, repository.revision(WEST),
+                        NORTH_WEST, repository.revision(NORTH_WEST));
+        long eastRevision = repository.revision(EAST);
+        ChunkGenerationTicket ticket =
+                repository.beginGeneration(
+                        KEY, ChunkGenerationMode.REBUILD);
+
+        ChunkGenerationResult result =
+                repository.commitGeneration(
+                        ticket, withNorthWestCornerChanged(KEY));
+
+        assertEquals(
+                ChunkGenerationResult.Status.COMMITTED,
+                result.status());
+        for (Map.Entry<ChunkKey, Long> dirty : expectedDirty.entrySet()) {
+            assertDirtiedAfter(
+                    repository, dirty.getKey(), dirty.getValue());
+        }
+        assertEquals(eastRevision, repository.revision(EAST));
+    }
+
+    @Test
     void unchangedHorizontalEdgesDoNotDirtyLoadedNeighbors() {
         ChunkRepository repository =
                 generatedRepository(KEY, NORTH, SOUTH, WEST, EAST);
@@ -656,6 +702,40 @@ class ChunkRepositoryGenerationTransactionTest {
                     repository,
                     neighbor.getKey(),
                     neighbor.getValue());
+        }
+    }
+
+    @Test
+    void unchangedCornerColumnsDoNotDirtyLoadedDiagonals() {
+        ChunkRepository repository =
+                generatedRepository(
+                        KEY,
+                        NORTH_WEST,
+                        NORTH_EAST,
+                        SOUTH_WEST,
+                        SOUTH_EAST);
+        Map<ChunkKey, Long> diagonalRevisions =
+                Map.of(
+                        NORTH_WEST, repository.revision(NORTH_WEST),
+                        NORTH_EAST, repository.revision(NORTH_EAST),
+                        SOUTH_WEST, repository.revision(SOUTH_WEST),
+                        SOUTH_EAST, repository.revision(SOUTH_EAST));
+        ChunkGenerationTicket ticket =
+                repository.beginGeneration(
+                        KEY, ChunkGenerationMode.REBUILD);
+
+        ChunkGenerationResult result =
+                repository.commitGeneration(
+                        ticket, withAllEdgesChanged(KEY));
+
+        assertEquals(
+                ChunkGenerationResult.Status.COMMITTED,
+                result.status());
+        for (Map.Entry<ChunkKey, Long> diagonal :
+                diagonalRevisions.entrySet()) {
+            assertEquals(
+                    diagonal.getValue(),
+                    repository.revision(diagonal.getKey()));
         }
     }
 
@@ -998,6 +1078,22 @@ class ChunkRepositoryGenerationTransactionTest {
         return new ChunkGenerationData(key, WORLD_HEIGHT, blocks);
     }
 
+    private static ChunkGenerationData withNorthEdgeChanged(
+            ChunkKey key) {
+        byte[] blocks = blocks();
+        java.util.Arrays.fill(blocks, (byte) 1);
+        blocks[canonicalIndex(3, 4, 0)] = 2;
+        return new ChunkGenerationData(key, WORLD_HEIGHT, blocks);
+    }
+
+    private static ChunkGenerationData withNorthWestCornerChanged(
+            ChunkKey key) {
+        byte[] blocks = blocks();
+        java.util.Arrays.fill(blocks, (byte) 1);
+        blocks[canonicalIndex(0, 4, 0)] = 2;
+        return new ChunkGenerationData(key, WORLD_HEIGHT, blocks);
+    }
+
     private static ChunkGenerationData withAllEdgesChanged(
             ChunkKey key) {
         byte[] blocks = blocks();
@@ -1039,6 +1135,18 @@ class ChunkRepositoryGenerationTransactionTest {
             long previousRevision) {
         assertEquals(ChunkState.DIRTY, repository.state(key));
         assertTrue(repository.revision(key) > previousRevision);
+    }
+
+    private static Set<ChunkKey> allMeshingNeighbors(ChunkKey center) {
+        return Set.of(
+                center.north(),
+                center.northEast(),
+                center.east(),
+                center.southEast(),
+                center.south(),
+                center.southWest(),
+                center.west(),
+                center.northWest());
     }
 
     @SuppressWarnings("unchecked")
