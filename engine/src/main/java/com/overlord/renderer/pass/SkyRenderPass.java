@@ -37,8 +37,8 @@ public final class SkyRenderPass implements RenderPass {
     public void render(RenderContext context, RenderQueue queue) {
         Objects.requireNonNull(context, "context");
         Objects.requireNonNull(queue, "queue");
+        stateBackend.clearColorAndDepth();
         try (RenderStateScope ignored = RenderStateScope.open(stateBackend, SKY_STATE)) {
-            stateBackend.clearColorAndDepth();
             shader.use();
             RenderVisualSettings settings = context.visualSettings();
             shader.setVector3(

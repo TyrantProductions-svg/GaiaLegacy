@@ -92,7 +92,7 @@ class RenderPipelineTest {
     }
 
     @Test
-    void skyPassClearsBeforeUseUploadsGradientDrawsOnceAndRestoresState() {
+    void skyPassClearsWithIncomingDepthWriteBeforeApplyingSkyState() {
         List<String> calls = new ArrayList<>();
         RecordingRenderStateBackend stateBackend =
                 new RecordingRenderStateBackend(calls);
@@ -112,9 +112,9 @@ class RenderPipelineTest {
 
         assertEquals(
                 List.of(
+                        "clear:depthWrite=true",
                         "capture",
                         "apply:" + SKY_STATE,
-                        "clear",
                         "shader.use",
                         "uniform.skyHorizon",
                         "uniform.skyTop",
@@ -127,6 +127,7 @@ class RenderPipelineTest {
         assertEquals(
                 new org.joml.Vector3f(0.11f, 0.12f, 0.13f),
                 shader.skyTop);
+        assertTrue(stateBackend.depthWrite);
     }
 
     @Test
@@ -159,6 +160,7 @@ class RenderPipelineTest {
         assertSame(expected, escaped);
         assertEquals("restore", calls.get(calls.size() - 1));
         assertEquals(1, calls.stream().filter("draw"::equals).count());
+        assertTrue(stateBackend.depthWrite);
     }
 
     private static RenderContext context() {
@@ -259,6 +261,7 @@ class RenderPipelineTest {
     private static final class RecordingRenderStateBackend
             implements RenderStateBackend {
         private final List<String> calls;
+        private boolean depthWrite = true;
 
         private RecordingRenderStateBackend(List<String> calls) {
             this.calls = calls;
@@ -269,7 +272,7 @@ class RenderPipelineTest {
             calls.add("capture");
             return new RenderStateSnapshot(
                     true,
-                    true,
+                    depthWrite,
                     true,
                     1,
                     2,
@@ -285,17 +288,19 @@ class RenderPipelineTest {
 
         @Override
         public void apply(RenderStateSpec state) {
+            depthWrite = state.depthWrite();
             calls.add("apply:" + state);
         }
 
         @Override
         public void restore(RenderStateSnapshot snapshot) {
+            depthWrite = snapshot.depthWrite();
             calls.add("restore");
         }
 
         @Override
         public void clearColorAndDepth() {
-            calls.add("clear");
+            calls.add("clear:depthWrite=" + depthWrite);
         }
     }
 }
