@@ -58,11 +58,13 @@ class RendererStructureTest {
 
         assertInOrder(
                 renderFrame,
+                "metricsCollector.beginFrame(",
                 "Frustum.from(",
-                "for (ChunkRenderObject chunk : chunks)",
-                "Objects.requireNonNull(chunk",
+                "for (ChunkRenderObject chunk : frameInput.chunks())",
                 ".intersects(chunk.worldBounds())",
-                "frameQueue.submit(chunk, frameMaterial)");
+                "frameQueue.submit(chunk, frameMaterial)",
+                "metricsCollector.setVisibleChunks(",
+                "metricsCollector.finishFrame()");
         assertEquals(1, occurrences(renderFrame, "Frustum.from("));
         for (String forbidden :
                 java.util.List.of(
@@ -108,7 +110,7 @@ class RendererStructureTest {
         }
         assertTrue(source.contains("glDisable(GL_FRAMEBUFFER_SRGB);"));
         assertFalse(source.contains("glEnable(GL_FRAMEBUFFER_SRGB)"));
-        assertTrue(source.contains("visualSettings);"));
+        assertTrue(source.contains("visualSettings,"));
     }
 
     @Test

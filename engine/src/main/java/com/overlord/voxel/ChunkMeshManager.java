@@ -36,6 +36,7 @@ public final class ChunkMeshManager implements AutoCloseable {
     private final Map<ChunkKey, ChunkRenderObject> installedRenderObjects =
             new HashMap<>();
     private final Object lifecycleLock = new Object();
+    private int inFlightMeshing;
     private volatile boolean closed;
     private Throwable closeFailure;
 
@@ -79,9 +80,18 @@ public final class ChunkMeshManager implements AutoCloseable {
             }
             ChunkMeshInput input = claimed.orElseThrow();
             try {
+                synchronized (lifecycleLock) {
+                    if (closed) {
+                        break;
+                    }
+                    inFlightMeshing++;
+                }
                 meshExecutor.execute(() -> buildMesh(input));
                 scheduled++;
             } catch (RuntimeException | Error failure) {
+                synchronized (lifecycleLock) {
+                    inFlightMeshing--;
+                }
                 if (!closed
                         && repository.markMeshingFailureIfCurrent(
                                 input.center().key(),
@@ -167,6 +177,17 @@ public final class ChunkMeshManager implements AutoCloseable {
         return List.copyOf(installedRenderObjects.values());
     }
 
+    public int meshQueueDepth() {
+        mainThreadGuard.assertMainThread("read chunk mesh queue depth");
+        synchronized (lifecycleLock) {
+            return inFlightMeshing
+                    + completed.size()
+                    + failed.size()
+                    + awaitingUpload.size()
+                    + failedUploads.size();
+        }
+    }
+
     public void retry(ChunkKey key) {
         mainThreadGuard.assertMainThread("retry chunk mesh");
         Objects.requireNonNull(key, "key");
@@ -207,6 +228,7 @@ public final class ChunkMeshManager implements AutoCloseable {
                 return;
             }
             closed = true;
+            inFlightMeshing = 0;
             completed.clear();
             failed.clear();
         }
@@ -256,6 +278,7 @@ public final class ChunkMeshManager implements AutoCloseable {
             }
             synchronized (lifecycleLock) {
                 if (!closed) {
+                    inFlightMeshing--;
                     completed.add(
                             new MeshingCompletion(
                                     claimedKey,
@@ -266,6 +289,7 @@ public final class ChunkMeshManager implements AutoCloseable {
         } catch (RuntimeException | Error failure) {
             synchronized (lifecycleLock) {
                 if (!closed) {
+                    inFlightMeshing--;
                     failed.add(
                             new MeshingFailure(
                                     input.center().key(),

@@ -9,6 +9,7 @@ import com.overlord.assets.AssetManager;
 import com.overlord.config.GameConfig;
 import com.overlord.core.thread.MainThreadGuard;
 import com.overlord.renderer.frustum.Frustum;
+import com.overlord.renderer.metrics.RenderMetrics;
 import com.overlord.renderer.material.Material;
 import com.overlord.renderer.pass.DebugRenderPass;
 import com.overlord.renderer.pass.RenderContext;
@@ -23,7 +24,6 @@ import com.overlord.renderer.state.OpenGlRenderStateBackend;
 import com.overlord.renderer.visual.RenderVisualSettings;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkMeshData;
-import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import org.joml.Matrix4f;
@@ -33,6 +33,7 @@ public final class Renderer implements ChunkRenderBackend {
     private final RenderAssets renderAssets;
     private final AssetManager assetManager;
     private final RenderVisualSettings visualSettings;
+    private final RenderMetricsCollector metricsCollector = new RenderMetricsCollector();
 
     private ShaderProgram worldShaderProgram;
     private ShaderProgram skyShaderProgram;
@@ -231,13 +232,19 @@ public final class Renderer implements ChunkRenderBackend {
         rebuildProjection(width, height);
     }
 
-    public void renderFrame(Collection<ChunkRenderObject> chunks) {
+    public RenderMetrics metrics() {
+        return metricsCollector;
+    }
+
+    public void renderFrame(RenderFrameInput frameInput) {
         mainThreadGuard.assertMainThread("frame rendering");
+        Objects.requireNonNull(frameInput, "frameInput");
         RenderQueue frameQueue =
                 requireInitialized(renderQueue, "render queue");
         frameQueue.clear();
+        metricsCollector.beginFrame(
+                frameInput.frameDeltaSeconds(), frameInput.meshQueueDepth());
         try {
-            Objects.requireNonNull(chunks, "chunks");
             Material frameMaterial =
                     requireInitialized(worldMaterial, "world material");
             Matrix4f frameProjection =
@@ -249,21 +256,25 @@ public final class Renderer implements ChunkRenderBackend {
                             .getViewMatrix();
             Frustum currentFrustum =
                     Frustum.from(frameProjection, frameView);
-            for (ChunkRenderObject chunk : chunks) {
-                Objects.requireNonNull(chunk, "chunk");
+            int visibleChunks = 0;
+            for (ChunkRenderObject chunk : frameInput.chunks()) {
                 if (currentFrustum.intersects(chunk.worldBounds())) {
                     frameQueue.submit(chunk, frameMaterial);
+                    visibleChunks++;
                 }
             }
+            metricsCollector.setVisibleChunks(visibleChunks);
             RenderContext context =
                     new RenderContext(
                             frameProjection,
                             frameView,
-                            visualSettings);
+                            visualSettings,
+                            metricsCollector);
             requireInitialized(renderPipeline, "render pipeline")
                     .render(context, frameQueue);
         } finally {
             frameQueue.clear();
+            metricsCollector.finishFrame();
         }
     }
 

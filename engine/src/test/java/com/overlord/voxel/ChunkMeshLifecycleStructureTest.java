@@ -7,13 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import com.overlord.renderer.ChunkRenderObject;
 import com.overlord.renderer.Mesh;
 import com.overlord.renderer.Renderer;
+import com.overlord.renderer.RenderFrameInput;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -59,7 +59,7 @@ class ChunkMeshLifecycleStructureTest {
                         "release", ChunkRenderObject.class);
         Method renderFrame =
                 Renderer.class.getMethod(
-                        "renderFrame", Collection.class);
+                        "renderFrame", RenderFrameInput.class);
         assertEquals(ChunkRenderObject.class, upload.getReturnType());
         assertEquals(void.class, release.getReturnType());
         assertEquals(void.class, renderFrame.getReturnType());

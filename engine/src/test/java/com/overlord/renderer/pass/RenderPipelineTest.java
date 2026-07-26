@@ -163,6 +163,19 @@ class RenderPipelineTest {
         assertTrue(stateBackend.depthWrite);
     }
 
+    @Test
+    void skyPassRecordsOneTriangleOnlyAfterSuccessfulDraw() {
+        List<Long> triangles = new ArrayList<>();
+        new SkyRenderPass(
+                        new RecordingRenderStateBackend(new ArrayList<>()),
+                        new RecordingShader(new ArrayList<>()),
+                        () -> {})
+                .render(
+                        new RenderContext(new Matrix4f(), new Matrix4f(), visualSettings(), triangles::add),
+                        new RenderQueue());
+        assertEquals(List.of(1L), triangles);
+    }
+
     private static RenderContext context() {
         return new RenderContext(new Matrix4f(), new Matrix4f());
     }

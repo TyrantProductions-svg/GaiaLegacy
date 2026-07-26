@@ -75,5 +75,6 @@ public final class WorldRenderPass implements RenderPass {
         shader.setFloat("fogStart", settings.fogStart());
         shader.setFloat("fogEnd", settings.fogEnd());
         item.object().mesh().draw();
+        context.metricsRecorder().recordDraw(item.object().mesh().vertexCount() / 3L);
     }
 }

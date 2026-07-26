@@ -45,6 +45,7 @@ public final class SkyRenderPass implements RenderPass {
                     "skyHorizon", vector(settings.skyHorizon()));
             shader.setVector3("skyTop", vector(settings.skyTop()));
             drawSky.run();
+            context.metricsRecorder().recordDraw(1L);
         }
     }
 

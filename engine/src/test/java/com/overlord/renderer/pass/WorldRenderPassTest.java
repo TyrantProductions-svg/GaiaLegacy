@@ -9,6 +9,7 @@ import com.overlord.renderer.AxisAlignedBounds;
 import com.overlord.renderer.ChunkGpuMesh;
 import com.overlord.renderer.ChunkRenderObject;
 import com.overlord.renderer.TextureBinding;
+import com.overlord.renderer.metrics.RenderMetricsRecorder;
 import com.overlord.renderer.material.Material;
 import com.overlord.renderer.material.MaterialDefinition;
 import com.overlord.renderer.material.RenderType;
@@ -125,6 +126,18 @@ class WorldRenderPassTest {
     private static ChunkRenderObject object(int x, ChunkGpuMesh mesh) {
         return new ChunkRenderObject(
                 new ChunkKey(x, 0), 1, mesh, new AxisAlignedBounds(0, 0, 0, 1, 1, 1));
+    }
+
+    @Test
+    void recordsOnlySuccessfulMeshDraws() {
+        List<Long> triangles = new ArrayList<>();
+        RenderQueue queue = new RenderQueue();
+        queue.submit(
+                object(0, new FakeMesh("ok", new ArrayList<>(), null)),
+                material(RenderType.OPAQUE, "ok", new FakeShader("ok", new ArrayList<>()), new ArrayList<>()));
+        new WorldRenderPass(new FakeRenderStateBackend(new ArrayList<>())).render(
+                new RenderContext(new Matrix4f(), new Matrix4f(), visualSettings(), triangles::add), queue);
+        assertEquals(List.of(1L), triangles);
     }
 
     private static RenderVisualSettings visualSettings() {

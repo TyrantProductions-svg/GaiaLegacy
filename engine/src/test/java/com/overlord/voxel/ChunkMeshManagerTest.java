@@ -562,6 +562,42 @@ class ChunkMeshManagerTest {
     }
 
     @Test
+    void meshQueueDepthTracksAwaitingAndRetainedFailedUploadsWithoutObservationMutation() {
+        UploadFixture fixture = readyFixture(1, 1);
+
+        assertEquals(1, fixture.manager.meshQueueDepth());
+        fixture.manager.renderObjects();
+        assertEquals(1, fixture.manager.meshQueueDepth());
+
+        fixture.backend.nextUploadFailure = new IllegalStateException("upload failed");
+        assertEquals(1, fixture.manager.processMainThreadWork());
+        assertEquals(1, fixture.manager.meshQueueDepth());
+
+        fixture.manager.retry(fixture.keys.get(0));
+        assertEquals(1, fixture.manager.meshQueueDepth());
+        assertEquals(1, fixture.manager.processMainThreadWork());
+        assertEquals(0, fixture.manager.meshQueueDepth());
+    }
+
+    @Test
+    void meshQueueDepthDropsForStaleUnloadAndCloseDiscards() {
+        UploadFixture stale = readyFixture(1, 2);
+        dirtyBuild(stale, stale.keys.get(0));
+        assertEquals(2, stale.manager.meshQueueDepth());
+        assertEquals(1, stale.manager.processMainThreadWork());
+        assertEquals(0, stale.manager.meshQueueDepth());
+
+        UploadFixture unloading = readyFixture(1, 1);
+        unloading.manager.unload(unloading.keys.get(0));
+        unloading.manager.processMainThreadWork();
+        assertEquals(0, unloading.manager.meshQueueDepth());
+
+        UploadFixture closing = readyFixture(1, 1);
+        closing.manager.close();
+        assertEquals(0, closing.manager.meshQueueDepth());
+    }
+
+    @Test
     void uploadsAtMostConfiguredBudgetPerFrame() {
         UploadFixture fixture = readyFixture(3, 2);
 

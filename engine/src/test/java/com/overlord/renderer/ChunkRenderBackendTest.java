@@ -90,7 +90,8 @@ class ChunkRenderBackendTest {
                         MainThreadGuard.captureCurrentThread(),
                         RenderAssets.missing());
 
-        assertWorkerRejected(() -> renderer.renderFrame(List.of()));
+        assertWorkerRejected(
+                () -> renderer.renderFrame(new RenderFrameInput(List.of(), 0.0d, 0)));
     }
 
     @Test
