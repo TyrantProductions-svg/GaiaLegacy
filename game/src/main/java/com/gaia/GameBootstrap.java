@@ -176,7 +176,8 @@ public final class GameBootstrap {
                             chunkMeshes,
                             worldLoader,
                             worldLoad,
-                            shutdownCoordinator);
+                            shutdownCoordinator,
+                            new RenderMetricsConsoleReporter(Boolean.getBoolean("gaia.renderMetrics"), System::nanoTime, System.out));
             new GameLoop(context).run();
         } catch (RuntimeException | Error failure) {
             primaryFailure = failure;

@@ -79,6 +79,7 @@ public final class GameLoop {
                                             : List.of(),
                                     frameDeltaSeconds,
                                     context.chunkMeshes().meshQueueDepth()));
+            context.renderMetricsReporter().report(context.engine().getRenderer().metrics().snapshot());
             window.swapBuffers();
         }
     }

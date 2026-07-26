@@ -29,9 +29,11 @@ public record GameContext(
         ChunkMeshManager chunkMeshes,
         WorldLoader worldLoader,
         CompletableFuture<WorldLoadResult> worldLoad,
-        ShutdownCoordinator shutdownCoordinator) {
+        ShutdownCoordinator shutdownCoordinator,
+        RenderMetricsConsoleReporter renderMetricsReporter) {
     public GameContext {
         engine = Objects.requireNonNull(engine, "engine");
+        renderMetricsReporter = Objects.requireNonNull(renderMetricsReporter, "renderMetricsReporter");
         inputManager = Objects.requireNonNull(inputManager, "inputManager");
         playerManager = Objects.requireNonNull(playerManager, "playerManager");
         physicsWorld = Objects.requireNonNull(physicsWorld, "physicsWorld");
