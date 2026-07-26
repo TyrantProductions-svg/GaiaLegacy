@@ -16,6 +16,27 @@
     "gaia:stone": {
       "x": 48, "y": 0, "width": 16, "height": 16
     },
+    "gaia:dark_stone": {
+      "x": 64, "y": 0, "width": 16, "height": 16
+    },
+    "gaia:magma": {
+      "x": 96, "y": 0, "width": 16, "height": 16
+    },
+    "gaia:magma_variant_1": {
+      "x": 112, "y": 0, "width": 16, "height": 16
+    },
+    "gaia:snow_top": {
+      "x": 32, "y": 16, "width": 16, "height": 16
+    },
+    "gaia:snow_side": {
+      "x": 48, "y": 16, "width": 16, "height": 16
+    },
+    "gaia:magma_variant_2": {
+      "x": 96, "y": 16, "width": 16, "height": 16
+    },
+    "gaia:magma_variant_3": {
+      "x": 112, "y": 16, "width": 16, "height": 16
+    },
     "gaia:missing": {
       "x": 80, "y": 0, "width": 16, "height": 16
     },
