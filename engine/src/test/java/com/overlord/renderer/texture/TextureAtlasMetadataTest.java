@@ -35,10 +35,41 @@ class TextureAtlasMetadataTest {
                         128,
                         64);
 
-        assertEquals(0.125f, region.uMin(), 1.0e-6f);
-        assertEquals(0.25f, region.uMax(), 1.0e-6f);
-        assertEquals(0.0f, region.vMin(), 1.0e-6f);
-        assertEquals(0.25f, region.vMax(), 1.0e-6f);
+        assertEquals(16.5f / 128.0f, region.uMin(), 1.0e-6f);
+        assertEquals(31.5f / 128.0f, region.uMax(), 1.0e-6f);
+        assertEquals(0.5f / 64.0f, region.vMin(), 1.0e-6f);
+        assertEquals(15.5f / 64.0f, region.vMax(), 1.0e-6f);
+    }
+
+    @Test
+    void mapsSingleAndLastPixelsToTheirCenters() {
+        TextureRegion single =
+                new TextureRegion(
+                        ResourceLocation.parse("gaia:single"),
+                        0,
+                        0,
+                        1,
+                        1,
+                        1,
+                        1);
+        TextureRegion last =
+                new TextureRegion(
+                        ResourceLocation.parse("gaia:last"),
+                        127,
+                        63,
+                        1,
+                        1,
+                        128,
+                        64);
+
+        assertEquals(0.5f, single.uMin());
+        assertEquals(single.uMin(), single.uMax());
+        assertEquals(0.5f, single.vMin());
+        assertEquals(single.vMin(), single.vMax());
+        assertEquals(127.5f / 128.0f, last.uMin());
+        assertEquals(last.uMin(), last.uMax());
+        assertEquals(63.5f / 64.0f, last.vMin());
+        assertEquals(last.vMin(), last.vMax());
     }
 
     @Test

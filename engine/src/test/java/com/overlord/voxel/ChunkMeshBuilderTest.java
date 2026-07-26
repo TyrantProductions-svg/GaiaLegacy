@@ -58,8 +58,8 @@ class ChunkMeshBuilderTest {
             assertFaceUBounds(
                     vertices,
                     face * 60,
-                    face * 16.0f / 96.0f,
-                    (face + 1) * 16.0f / 96.0f);
+                    (face * 16.0f + 0.5f) / 96.0f,
+                    (face * 16.0f + 15.5f) / 96.0f);
             assertFaceVertexData(
                     vertices,
                     face * 60,
@@ -385,10 +385,10 @@ class ChunkMeshBuilderTest {
             16, 2, 0, 16, 2, 1, 16, 1, 1
         };
         for (int face = 0; face < FACE_ORDER.length; face++) {
-            float uMin = (float) (face * 16) / 96;
-            float uMax = (float) ((face + 1) * 16) / 96;
-            float v0 = face == 2 ? 0.0f : 1.0f;
-            float v1 = face == 2 ? 1.0f : 0.0f;
+            float uMin = (face * 16.0f + 0.5f) / 96.0f;
+            float uMax = (face * 16.0f + 15.5f) / 96.0f;
+            float v0 = face == 2 ? 0.5f / 16.0f : 15.5f / 16.0f;
+            float v1 = face == 2 ? 15.5f / 16.0f : 0.5f / 16.0f;
             float[] expectedUv = {
                 uMin, v0, uMax, v0, uMax, v1,
                 uMax, v1, uMin, v1, uMin, v0
