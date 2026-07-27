@@ -60,5 +60,13 @@ public class GameConfig {
         public static final int KEY_DESCEND = org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT;
         public static final int KEY_CLOSE = org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE;
         public static final int KEY_CURSOR_CAPTURE = org.lwjgl.glfw.GLFW.GLFW_KEY_F1;
+        public static final int KEY_SELECT_LEFT = org.lwjgl.glfw.GLFW.GLFW_KEY_1;
+        public static final int KEY_SELECT_RIGHT = org.lwjgl.glfw.GLFW.GLFW_KEY_2;
+        public static final int KEY_SELECT_MOUTH = org.lwjgl.glfw.GLFW.GLFW_KEY_3;
+        public static final int KEY_DROP = org.lwjgl.glfw.GLFW.GLFW_KEY_Q;
+        public static final int KEY_DEBUG_INVENTORY_SEED = org.lwjgl.glfw.GLFW.GLFW_KEY_F5;
+        public static final int KEY_DEBUG_INVENTORY_CLEAR = org.lwjgl.glfw.GLFW.GLFW_KEY_F6;
+        public static final int KEY_DEBUG_INVENTORY_FILL = org.lwjgl.glfw.GLFW.GLFW_KEY_F7;
+        public static final int KEY_DEBUG_INVENTORY_PRINT = org.lwjgl.glfw.GLFW.GLFW_KEY_F8;
     }
 }

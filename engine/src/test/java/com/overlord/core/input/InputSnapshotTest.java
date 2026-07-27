@@ -1,5 +1,6 @@
 package com.overlord.core.input;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -7,6 +8,7 @@ import static org.lwjgl.glfw.GLFW.GLFW_KEY_SPACE;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_W;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
@@ -31,5 +33,30 @@ class InputSnapshotTest {
         assertThrows(
                 UnsupportedOperationException.class,
                 () -> heldOnly.pressedKeys().add(GLFW_KEY_SPACE));
+    }
+
+    @Test
+    void heldOnlySnapshotClearsScrollEdgesToo() {
+        InputSnapshot original = new InputSnapshot(
+                Set.of(GLFW_KEY_SPACE), Set.of(GLFW_KEY_SPACE), -2);
+
+        assertEquals(-2, original.scrollSteps());
+        assertEquals(0, original.heldOnly().scrollSteps());
+        assertTrue(original.heldOnly().scrollDeltas().isEmpty());
+    }
+
+    @Test
+    void scrollSequenceIsImmutableOrderedAndBounded() {
+        InputSnapshot snapshot = new InputSnapshot(
+                Set.of(), Set.of(), List.of(1, -2, 3));
+
+        assertEquals(List.of(1, -2, 3), snapshot.scrollDeltas());
+        assertEquals(2, snapshot.scrollSteps());
+        assertThrows(UnsupportedOperationException.class,
+                () -> snapshot.scrollDeltas().add(1));
+        assertThrows(IllegalArgumentException.class,
+                () -> new InputSnapshot(
+                        Set.of(), Set.of(),
+                        List.of(InputSnapshot.MAX_SCROLL_STEPS_PER_SAMPLE, 1)));
     }
 }

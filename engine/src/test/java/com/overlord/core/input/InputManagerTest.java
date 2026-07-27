@@ -7,6 +7,7 @@ import static org.lwjgl.glfw.GLFW.GLFW_KEY_W;
 import static org.lwjgl.glfw.GLFW.GLFW_PRESS;
 import static org.lwjgl.glfw.GLFW.GLFW_RELEASE;
 
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class InputManagerTest {
@@ -40,12 +41,14 @@ class InputManagerTest {
     void losingFocusClearsHeldAndPressedKeys() {
         InputManager manager = new InputManager();
         manager.onKey(GLFW_KEY_W, GLFW_PRESS);
+        manager.onScroll(0.0, 3.0);
 
         manager.onWindowFocus(false);
         InputSnapshot snapshot = manager.consumeFixedInput();
 
         assertFalse(snapshot.isKeyDown(GLFW_KEY_W));
         assertFalse(snapshot.isKeyPressed(GLFW_KEY_W));
+        assertEquals(0, snapshot.scrollSteps());
     }
 
     @Test
@@ -73,5 +76,62 @@ class InputManagerTest {
         assertTrue(manager.consumeKeyPress(org.lwjgl.glfw.GLFW.GLFW_KEY_F1));
         assertFalse(manager.consumeKeyPress(org.lwjgl.glfw.GLFW.GLFW_KEY_F1));
         assertTrue(manager.consumeFixedInput().isKeyPressed(GLFW_KEY_W));
+    }
+
+    @Test
+    void scrollIsLatchedForOneFixedInputSampleThenCleared() {
+        InputManager manager = new InputManager();
+
+        manager.onScroll(0.0, 1.0);
+        manager.onScroll(0.0, 1.0);
+        manager.onScroll(0.0, -1.0);
+
+        assertEquals(1, manager.consumeFixedInput().scrollSteps());
+        assertEquals(0, manager.consumeFixedInput().scrollSteps());
+    }
+
+    @Test
+    void preservesOpposingScrollCallbacksInOrderWithinOneFixedSample() {
+        InputManager manager = new InputManager();
+
+        manager.onScroll(0.0, 1.0);
+        manager.onScroll(0.0, -1.0);
+        manager.onScroll(0.0, 1.0);
+
+        InputSnapshot snapshot = manager.consumeFixedInput();
+        assertEquals(List.of(1, -1, 1), snapshot.scrollDeltas());
+        assertEquals(1, snapshot.scrollSteps());
+        assertTrue(manager.consumeFixedInput().scrollDeltas().isEmpty());
+    }
+
+    @Test
+    void boundsMalformedLargeScrollOffsetsPerFixedSample() {
+        InputManager manager = new InputManager();
+
+        manager.onScroll(0.0, 10_000.0);
+        manager.onScroll(0.0, -1.0);
+
+        InputSnapshot snapshot = manager.consumeFixedInput();
+        assertEquals(List.of(InputSnapshot.MAX_SCROLL_STEPS_PER_SAMPLE),
+                snapshot.scrollDeltas());
+        assertEquals(InputSnapshot.MAX_SCROLL_STEPS_PER_SAMPLE,
+                snapshot.scrollSteps());
+    }
+
+    @Test
+    void discardingGameplayEdgesClearsPressesAndScrollButPreservesHeldKeys() {
+        InputManager manager = new InputManager();
+        manager.onKey(GLFW_KEY_W, GLFW_PRESS);
+        manager.onKey(org.lwjgl.glfw.GLFW.GLFW_KEY_Q, GLFW_PRESS);
+        manager.onKey(org.lwjgl.glfw.GLFW.GLFW_KEY_Q, GLFW_RELEASE);
+        manager.onScroll(0.0, 2.0);
+
+        manager.discardFixedInputEdges();
+        InputSnapshot snapshot = manager.consumeFixedInput();
+
+        assertTrue(snapshot.isKeyDown(GLFW_KEY_W));
+        assertFalse(snapshot.isKeyPressed(GLFW_KEY_W));
+        assertFalse(snapshot.isKeyPressed(org.lwjgl.glfw.GLFW.GLFW_KEY_Q));
+        assertEquals(0, snapshot.scrollSteps());
     }
 }

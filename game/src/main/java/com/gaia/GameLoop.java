@@ -12,6 +12,7 @@ import com.overlord.physics.PlayerController;
 import com.overlord.renderer.RenderFrameInput;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletionException;
 import org.joml.Vector3f;
@@ -21,6 +22,7 @@ public final class GameLoop {
     private State state = State.LOADING;
     private WorldLoadResult loadResult;
     private boolean cursorCaptured = true;
+    private long inventoryTick;
     private final Vector3f interpolationScratch = new Vector3f();
 
     public GameLoop(GameContext context) {
@@ -45,6 +47,10 @@ public final class GameLoop {
                     || context.inputManager().isKeyPressed(GameConfig.Input.KEY_CLOSE)) {
                 state = State.STOPPING;
                 break;
+            }
+
+            if (state != State.RUNNING) {
+                context.inputManager().discardFixedInputEdges();
             }
 
             window.consumeSurfaceUpdate()
@@ -187,10 +193,34 @@ public final class GameLoop {
             float fixedDelta = context.fixedStepClock().fixedStepSeconds();
             InputSnapshot stepInput =
                     step == 0 ? input : input.heldOnly();
+            context.inventoryInput().handle(
+                    stepInput, inventoryTick, Optional.empty());
+            runInventoryDebugShortcut(stepInput);
             context.playerManager().fixedUpdate(fixedDelta, stepInput);
             context.physicsWorld().step(fixedDelta);
             ModuleManager.getInstance().updateAll(fixedDelta);
             EventBus.getInstance().processAll();
+            inventoryTick++;
+        }
+    }
+
+    private void runInventoryDebugShortcut(InputSnapshot input) {
+        if (!context.inventoryDebugShortcuts()) {
+            return;
+        }
+        String command = null;
+        if (input.isKeyPressed(GameConfig.Input.KEY_DEBUG_INVENTORY_SEED)) {
+            command = "seed";
+        } else if (input.isKeyPressed(GameConfig.Input.KEY_DEBUG_INVENTORY_CLEAR)) {
+            command = "clear";
+        } else if (input.isKeyPressed(GameConfig.Input.KEY_DEBUG_INVENTORY_FILL)) {
+            command = "fill";
+        } else if (input.isKeyPressed(GameConfig.Input.KEY_DEBUG_INVENTORY_PRINT)) {
+            command = "print";
+        }
+        if (command != null) {
+            System.out.println("[InventoryDebug] "
+                    + context.inventoryDebugCommands().execute(command).message());
         }
     }
 
