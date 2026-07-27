@@ -64,9 +64,20 @@ public class GameConfig {
         public static final int KEY_SELECT_RIGHT = org.lwjgl.glfw.GLFW.GLFW_KEY_2;
         public static final int KEY_SELECT_MOUTH = org.lwjgl.glfw.GLFW.GLFW_KEY_3;
         public static final int KEY_DROP = org.lwjgl.glfw.GLFW.GLFW_KEY_Q;
+        public static final int KEY_TOGGLE_GAME_MODE = org.lwjgl.glfw.GLFW.GLFW_KEY_F4;
         public static final int KEY_DEBUG_INVENTORY_SEED = org.lwjgl.glfw.GLFW.GLFW_KEY_F5;
         public static final int KEY_DEBUG_INVENTORY_CLEAR = org.lwjgl.glfw.GLFW.GLFW_KEY_F6;
         public static final int KEY_DEBUG_INVENTORY_FILL = org.lwjgl.glfw.GLFW.GLFW_KEY_F7;
         public static final int KEY_DEBUG_INVENTORY_PRINT = org.lwjgl.glfw.GLFW.GLFW_KEY_F8;
+        public static final int MOUSE_PRIMARY = org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT;
+        public static final int MOUSE_SECONDARY = org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_RIGHT;
+    }
+
+    public static final class Interaction {
+        public static final float REACH = 6.0f;
+        public static final double BASE_BREAK_SPEED = 1.0;
+        public static final int MAX_LOGICAL_WORLD_ITEMS = 1024;
+        public static final long WORLD_ITEM_PICKUP_DELAY_TICKS = 30;
+        public static final float DROP_SPEED = 3.0f;
     }
 }

@@ -173,6 +173,27 @@ Player Q drop, block drops, and Phase 11 physics drops share the service.
 They must not allocate parallel IDs, bypass reservations, or create an
 alternate production world-item store.
 
+### Phase 9A future-spawn capacity extension
+
+The Phase 7 method set above is unchanged. Block breaking additionally needs
+capacity protection before the block mutation, while `reserve(WorldItemId,
+count)` can only protect an item that already exists. The unique production
+`LogicalWorldItemService` therefore also implements the narrow
+`WorldItemSpawnReservations` capability:
+
+```java
+WorldItemSpawnReserveResult reserveSpawn(WorldItemSpawnRequest request);
+WorldItemSpawnCommitResult commitSpawn(WorldItemSpawnReservationId id);
+WorldItemSpawnCommitResult rollbackSpawn(WorldItemSpawnReservationId id);
+```
+
+This capability is not a second service, store, entity model, or ID authority.
+Runtime composition must use the same object identity for `WorldItemService`
+and `WorldItemSpawnReservations`. A successful reserve allocates a stable item
+identity and capacity but is invisible to snapshots until idempotent commit;
+rollback creates no item. Normal `spawn`, Q drops, block drops, future pickup,
+and Phase 11 physics presentation continue to share the one backend.
+
 Phase 7 supplies only `FakeWorldItemService` in test fixtures. It creates no
 production ECS entity, renderer object, collision shape, or `PhysicsBody`.
 

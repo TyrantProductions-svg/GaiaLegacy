@@ -7,12 +7,18 @@ import java.util.Set;
 public record InputSnapshot(
         Set<Integer> downKeys,
         Set<Integer> pressedKeys,
+        Set<Integer> downMouseButtons,
+        Set<Integer> pressedMouseButtons,
         List<Integer> scrollDeltas) {
     public static final int MAX_SCROLL_STEPS_PER_SAMPLE = 64;
 
     public InputSnapshot {
         downKeys = Set.copyOf(Objects.requireNonNull(downKeys, "downKeys"));
         pressedKeys = Set.copyOf(Objects.requireNonNull(pressedKeys, "pressedKeys"));
+        downMouseButtons = Set.copyOf(
+                Objects.requireNonNull(downMouseButtons, "downMouseButtons"));
+        pressedMouseButtons = Set.copyOf(
+                Objects.requireNonNull(pressedMouseButtons, "pressedMouseButtons"));
         scrollDeltas = List.copyOf(
                 Objects.requireNonNull(scrollDeltas, "scrollDeltas"));
         long magnitude = 0;
@@ -29,13 +35,20 @@ public record InputSnapshot(
     }
 
     public InputSnapshot(Set<Integer> downKeys, Set<Integer> pressedKeys) {
-        this(downKeys, pressedKeys, List.of());
+        this(downKeys, pressedKeys, Set.of(), Set.of(), List.of());
     }
 
     public InputSnapshot(
             Set<Integer> downKeys, Set<Integer> pressedKeys, int scrollSteps) {
-        this(downKeys, pressedKeys,
+        this(downKeys, pressedKeys, Set.of(), Set.of(),
                 scrollSteps == 0 ? List.of() : List.of(scrollSteps));
+    }
+
+    public InputSnapshot(
+            Set<Integer> downKeys,
+            Set<Integer> pressedKeys,
+            List<Integer> scrollDeltas) {
+        this(downKeys, pressedKeys, Set.of(), Set.of(), scrollDeltas);
     }
 
     public boolean isKeyDown(int key) {
@@ -46,11 +59,20 @@ public record InputSnapshot(
         return pressedKeys.contains(key);
     }
 
+    public boolean isMouseButtonDown(int button) {
+        return downMouseButtons.contains(button);
+    }
+
+    public boolean isMouseButtonPressed(int button) {
+        return pressedMouseButtons.contains(button);
+    }
+
     public int scrollSteps() {
         return scrollDeltas.stream().mapToInt(Integer::intValue).sum();
     }
 
     public InputSnapshot heldOnly() {
-        return new InputSnapshot(downKeys, Set.of(), List.of());
+        return new InputSnapshot(
+                downKeys, Set.of(), downMouseButtons, Set.of(), List.of());
     }
 }

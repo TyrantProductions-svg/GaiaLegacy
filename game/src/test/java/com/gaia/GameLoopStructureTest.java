@@ -144,8 +144,10 @@ class GameLoopStructureTest {
                 compact.contains(
                         "step==0?input:input.heldOnly()"));
         assertTrue(compact.contains(
-                "inventoryInput().handle(stepInput,inventoryTick,Optional.empty())"));
+                "inventoryInput().handle(stepInput,inventoryTick,Optional.of(dropLocation()))"));
         assertTrue(compact.contains("physicsWorld().step(fixedDelta)"));
+        assertTrue(compact.contains(
+                "blockInteraction().fixedUpdate("));
         assertTrue(
                 compact.contains(
                         "playerController().body()"
@@ -173,9 +175,12 @@ class GameLoopStructureTest {
         int renderCameraUpdate =
                 compact.indexOf("updateRenderCamera();");
         int render = compact.indexOf("renderFrame(");
+        int interactionUpdate =
+                compact.indexOf("blockInteraction().fixedUpdate(");
         assertTrue(inventoryInput < playerUpdate);
         assertTrue(playerUpdate < physicsStep);
-        assertTrue(physicsStep < moduleUpdate);
+        assertTrue(physicsStep < interactionUpdate);
+        assertTrue(interactionUpdate < moduleUpdate);
         assertTrue(moduleUpdate < eventProcessing);
         assertTrue(interpolation < cameraPosition);
         assertTrue(renderCameraUpdate < render);

@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_SPACE;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_W;
+import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT;
+import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_RIGHT;
 
 import java.util.HashSet;
 import java.util.List;
@@ -58,5 +60,25 @@ class InputSnapshotTest {
                 () -> new InputSnapshot(
                         Set.of(), Set.of(),
                         List.of(InputSnapshot.MAX_SCROLL_STEPS_PER_SAMPLE, 1)));
+    }
+
+    @Test
+    void heldOnlyRetainsMouseHoldsAndClearsMousePressEdges() {
+        InputSnapshot snapshot = new InputSnapshot(
+                Set.of(),
+                Set.of(),
+                Set.of(GLFW_MOUSE_BUTTON_LEFT),
+                Set.of(GLFW_MOUSE_BUTTON_LEFT, GLFW_MOUSE_BUTTON_RIGHT),
+                List.of());
+
+        InputSnapshot heldOnly = snapshot.heldOnly();
+
+        assertTrue(heldOnly.isMouseButtonDown(GLFW_MOUSE_BUTTON_LEFT));
+        assertFalse(heldOnly.isMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT));
+        assertFalse(heldOnly.isMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT));
+        assertThrows(UnsupportedOperationException.class,
+                () -> snapshot.downMouseButtons().add(GLFW_MOUSE_BUTTON_RIGHT));
+        assertThrows(UnsupportedOperationException.class,
+                () -> snapshot.pressedMouseButtons().clear());
     }
 }

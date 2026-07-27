@@ -2,11 +2,17 @@
 
 ## Snapshot
 
-The current snapshot is the Phase 5B visual rendering upgrade on
-`feat/rendering-visual-upgrade`, based on `origin/main` at
-`438859d722efb58349ada6d2100fc84f1556780c`. Its reviewed implementation HEAD
-is `c247ec1aeb1cf683f17568e4df983cd3034768d0`; the Task 13 documentation commit
-follows that implementation without changing production, tests, or builds.
+The current working snapshot is Phase 9A on `feat/block-interaction-core`,
+based on `origin/main@078067e` after the Phase 8 body-inventory merge. Phase 9A
+adds fixed-step breaking/placement, Survival/Creative policy, repository-backed
+world mutation, and the single logical world-item backend without changing the
+Phase 5 rendering or Phase 6 physics implementations.
+
+The final local Phase 9A candidate passed the Windows/JDK 21 clean build with
+663 Engine tests and 331 Game tests (994 total), plus all packaged-resource
+checks. Final Engine and Game/shared owner review is approved with no remaining
+Critical, Important, or Minor finding. Native macOS/Retina acceptance remains
+not run.
 
 The historical Phase 5A render-pipeline baseline was developed on
 `feat/render-pipeline-core` from `origin/main`
@@ -418,7 +424,7 @@ revision/dirty/stale ownership documented in
 
 ## Phase 7 contracts
 
-### Interaction, inventory, and world-item contracts
+### Interaction, body inventory, and logical world items
 
 - `ItemStack(ResourceLocation itemId, int count)` is the canonical immutable
   command value with a positive count. `ItemStackView` is only a read-only
@@ -433,9 +439,16 @@ revision/dirty/stale ownership documented in
   instances, spawn requests/results, revisioned snapshots, partial
   reservations, commit, and rollback. Q drop, block drops, pickup, and future
   Phase 11 physics drops must share it.
-- Inventory and world-item stateful implementations remain test-fixture fakes
-  only. No production inventory storage, item entity, physics body, pickup,
-  drop, persistence, or gameplay adapter is wired.
+- `BodyInventoryService` is the production main-thread mutation boundary for
+  LEFT_HAND, RIGHT_HAND, and MOUTH. It implements slot rules, atomic two-hand
+  ownership, snapshots/events, insertion/extraction, and protected reservation
+  commit/rollback. Number keys, wheel selection, Q drop, and opt-in debug tools
+  are wired through the fixed-update input path.
+- `LogicalWorldItemService` is the single production logical store. It owns Q
+  drops and block-drop future spawns in one stable ID namespace, preserves
+  canonical stacks and immutable snapshots, records pickup delay, and supports
+  existing-item and future-spawn reservations. It has no renderer or PhysicsBody;
+  physical drop motion and pickup remain Phase 11.
 - `ChunkRepository.compareAndSetBlock` owns the atomic
   `ChunkMutationOutcome`, dirty propagation, and exact issued
   `DirtyChunkRevision` values. It reports only actually loaded boundary
@@ -453,19 +466,24 @@ revision/dirty/stale ownership documented in
   failure cannot roll back; both post events are attempted, there is no
   automatic retry, and `mutationApplied() == true` prohibits blind caller
   retry.
-- `BlockRaycastService` continues to expose data-driven immutable hits while
-  preserving the Phase 6 raycast algorithm. The read-only
-  `InteractionViewModel` adds optional target/face, finite `[0, 1]` progress,
-  mode, active item projection, and resource-coded failure reason. Its
-  implementation is a test fixture, not UI or gameplay.
-- Direct game production calls matching `.setBlock(...)` remain allowlisted
-  only in `WorldLoader.java` and `GaiaWorldGenerator.java`.
-- Remaining unwired adapters are the Gaia raycast mapper, resource-ID
-  `BlockWorldAccess`, production inventory repository, production
-  world-item/ECS/physics adapter, interaction controller, and UI presenter.
-  Phase 7 does not implement breaking, placement, pickup, dropping,
-  production inventory, renderer changes, controller changes, mesh-manager
-  changes, physics drops, or UI.
+- `GaiaBlockRaycastService` maps the unique Phase 6 raycast to resource IDs.
+  `PlayerBlockTargeting` uses authoritative PhysicsBody position plus eye height
+  and Camera direction. `GaiaBlockWorldAccess` is the resource adapter over the
+  repository-issued compare-and-set outcome.
+- `BlockInteractionController` runs on the 1/60 fixed path. Survival breaking
+  uses held left-button hardness timing and reserves inventory/world-item capacity
+  before air mutation; Creative is instant, press-edge-only, and produces no drops.
+  Both placement modes are right-button press-edge-only. Placement validates a
+  loaded air destination and player AABB before reserving one Survival
+  extraction. F4 toggles mode on an edge, cancels, and stops processing for that
+  step; it does not enable noclip.
+- `BlockInteractionViewModel` extends the protected Phase 7 read-only view with
+  crack stage and game mode. No Phase 9A rendering consumes it yet.
+- Direct gameplay block writes do not call `World.setBlock`. Generation retains
+  its separate bulk-generation API, while interaction uses only
+  `WorldMutationService` and repository-owned dirty propagation.
+- Breaking/placement visuals, physical world-item bodies, pickup, persistence,
+  complex placement shapes, tools/loot, and formal HUD/UI remain deferred.
 
 ## Physics
 

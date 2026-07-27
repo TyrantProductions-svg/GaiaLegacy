@@ -1,5 +1,7 @@
 package com.gaia;
 
+import com.gaia.inventory.InventoryDropLocation;
+import com.gaia.interaction.MouseInteractionLifecycle;
 import com.gaia.world.WorldLoadResult;
 import com.gaia.world.WorldLoadState;
 import com.overlord.config.GameConfig;
@@ -19,14 +21,19 @@ import org.joml.Vector3f;
 
 public final class GameLoop {
     private final GameContext context;
+    private final MouseInteractionLifecycle mouseInteractionLifecycle;
     private State state = State.LOADING;
     private WorldLoadResult loadResult;
     private boolean cursorCaptured = true;
     private long inventoryTick;
     private final Vector3f interpolationScratch = new Vector3f();
+    private final Vector3f dropPositionScratch = new Vector3f();
+    private final Vector3f dropVelocityScratch = new Vector3f();
 
     public GameLoop(GameContext context) {
         this.context = context;
+        mouseInteractionLifecycle = new MouseInteractionLifecycle(
+                context.blockInteraction()::cancel);
     }
 
     public void run() {
@@ -35,9 +42,12 @@ public final class GameLoop {
             double frameDeltaSeconds = context.frameClock().tick();
             window.pollEvents();
             if (context.inputManager().consumeKeyPress(GameConfig.Input.KEY_CURSOR_CAPTURE)) {
-                cursorCaptured = !cursorCaptured;
-                window.setCursorCaptured(cursorCaptured);
+                cursorCaptured = mouseInteractionLifecycle.toggleCursorCapture(
+                        cursorCaptured, window::setCursorCaptured);
                 context.inputManager().resetMouseBaseline();
+            }
+            if (context.inputManager().consumeMouseInteractionInvalidation()) {
+                mouseInteractionLifecycle.onFocusLost();
             }
             MouseDelta mouseDelta = context.inputManager().consumeMouseDelta();
 
@@ -194,14 +204,34 @@ public final class GameLoop {
             InputSnapshot stepInput =
                     step == 0 ? input : input.heldOnly();
             context.inventoryInput().handle(
-                    stepInput, inventoryTick, Optional.empty());
+                    stepInput, inventoryTick, Optional.of(dropLocation()));
             runInventoryDebugShortcut(stepInput);
             context.playerManager().fixedUpdate(fixedDelta, stepInput);
             context.physicsWorld().step(fixedDelta);
+            context.blockInteraction().fixedUpdate(
+                    stepInput,
+                    fixedDelta,
+                    inventoryTick,
+                    Math.max(0L, System.nanoTime()),
+                    cursorCaptured);
             ModuleManager.getInstance().updateAll(fixedDelta);
             EventBus.getInstance().processAll();
             inventoryTick++;
         }
+    }
+
+    private InventoryDropLocation dropLocation() {
+        context.playerController().body().position(dropPositionScratch);
+        dropPositionScratch.y += GameConfig.Player.EYE_HEIGHT;
+        context.engine().getCamera().getForward(dropVelocityScratch)
+                .mul(GameConfig.Interaction.DROP_SPEED);
+        return new InventoryDropLocation(
+                dropPositionScratch.x,
+                dropPositionScratch.y,
+                dropPositionScratch.z,
+                dropVelocityScratch.x,
+                dropVelocityScratch.y,
+                dropVelocityScratch.z);
     }
 
     private void runInventoryDebugShortcut(InputSnapshot input) {
