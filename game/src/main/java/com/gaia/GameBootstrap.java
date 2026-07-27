@@ -8,7 +8,17 @@ import com.gaia.inventory.BodyInventoryService;
 import com.gaia.inventory.DebugInventoryProfile;
 import com.gaia.inventory.InventoryDebugCommands;
 import com.gaia.inventory.InventoryDebugSeeder;
+import com.gaia.inventory.InventoryDropController;
 import com.gaia.inventory.InventorySnapshotFormatter;
+import com.gaia.interaction.BlockBreakTransaction;
+import com.gaia.interaction.BlockInteractionController;
+import com.gaia.interaction.BlockPlacementTransaction;
+import com.gaia.interaction.CreativeSelection;
+import com.gaia.interaction.GaiaBlockRaycastService;
+import com.gaia.interaction.GaiaBlockWorldAccess;
+import com.gaia.interaction.GameMode;
+import com.gaia.interaction.GameModeManager;
+import com.gaia.interaction.PlayerBlockTargeting;
 import com.gaia.world.GaiaWorldGenerator;
 import com.gaia.world.SafeSpawnSelector;
 import com.gaia.world.WorldLoadResult;
@@ -27,6 +37,8 @@ import com.overlord.core.input.InputManager;
 import com.overlord.core.lifecycle.ShutdownCoordinator;
 import com.overlord.core.thread.MainThreadGuard;
 import com.overlord.event.EventBus;
+import com.overlord.interaction.DefaultWorldMutationService;
+import com.overlord.interaction.SynchronousBlockChangeEventPublisher;
 import com.overlord.interaction.api.EntityRef;
 import com.overlord.inventory.api.ItemStack;
 import com.overlord.core.time.FixedStepClock;
@@ -42,6 +54,7 @@ import com.overlord.physics.PlayerController;
 import com.overlord.renderer.visual.RenderVisualSettings;
 import com.overlord.voxel.ChunkMeshBuilder;
 import com.overlord.voxel.ChunkMeshManager;
+import com.overlord.worlditem.LogicalWorldItemService;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -140,11 +153,64 @@ public final class GameBootstrap {
             InventoryDebugCommands inventoryDebugCommands =
                     createInventoryDebugCommands(
                             inventoryService, inventoryOwner);
+            LogicalWorldItemService worldItems =
+                    new LogicalWorldItemService(
+                            mainThreadGuard,
+                            GameConfig.Interaction.MAX_LOGICAL_WORLD_ITEMS,
+                            GameConfig.Interaction.WORLD_ITEM_PICKUP_DELAY_TICKS);
             BodyInventoryInputController inventoryInput =
                     new BodyInventoryInputController(
                             inventoryService,
                             inventoryOwner,
-                            Optional.empty());
+                            Optional.of(new InventoryDropController(
+                                    inventoryService, worldItems)));
+            GaiaBlockWorldAccess blockWorld =
+                    new GaiaBlockWorldAccess(engine.getWorld(), blocks);
+            DefaultWorldMutationService worldMutations =
+                    new DefaultWorldMutationService(
+                            mainThreadGuard,
+                            blockWorld,
+                            SynchronousBlockChangeEventPublisher.noSubscribers());
+            PlayerBlockTargeting blockTargeting =
+                    new PlayerBlockTargeting(
+                            new GaiaBlockRaycastService(blockRaycast, blocks),
+                            playerBody,
+                            engine.getCamera(),
+                            engine.getWorld().chunks(),
+                            GameConfig.Player.EYE_HEIGHT,
+                            GameConfig.Interaction.REACH);
+            GameModeManager gameModes =
+                    new GameModeManager(
+                            GameMode.SURVIVAL,
+                            EventBus.getInstance()::publish);
+            CreativeSelection creativeSelection =
+                    new CreativeSelection(
+                            blocks,
+                            Optional.of(ResourceLocation.parse("gaia:dirt")));
+            BlockInteractionController blockInteraction =
+                    new BlockInteractionController(
+                            gameModes,
+                            blockTargeting,
+                            engine.getWorld().chunks(),
+                            blocks,
+                            inventoryService,
+                            inventoryOwner,
+                            creativeSelection,
+                            new BlockBreakTransaction(
+                                    worldMutations,
+                                    inventoryService,
+                                    inventoryOwner,
+                                    worldItems,
+                                    ResourceLocation.parse("gaia:air")),
+                            new BlockPlacementTransaction(
+                                    worldMutations,
+                                    inventoryService,
+                                    inventoryOwner,
+                                    blocks,
+                                    blockWorld,
+                                    playerBody,
+                                    ResourceLocation.parse("gaia:air")),
+                            GameConfig.Interaction.BASE_BREAK_SPEED);
             runConfiguredInventoryDebugCommand(inventoryDebugCommands);
             WorldGenerator generator =
                     GaiaWorldGenerator.createVisualRevisionCandidate();
@@ -211,6 +277,8 @@ public final class GameBootstrap {
                             inventoryInput,
                             inventoryDebugCommands,
                             Boolean.getBoolean("gaia.inventory.debugShortcuts"),
+                            blockInteraction,
+                            worldItems,
                             shutdownCoordinator,
                             new RenderMetricsConsoleReporter(Boolean.getBoolean("gaia.renderMetrics"), System::nanoTime, System.out));
             new GameLoop(context).run();

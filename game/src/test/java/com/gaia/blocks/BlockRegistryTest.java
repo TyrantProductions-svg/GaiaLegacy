@@ -61,6 +61,11 @@ class BlockRegistryTest {
                         registry.itemForm(
                                         ResourceLocation.parse("gaia:high"))
                                 .orElseThrow()),
+                () -> assertSame(
+                        high,
+                        registry.blockForItem(
+                                        ResourceLocation.parse("gaia:high"))
+                                .orElseThrow()),
                 () -> assertTrue(registry.resolve(200).renderable()));
     }
 

@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_W;
 import static org.lwjgl.glfw.GLFW.GLFW_PRESS;
 import static org.lwjgl.glfw.GLFW.GLFW_RELEASE;
+import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT;
+import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_RIGHT;
 
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -133,5 +135,107 @@ class InputManagerTest {
         assertFalse(snapshot.isKeyPressed(GLFW_KEY_W));
         assertFalse(snapshot.isKeyPressed(org.lwjgl.glfw.GLFW.GLFW_KEY_Q));
         assertEquals(0, snapshot.scrollSteps());
+    }
+
+    @Test
+    void mousePressEdgeIsLatchedOnceWhileHoldSurvivesFixedSamples() {
+        InputManager manager = new InputManager();
+        manager.onMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS);
+
+        InputSnapshot first = manager.consumeFixedInput();
+        InputSnapshot second = manager.consumeFixedInput();
+
+        assertTrue(first.isMouseButtonDown(GLFW_MOUSE_BUTTON_LEFT));
+        assertTrue(first.isMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT));
+        assertTrue(second.isMouseButtonDown(GLFW_MOUSE_BUTTON_LEFT));
+        assertFalse(second.isMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT));
+    }
+
+    @Test
+    void focusLossClearsHeldAndPressedMouseButtons() {
+        InputManager manager = new InputManager();
+        manager.onMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS);
+
+        manager.onWindowFocus(false);
+        InputSnapshot snapshot = manager.consumeFixedInput();
+
+        assertFalse(snapshot.isMouseButtonDown(GLFW_MOUSE_BUTTON_LEFT));
+        assertFalse(snapshot.isMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT));
+    }
+
+    @Test
+    void focusLossPublishesOneMouseInteractionInvalidation() {
+        InputManager manager = new InputManager();
+
+        manager.onWindowFocus(false);
+
+        assertTrue(manager.consumeMouseInteractionInvalidation());
+        assertFalse(manager.consumeMouseInteractionInvalidation());
+    }
+
+    @Test
+    void cursorCaptureResetClearsHeldAndPressedMouseButtons() {
+        InputManager manager = new InputManager();
+        manager.onMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS);
+
+        manager.resetMouseBaseline();
+        InputSnapshot snapshot = manager.consumeFixedInput();
+
+        assertFalse(snapshot.isMouseButtonDown(GLFW_MOUSE_BUTTON_LEFT));
+        assertFalse(snapshot.isMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT));
+    }
+
+    @Test
+    void cursorCaptureResetRejectsAnotherPressUntilPhysicalRelease() {
+        InputManager manager = new InputManager();
+        manager.onMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS);
+
+        manager.resetMouseBaseline();
+        manager.onMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS);
+        InputSnapshot stillSuppressed = manager.consumeFixedInput();
+
+        assertFalse(stillSuppressed.isMouseButtonDown(GLFW_MOUSE_BUTTON_LEFT));
+        assertFalse(stillSuppressed.isMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT));
+
+        manager.onMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE);
+        manager.onMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS);
+        InputSnapshot rearmed = manager.consumeFixedInput();
+
+        assertTrue(rearmed.isMouseButtonDown(GLFW_MOUSE_BUTTON_LEFT));
+        assertTrue(rearmed.isMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT));
+    }
+
+    @Test
+    void focusLossRejectsAnotherPressUntilPhysicalRelease() {
+        InputManager manager = new InputManager();
+        manager.onMouseButton(GLFW_MOUSE_BUTTON_RIGHT, GLFW_PRESS);
+
+        manager.onWindowFocus(false);
+        manager.onMouseButton(GLFW_MOUSE_BUTTON_RIGHT, GLFW_RELEASE);
+        manager.onWindowFocus(true);
+        manager.onMouseButton(GLFW_MOUSE_BUTTON_RIGHT, GLFW_PRESS);
+        InputSnapshot stillSuppressed = manager.consumeFixedInput();
+
+        assertFalse(stillSuppressed.isMouseButtonDown(GLFW_MOUSE_BUTTON_RIGHT));
+        assertFalse(stillSuppressed.isMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT));
+
+        manager.onMouseButton(GLFW_MOUSE_BUTTON_RIGHT, GLFW_RELEASE);
+        manager.onMouseButton(GLFW_MOUSE_BUTTON_RIGHT, GLFW_PRESS);
+        InputSnapshot rearmed = manager.consumeFixedInput();
+
+        assertTrue(rearmed.isMouseButtonDown(GLFW_MOUSE_BUTTON_RIGHT));
+        assertTrue(rearmed.isMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT));
+    }
+
+    @Test
+    void discardingEdgesPreservesHeldMouseButtonButClearsItsPress() {
+        InputManager manager = new InputManager();
+        manager.onMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS);
+
+        manager.discardFixedInputEdges();
+        InputSnapshot snapshot = manager.consumeFixedInput();
+
+        assertTrue(snapshot.isMouseButtonDown(GLFW_MOUSE_BUTTON_LEFT));
+        assertFalse(snapshot.isMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT));
     }
 }

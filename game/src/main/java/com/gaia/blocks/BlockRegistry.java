@@ -127,6 +127,21 @@ public final class BlockRegistry implements BlockRenderResolver {
                 itemsById.get(Objects.requireNonNull(itemId, "itemId")));
     }
 
+    public Optional<BlockDefinition> find(ResourceLocation name) {
+        return Optional.ofNullable(
+                definitionsByName.get(Objects.requireNonNull(name, "name")));
+    }
+
+    /** Resolves the owning block without creating a parallel item registry. */
+    public Optional<BlockDefinition> blockForItem(ResourceLocation itemId) {
+        Objects.requireNonNull(itemId, "itemId");
+        return definitionsByName.values().stream()
+                .filter(definition ->
+                        definition.item() != null
+                                && definition.item().id().equals(itemId))
+                .findFirst();
+    }
+
     @Override
     public BlockRenderInfo resolve(int unsignedBlockId) {
         return renderInfoById.getOrDefault(

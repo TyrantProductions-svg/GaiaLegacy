@@ -6,7 +6,7 @@
 
 GaiaLegacy is an experimental physical voxel survival project focused on embodied choices, deterministic exploration, and systems that meet at clear technical boundaries.
 
-The public repository is currently a **pre-alpha Milestone 1 foundation**, not a finished game. The source build offers a finite generated world to explore with fixed-step movement and a modernized voxel render pipeline. Inventory, block interaction, world items, persistence, and the survival loop remain under development.
+The public repository is currently a **pre-alpha Milestone 1 foundation**, not a finished game. The source build offers a finite generated world to explore with fixed-step movement, a modernized voxel render pipeline, a transactional three-slot body inventory, and an early logical breaking/placement loop. Interaction feedback, physical world items, persistence, and the broader survival loop remain under development.
 
 ## Current public build
 
@@ -17,10 +17,11 @@ The public repository is currently a **pre-alpha Milestone 1 foundation**, not a
 | Fixed 1/60-second player physics, collision, stepping, ground snap, noclip | **Available** |
 | GLSL 410 lighting, AO, sky, fog, frustum culling, render metrics | **Available** |
 | Data-driven block/material/atlas resources | **Available** |
-| Interaction, inventory, and world-item API contracts | **In development** |
-| Player-facing breaking, placement, inventory, HUD, saves, survival | **Planned / not playable** |
+| Transactional left-hand, right-hand, and mouth inventory | **Available (developer-facing)** |
+| Survival/Creative breaking and placement; logical world-item storage | **Available (no visual feedback yet)** |
+| Crack/world-item visuals, HUD, pickup, saves, broader survival | **Planned / not playable** |
 
-Documentation baseline: [`main@1ae90ef`](https://github.com/TyrantProductions-svg/GaiaLegacy/commit/1ae90efdf7fe512bf1101d62557ec878862bab13), checked 2026-07-26.
+Phase 9A candidate baseline: [`main@078067e`](https://github.com/TyrantProductions-svg/GaiaLegacy/commit/078067e), checked 2026-07-27. The Phase 9A implementation is currently local to `feat/block-interaction-core` until review and merge.
 
 ## Build and run
 
@@ -45,7 +46,7 @@ macOS:
 ./gradlew :game --console=plain --no-daemon
 ```
 
-The latest Windows baseline passed 893 automated tests and development/installDist interactive acceptance. Latest native macOS/Retina acceptance is **NOT RUN**; the OpenGL and build architecture intentionally target macOS compatibility, but this is not a substitute for native evidence.
+The current Phase 9A candidate passes 994 automated tests. Latest native macOS/Retina acceptance is **NOT RUN**; the OpenGL and build architecture intentionally target macOS compatibility, but this is not a substitute for native evidence.
 
 ## Controls
 
@@ -56,8 +57,15 @@ The latest Windows baseline passed 893 automated tests and development/installDi
 | Jump | `Space` |
 | Toggle noclip | Double-tap `Space` |
 | Descend in noclip | `Left Shift` |
+| Break targeted block | Hold left mouse button |
+| Place selected block | Right mouse button |
+| Select left hand / right hand / mouth | `1` / `2` / `3` or mouse wheel |
+| Drop active item logically | `Q` |
+| Toggle Survival / Creative | `F4` |
 | Release/recapture cursor | `F1` |
 | Exit | `Escape` |
+
+Phase 9A does not yet draw the selected slots, crack progress, or dropped items. A successful logical drop therefore has no world-space visual until later phases.
 
 ## Project map
 

@@ -3,6 +3,7 @@ package com.gaia;
 import com.gaia.inventory.BodyInventoryInputController;
 import com.gaia.inventory.BodyInventoryService;
 import com.gaia.inventory.InventoryDebugCommands;
+import com.gaia.interaction.BlockInteractionController;
 import com.gaia.world.WorldLoadResult;
 import com.gaia.world.WorldLoader;
 import com.overlord.core.Engine;
@@ -17,6 +18,7 @@ import com.overlord.physics.PhysicsWorld;
 import com.overlord.physics.PlayerController;
 import com.overlord.interaction.api.EntityRef;
 import com.overlord.voxel.ChunkMeshManager;
+import com.overlord.worlditem.LogicalWorldItemService;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
@@ -38,6 +40,8 @@ public record GameContext(
         BodyInventoryInputController inventoryInput,
         InventoryDebugCommands inventoryDebugCommands,
         boolean inventoryDebugShortcuts,
+        BlockInteractionController blockInteraction,
+        LogicalWorldItemService worldItems,
         ShutdownCoordinator shutdownCoordinator,
         RenderMetricsConsoleReporter renderMetricsReporter) {
     public GameContext {
@@ -61,6 +65,9 @@ public record GameContext(
         inventoryInput = Objects.requireNonNull(inventoryInput, "inventoryInput");
         inventoryDebugCommands = Objects.requireNonNull(
                 inventoryDebugCommands, "inventoryDebugCommands");
+        blockInteraction = Objects.requireNonNull(
+                blockInteraction, "blockInteraction");
+        worldItems = Objects.requireNonNull(worldItems, "worldItems");
         shutdownCoordinator =
                 Objects.requireNonNull(shutdownCoordinator, "shutdownCoordinator");
     }

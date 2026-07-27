@@ -1,10 +1,14 @@
 package com.overlord.core.input;
 
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_LAST;
+import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT;
+import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LAST;
+import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_RIGHT;
 import static org.lwjgl.glfw.GLFW.GLFW_PRESS;
 import static org.lwjgl.glfw.GLFW.GLFW_RELEASE;
 import static org.lwjgl.glfw.GLFW.glfwSetCursorPosCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetKeyCallback;
+import static org.lwjgl.glfw.GLFW.glfwSetMouseButtonCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetScrollCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetWindowFocusCallback;
 
@@ -20,6 +24,12 @@ public final class InputManager {
     private final MainThreadGuard mainThreadGuard;
     private final boolean[] downKeys = new boolean[GLFW_KEY_LAST + 1];
     private final boolean[] pressedKeys = new boolean[GLFW_KEY_LAST + 1];
+    private final boolean[] downMouseButtons =
+            new boolean[GLFW_MOUSE_BUTTON_LAST + 1];
+    private final boolean[] pressedMouseButtons =
+            new boolean[GLFW_MOUSE_BUTTON_LAST + 1];
+    private final boolean[] suppressedMouseButtons =
+            new boolean[GLFW_MOUSE_BUTTON_LAST + 1];
 
     private boolean hasMouseBaseline;
     private double lastMouseX;
@@ -28,6 +38,8 @@ public final class InputManager {
     private double accumulatedMouseY;
     private final List<Integer> accumulatedScrollDeltas = new ArrayList<>();
     private int accumulatedScrollMagnitude;
+    private boolean mouseInteractionInvalidated;
+    private boolean windowFocused = true;
 
     public InputManager() {
         this(MainThreadGuard.captureCurrentThread());
@@ -41,6 +53,10 @@ public final class InputManager {
     public void install(long window) {
         mainThreadGuard.assertMainThread("GLFW input callback installation");
         glfwSetKeyCallback(window, (ignored, key, scancode, action, mods) -> onKey(key, action));
+        glfwSetMouseButtonCallback(
+                window,
+                (ignored, button, action, mods) ->
+                        onMouseButton(button, action));
         glfwSetCursorPosCallback(window, (ignored, x, y) -> onCursorPosition(x, y));
         glfwSetScrollCallback(window, (ignored, xOffset, yOffset) -> onScroll(xOffset, yOffset));
         glfwSetWindowFocusCallback(window, (ignored, focused) -> onWindowFocus(focused));
@@ -50,16 +66,23 @@ public final class InputManager {
         mainThreadGuard.assertMainThread("fixed input consumption");
         Set<Integer> down = copySetBits(downKeys);
         Set<Integer> pressed = copySetBits(pressedKeys);
+        Set<Integer> downButtons = copySetBits(downMouseButtons);
+        Set<Integer> pressedButtons = copySetBits(pressedMouseButtons);
+        removeSuppressedButtons(downButtons);
+        removeSuppressedButtons(pressedButtons);
         List<Integer> scrollDeltas = List.copyOf(accumulatedScrollDeltas);
         Arrays.fill(pressedKeys, false);
+        Arrays.fill(pressedMouseButtons, false);
         clearScrollEdges();
-        return new InputSnapshot(down, pressed, scrollDeltas);
+        return new InputSnapshot(
+                down, pressed, downButtons, pressedButtons, scrollDeltas);
     }
 
     /** Discards gameplay edges while retaining held-key state. */
     public void discardFixedInputEdges() {
         mainThreadGuard.assertMainThread("fixed input edge discard");
         Arrays.fill(pressedKeys, false);
+        Arrays.fill(pressedMouseButtons, false);
         clearScrollEdges();
     }
 
@@ -85,6 +108,17 @@ public final class InputManager {
     public void resetMouseBaseline() {
         mainThreadGuard.assertMainThread("mouse baseline reset");
         resetMouseState();
+        suppressHeldDestructiveMouseButtons();
+        Arrays.fill(downMouseButtons, false);
+        Arrays.fill(pressedMouseButtons, false);
+    }
+
+    /** Returns and clears the focus-loss signal for the game interaction boundary. */
+    public boolean consumeMouseInteractionInvalidation() {
+        mainThreadGuard.assertMainThread("mouse interaction invalidation consumption");
+        boolean invalidated = mouseInteractionInvalidated;
+        mouseInteractionInvalidated = false;
+        return invalidated;
     }
 
     public MouseDelta consumeMouseDelta() {
@@ -110,6 +144,24 @@ public final class InputManager {
             downKeys[key] = true;
         } else if (action == GLFW_RELEASE) {
             downKeys[key] = false;
+        }
+    }
+
+    void onMouseButton(int button, int action) {
+        mainThreadGuard.assertMainThread("GLFW mouse button callback");
+        if (button < 0 || button >= downMouseButtons.length) {
+            return;
+        }
+        if (action == GLFW_PRESS) {
+            if (!downMouseButtons[button] && !suppressedMouseButtons[button]) {
+                pressedMouseButtons[button] = true;
+            }
+            downMouseButtons[button] = true;
+        } else if (action == GLFW_RELEASE) {
+            downMouseButtons[button] = false;
+            if (windowFocused) {
+                suppressedMouseButtons[button] = false;
+            }
         }
     }
 
@@ -146,11 +198,16 @@ public final class InputManager {
 
     void onWindowFocus(boolean focused) {
         mainThreadGuard.assertMainThread("GLFW focus callback");
+        windowFocused = focused;
         resetMouseState();
         if (!focused) {
+            suppressHeldDestructiveMouseButtons();
             Arrays.fill(downKeys, false);
             Arrays.fill(pressedKeys, false);
+            Arrays.fill(downMouseButtons, false);
+            Arrays.fill(pressedMouseButtons, false);
             clearScrollEdges();
+            mouseInteractionInvalidated = true;
         }
     }
 
@@ -163,6 +220,21 @@ public final class InputManager {
         hasMouseBaseline = false;
         accumulatedMouseX = 0.0;
         accumulatedMouseY = 0.0;
+    }
+
+    private void suppressHeldDestructiveMouseButtons() {
+        suppressIfDown(GLFW_MOUSE_BUTTON_LEFT);
+        suppressIfDown(GLFW_MOUSE_BUTTON_RIGHT);
+    }
+
+    private void suppressIfDown(int button) {
+        if (downMouseButtons[button]) {
+            suppressedMouseButtons[button] = true;
+        }
+    }
+
+    private void removeSuppressedButtons(Set<Integer> buttons) {
+        buttons.removeIf(button -> suppressedMouseButtons[button]);
     }
 
     private static Set<Integer> copySetBits(boolean[] values) {
