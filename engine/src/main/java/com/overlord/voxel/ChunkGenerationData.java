@@ -8,15 +8,22 @@ public final class ChunkGenerationData {
     private final ChunkKey key;
     private final int worldHeight;
     private final byte[] blocks;
+    private final BlockPlacement[] blockPlacements;
 
     public ChunkGenerationData(
-            ChunkKey key, int worldHeight, byte[] blocks) {
+            ChunkKey key, int worldHeight, byte[] blocks, BlockSize[] blockSizes) {
+        this(key, worldHeight, blocks, blockPlacementsFromBlockSizes(blockSizes));
+    }
+
+    public ChunkGenerationData(
+            ChunkKey key, int worldHeight, byte[] blocks, BlockPlacement[] blockPlacements) {
         this.key = Objects.requireNonNull(key, "key");
         if (worldHeight <= 0) {
             throw new IllegalArgumentException(
                     "worldHeight must be greater than zero");
         }
         Objects.requireNonNull(blocks, "blocks");
+        Objects.requireNonNull(blockPlacements, "blockPlacements");
         int expectedLength = canonicalBlockCount(worldHeight);
         if (blocks.length != expectedLength) {
             throw new IllegalArgumentException(
@@ -24,8 +31,25 @@ public final class ChunkGenerationData {
                             + expectedLength
                             + " bytes");
         }
+        if (blockPlacements.length != expectedLength) {
+            throw new IllegalArgumentException(
+                    "blockPlacements must contain exactly "
+                            + expectedLength
+                            + " entries");
+        }
         this.worldHeight = worldHeight;
         this.blocks = Arrays.copyOf(blocks, blocks.length);
+        this.blockPlacements = Arrays.copyOf(blockPlacements, blockPlacements.length);
+    }
+
+    private static BlockPlacement[] blockPlacementsFromBlockSizes(
+            BlockSize[] blockSizes) {
+        Objects.requireNonNull(blockSizes, "blockSizes");
+        BlockPlacement[] placements = new BlockPlacement[blockSizes.length];
+        for (int i = 0; i < blockSizes.length; i++) {
+            placements[i] = BlockPlacement.of(blockSizes[i]);
+        }
+        return placements;
     }
 
     public ChunkKey key() {
@@ -47,6 +71,27 @@ public final class ChunkGenerationData {
 
     public byte[] copyBlocks() {
         return Arrays.copyOf(blocks, blocks.length);
+    }
+
+    public BlockSize getBlockSize(int localX, int y, int localZ) {
+        validateCoordinate(
+                localX, GameConfig.Chunk.SIZE, "localX");
+        validateCoordinate(y, worldHeight, "y");
+        validateCoordinate(
+                localZ, GameConfig.Chunk.SIZE, "localZ");
+        return blockPlacements[index(localX, y, localZ)].size();
+    }
+
+    public BlockSize[] copyBlockSizes() {
+        BlockSize[] sizes = new BlockSize[blockPlacements.length];
+        for (int i = 0; i < blockPlacements.length; i++) {
+            sizes[i] = blockPlacements[i].size();
+        }
+        return sizes;
+    }
+
+    public BlockPlacement[] copyBlockPlacements() {
+        return Arrays.copyOf(blockPlacements, blockPlacements.length);
     }
 
     private int index(int localX, int y, int localZ) {

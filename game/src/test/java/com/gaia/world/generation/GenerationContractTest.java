@@ -14,6 +14,7 @@ import com.overlord.renderer.material.RenderType;
 import com.overlord.renderer.texture.TextureRegion;
 import com.overlord.voxel.BlockFace;
 import com.overlord.voxel.BlockRenderInfo;
+import com.overlord.voxel.BlockSize;
 import com.overlord.voxel.ChunkGenerationData;
 import com.overlord.voxel.ChunkKey;
 import java.util.ArrayList;
@@ -245,8 +246,11 @@ class GenerationContractTest {
     }
 
     private static ChunkGenerationData chunkData() {
+        byte[] blocks = new byte[16 * 8 * 16];
+        BlockSize[] blockSizes = new BlockSize[blocks.length];
+        java.util.Arrays.fill(blockSizes, BlockSize.SIZE_16);
         return new ChunkGenerationData(
-                new ChunkKey(0, 0), 8, new byte[16 * 8 * 16]);
+                new ChunkKey(0, 0), 8, blocks, blockSizes);
     }
 
     private static BlockRegistry blockRegistry() {

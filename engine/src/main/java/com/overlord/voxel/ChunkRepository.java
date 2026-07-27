@@ -147,7 +147,7 @@ public final class ChunkRepository {
 
         Chunk detached =
                 Chunk.fromCanonicalBytes(
-                        data.worldHeight(), data.copyBlocks());
+                        data.worldHeight(), data.copyBlocks(), data.copyBlockSizes());
         long committedRevision;
         ChangedMeshingBoundaries changedBoundaries =
                 ChangedMeshingBoundaries.NONE;
@@ -287,6 +287,40 @@ public final class ChunkRepository {
         }
         synchronized (entry) {
             return entry.chunk.getBlock(
+                    ChunkKey.localCoordinate(worldX),
+                    y,
+                    ChunkKey.localCoordinate(worldZ));
+        }
+    }
+
+    public BlockPlacement getBlockPlacement(int worldX, int y, int worldZ) {
+        if (y < 0 || y >= worldHeight) {
+            return BlockPlacement.full();
+        }
+        ChunkKey key = ChunkKey.fromWorld(worldX, worldZ);
+        Entry entry = entries.get(key);
+        if (entry == null) {
+            return BlockPlacement.full();
+        }
+        synchronized (entry) {
+            return entry.chunk.getBlockPlacement(
+                    ChunkKey.localCoordinate(worldX),
+                    y,
+                    ChunkKey.localCoordinate(worldZ));
+        }
+    }
+
+    public BlockSize getBlockSize(int worldX, int y, int worldZ) {
+        if (y < 0 || y >= worldHeight) {
+            return BlockSize.SIZE_16;
+        }
+        ChunkKey key = ChunkKey.fromWorld(worldX, worldZ);
+        Entry entry = entries.get(key);
+        if (entry == null) {
+            return BlockSize.SIZE_16;
+        }
+        synchronized (entry) {
+            return entry.chunk.getBlockSize(
                     ChunkKey.localCoordinate(worldX),
                     y,
                     ChunkKey.localCoordinate(worldZ));
@@ -461,10 +495,17 @@ public final class ChunkRepository {
                                             GameConfig.Chunk.SIZE,
                                             worldHeight),
                                     GameConfig.Chunk.SIZE)];
+            BlockPlacement[] blockPlacements =
+                    new BlockPlacement[blocks.length];
             entry.chunk.copyBlocksTo(blocks);
+            entry.chunk.copyBlockPlacementsTo(blockPlacements);
             return Optional.of(
                     ChunkSnapshot.of(
-                            key, entry.revision, worldHeight, blocks));
+                            key,
+                            entry.revision,
+                            worldHeight,
+                            blocks,
+                            blockPlacements));
         }
     }
 

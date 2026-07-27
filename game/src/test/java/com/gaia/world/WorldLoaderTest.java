@@ -23,6 +23,7 @@ import com.gaia.world.generation.WorldGenerator;
 import com.overlord.assets.AssetManager;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.config.GameConfig;
+import com.overlord.voxel.BlockSize;
 import com.overlord.voxel.ChunkDirtyTracker;
 import com.overlord.voxel.ChunkGenerationData;
 import com.overlord.voxel.ChunkGenerationMode;
@@ -109,7 +110,7 @@ class WorldLoaderTest {
 
         assertEquals(81, result.initialChunks().size());
         assertEquals(
-                "161f6c10773c8dfd84e6961183e8706d5a0ec00750e727e83c4a08afcfbd5ce8",
+                "77adae7184f4ef3fd76f3d6f4ee05100c8a53773889f2e28fd3d7a5d785706a3",
                 result.generationHash());
         assertTrue(
                 result.initialChunks().stream()
@@ -1422,7 +1423,9 @@ class WorldLoaderTest {
                 }
             }
         }
-        return new ChunkGenerationData(key, worldHeight, blocks);
+        BlockSize[] blockSizes = new BlockSize[blocks.length];
+        java.util.Arrays.fill(blockSizes, BlockSize.SIZE_16);
+        return new ChunkGenerationData(key, worldHeight, blocks, blockSizes);
     }
 
     private static World loadedWorld(

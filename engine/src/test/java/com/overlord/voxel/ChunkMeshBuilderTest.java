@@ -10,6 +10,7 @@ import com.overlord.renderer.AxisAlignedBounds;
 import com.overlord.renderer.material.MaterialDefinition;
 import com.overlord.renderer.material.RenderType;
 import com.overlord.renderer.texture.TextureRegion;
+import com.overlord.voxel.BlockSize;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -279,6 +280,23 @@ class ChunkMeshBuilderTest {
     }
 
     @Test
+    void emitsHalfSizeBlockFaceWhenNeighborIsFullSize() {
+        ChunkKey key = new ChunkKey(0, 0);
+        ChunkSnapshot center =
+                snapshotWithBlock(
+                        key, 1, 1, 1, 1, (byte) 1, BlockSize.SIZE_8);
+        ChunkSnapshot east =
+                snapshotWithBlock(
+                        key.east(), 2, 1, 1, 1, (byte) 1);
+
+        ChunkMeshData data =
+                builder().build(
+                        meshInput(center, null, east, null, null));
+
+        assertEquals(360, data.vertices().length);
+    }
+
+    @Test
     void rejectsMissingCenterSnapshot() {
         assertThrows(
                 NullPointerException.class,
@@ -448,6 +466,17 @@ class ChunkMeshBuilderTest {
             int y,
             int z,
             byte block) {
+        return snapshotWithBlock(key, revision, x, y, z, block, BlockSize.SIZE_16);
+    }
+
+    private static ChunkSnapshot snapshotWithBlock(
+            ChunkKey key,
+            long revision,
+            int x,
+            int y,
+            int z,
+            byte block,
+            BlockSize size) {
         byte[] blocks =
                 new byte[
                         GameConfig.Chunk.SIZE
@@ -458,8 +487,11 @@ class ChunkMeshBuilderTest {
                         + y * GameConfig.Chunk.SIZE
                         + z * GameConfig.Chunk.SIZE * WORLD_HEIGHT;
         blocks[index] = block;
+        BlockSize[] blockSizes = new BlockSize[blocks.length];
+        java.util.Arrays.fill(blockSizes, BlockSize.SIZE_16);
+        blockSizes[index] = size;
         return ChunkSnapshot.of(
-                key, revision, WORLD_HEIGHT, blocks);
+                key, revision, WORLD_HEIGHT, blocks, blockSizes);
     }
 
     private static BlockRenderInfo renderInfo() {

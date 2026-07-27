@@ -60,7 +60,8 @@ public final class CollisionWorld {
                     BlockCollisionShape shape =
                             Objects.requireNonNull(
                                     shapeResolver.shapeFor(
-                                            world.getBlock(x, y, z)),
+                                            world.getBlock(x, y, z),
+                                            x, y, z, world),
                                     "shapeResolver result");
                     List<Aabb> boxes = shape.boxes();
                     for (int subShapeIndex = 0;
@@ -336,7 +337,7 @@ public final class CollisionWorld {
 
     private BlockCollisionShape resolveShape(int x, int y, int z) {
         return Objects.requireNonNull(
-                shapeResolver.shapeFor(world.getBlock(x, y, z)),
+                shapeResolver.shapeFor(world.getBlock(x, y, z), x, y, z, world),
                 "shapeResolver result");
     }
 

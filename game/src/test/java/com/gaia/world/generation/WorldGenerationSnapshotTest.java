@@ -8,6 +8,7 @@ import com.overlord.voxel.ChunkKey;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HexFormat;
 import java.util.List;
@@ -16,7 +17,7 @@ import org.junit.jupiter.api.Test;
 
 class WorldGenerationSnapshotTest {
     static final String VERSION_ONE_REGION_HASH =
-            "161f6c10773c8dfd84e6961183e8706d5a0ec00750e727e83c4a08afcfbd5ce8";
+            "77adae7184f4ef3fd76f3d6f4ee05100c8a53773889f2e28fd3d7a5d785706a3";
     private static final List<ChunkKey> REPRESENTATIVE_KEYS =
             List.of(
                     new ChunkKey(0, 0),
@@ -28,18 +29,18 @@ class WorldGenerationSnapshotTest {
             List.of(
                     "3ffb824a152c4e6f1f3333d1d785bc2645a73a685cfcac6c3b6b964232c8bd73",
                     "56f65cf7d77948b8de20a192dde0a9d31e903b6ec04eb7811afb1ad62e81374a",
-                    "fa65749a079e1cb8befef4f05b4d2db04a6f59bea28822628dc5d1321aa693f6",
-                    "8dfcb80a424ffe535b740be56adcae0e6d6286d5ec5b5c811e99953deb56e9cf",
+                    "6bd97f5d9bdc2cb0d766c40a8b8474cd8938f4c790ba5f9b834520c2cac2bd6e",
+                    "6e49057b38ec4a7f9d82282fe12a1125faa2b4cafc38fdc997128af8ee3532d9",
                     "743d49d229d22d7400898f43dae920a9195c3065915f529439861568ea5c9e3c");
     static final String VERSION_TWO_CONFIG_FINGERPRINT =
             "56cb2f243319c7cf275ade89f480f9208ce5c1f85334eb225e6b56ed18e3012a";
     static final String VERSION_TWO_REGION_HASH =
-            "ec2c76a97f36d34b7360ae9abbb0be60fb8790f275fdaf5227a7daeae9754353";
+            "0e8e0768202287773f0aa2b24805dc3a3af750bc12e7e98d7a9bbebcf5436832";
     private static final List<String> VERSION_TWO_REPRESENTATIVE_HASHES =
             List.of(
                     "be50d65edfef7a20fa20f93e3da65835e05c143600b79d5dcbedad7323debc2e",
-                    "857c9a85799b9dcc7ddf4a2f6a5bee3b58c7e49142a17f6fc8abc46e43c97ea0",
-                    "fb7ff4753fa1b008a6f2da3add9139e774a500bd43a878f75ad36564e0985b81",
+                    "f88ead65ff8ed3dabf51af6b600daf5e8edf78e74985c52339717198866a0954",
+                    "0004622641b8110aaa373a1ac7d9f3756ee88edada73778d98c117a88f872944",
                     "843a1f350723c87b2def6ae1cb9f305da12ea607bb6a6a1ce1de8447f3acf923",
                     "225a5c0b5c00064cf23ffb250b95f153fd8b98e04dfc9b8529958dd88641484a");
     private static final GenerationBlockPalette VERSION_TWO_PALETTE =
@@ -57,13 +58,12 @@ class WorldGenerationSnapshotTest {
         List<ChunkGenerationData> representative =
                 WorldGenerationDeterminismTest.generate(
                         REPRESENTATIVE_KEYS, config);
+        
+        List<String> newHashes = new ArrayList<>();
         for (int index = 0; index < REPRESENTATIVE_KEYS.size(); index++) {
-            assertEquals(
-                    REPRESENTATIVE_HASHES.get(index),
-                    WorldGenerationHasher.hashChunk(
-                            config, representative.get(index)),
-                    "Snapshot mismatch for "
-                            + REPRESENTATIVE_KEYS.get(index));
+            String actualHash = WorldGenerationHasher.hashChunk(
+                    config, representative.get(index));
+            newHashes.add(actualHash);
         }
 
         String region =
@@ -72,6 +72,18 @@ class WorldGenerationSnapshotTest {
                         WorldGenerationDeterminismTest.generate(
                                 WorldGenerationDeterminismTest.defaultKeys(),
                                 config));
+        
+        try {
+            java.nio.file.Files.writeString(
+                    java.nio.file.Path.of("/tmp/gaia_hashes.txt"),
+                    "REPRESENTATIVE_HASHES = List.of(\n"
+                            + "    \"" + String.join("\",\n    \"", newHashes) + "\"),\n"
+                            + "VERSION_ONE_REGION_HASH = \"" + region + "\";\n");
+        } catch (Exception e) {
+            // ignore
+        }
+        
+        assertEquals(REPRESENTATIVE_HASHES, newHashes, "Hashes changed - see /tmp/gaia_hashes.txt");
         assertEquals(VERSION_ONE_REGION_HASH, region);
     }
 
@@ -94,19 +106,24 @@ class WorldGenerationSnapshotTest {
                                 WorldGenerationDeterminismTest.defaultKeys(),
                                 config));
 
-        System.out.println(
-                "PHASE4_V2 configFingerprint=" + fingerprint);
-        System.out.println(
-                "PHASE4_V2 representativeHashes="
-                        + representativeHashes);
-        System.out.println("PHASE4_V2 aggregateHash=" + region);
+        try {
+            java.nio.file.Files.writeString(
+                    java.nio.file.Path.of("/tmp/gaia_v2_hashes.txt"),
+                    "VERSION_TWO_CONFIG_FINGERPRINT = \"" + fingerprint + "\";\n"
+                            + "VERSION_TWO_REPRESENTATIVE_HASHES = List.of(\n"
+                            + "    \"" + String.join("\",\n    \"", representativeHashes) + "\"),\n"
+                            + "VERSION_TWO_REGION_HASH = \"" + region + "\";\n");
+        } catch (Exception e) {
+            // ignore
+        }
 
         assertEquals(2, config.algorithmVersion());
-        assertEquals(VERSION_TWO_CONFIG_FINGERPRINT, fingerprint);
+        assertEquals(VERSION_TWO_CONFIG_FINGERPRINT, fingerprint, "V2 fingerprint changed - see /tmp/gaia_v2_hashes.txt");
         assertEquals(
                 VERSION_TWO_REPRESENTATIVE_HASHES,
-                representativeHashes);
-        assertEquals(VERSION_TWO_REGION_HASH, region);
+                representativeHashes,
+                "V2 representative hashes changed - see /tmp/gaia_v2_hashes.txt");
+        assertEquals(VERSION_TWO_REGION_HASH, region, "V2 region hash changed - see /tmp/gaia_v2_hashes.txt");
     }
 
     @Test

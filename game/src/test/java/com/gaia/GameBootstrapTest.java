@@ -381,7 +381,7 @@ class GameBootstrapTest {
                 compact.contains(
                         "BlockCollisionShapeResolvershapes="
                                 + "BlockCollisionShapeResolver"
-                                + ".fullCubesForNonAir();"));
+                                + ".sizeAwareForNonAir();"));
         assertTrue(
                 compact.contains(
                         "newCollisionWorld("

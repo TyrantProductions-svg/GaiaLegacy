@@ -21,17 +21,24 @@ class ChunkSnapshotTest {
                         GameConfig.Chunk.SIZE
                                 * worldHeight
                                 * GameConfig.Chunk.SIZE];
+        BlockSize[] blockSizes = new BlockSize[blocks.length];
+        for (int i = 0; i < blockSizes.length; i++) {
+            blockSizes[i] = BlockSize.SIZE_16;
+        }
         blocks[index] = 11;
+        blockSizes[index] = BlockSize.SIZE_8;
 
         ChunkKey key = new ChunkKey(-2, 3);
         ChunkSnapshot snapshot =
-                ChunkSnapshot.of(key, 9L, worldHeight, blocks);
+                ChunkSnapshot.of(key, 9L, worldHeight, blocks, blockSizes);
         blocks[index] = 27;
+        blockSizes[index] = BlockSize.SIZE_4;
 
         assertEquals(key, snapshot.key());
         assertEquals(9L, snapshot.revision());
         assertEquals(worldHeight, snapshot.worldHeight());
         assertEquals(11, Byte.toUnsignedInt(snapshot.getBlock(x, y, z)));
+        assertEquals(BlockSize.SIZE_8, snapshot.getBlockSize(x, y, z));
     }
 
     @Test

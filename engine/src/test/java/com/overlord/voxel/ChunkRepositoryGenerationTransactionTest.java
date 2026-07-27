@@ -291,11 +291,15 @@ class ChunkRepositoryGenerationTransactionTest {
                 repository.beginGeneration(
                         key, ChunkGenerationMode.INITIAL);
 
+        int size = 16 * 16 * 16;
+        BlockSize[] sizes = new BlockSize[size];
+        java.util.Arrays.fill(sizes, BlockSize.SIZE_16);
+        
         ChunkGenerationResult result =
                 repository.commitGeneration(
                         ticket,
                         new ChunkGenerationData(
-                                key, 16, new byte[16 * 16 * 16]));
+                                key, 16, new byte[16 * 16 * 16], sizes));
 
         assertEquals(
                 ChunkGenerationResult.Status.CONFLICT,
@@ -1046,28 +1050,32 @@ class ChunkRepositoryGenerationTransactionTest {
             int localZ,
             byte blockId) {
         byte[] blocks = blocks();
+        BlockSize[] blockSizes = blockSizes();
         blocks[canonicalIndex(localX, y, localZ)] = blockId;
-        return new ChunkGenerationData(key, WORLD_HEIGHT, blocks);
+        return new ChunkGenerationData(key, WORLD_HEIGHT, blocks, blockSizes);
     }
 
     private static ChunkGenerationData filled(
             ChunkKey key, byte blockId) {
         byte[] blocks = blocks();
+        BlockSize[] blockSizes = blockSizes();
         java.util.Arrays.fill(blocks, blockId);
-        return new ChunkGenerationData(key, WORLD_HEIGHT, blocks);
+        return new ChunkGenerationData(key, WORLD_HEIGHT, blocks, blockSizes);
     }
 
     private static ChunkGenerationData withInteriorChanged(
             ChunkKey key) {
         byte[] blocks = blocks();
+        BlockSize[] blockSizes = blockSizes();
         java.util.Arrays.fill(blocks, (byte) 1);
         blocks[canonicalIndex(1, 4, 1)] = 2;
-        return new ChunkGenerationData(key, WORLD_HEIGHT, blocks);
+        return new ChunkGenerationData(key, WORLD_HEIGHT, blocks, blockSizes);
     }
 
     private static ChunkGenerationData withEastEdgeChanged(
             ChunkKey key) {
         byte[] blocks = blocks();
+        BlockSize[] blockSizes = blockSizes();
         java.util.Arrays.fill(blocks, (byte) 1);
         blocks[
                         canonicalIndex(
@@ -1075,28 +1083,31 @@ class ChunkRepositoryGenerationTransactionTest {
                                 4,
                                 1)] =
                 2;
-        return new ChunkGenerationData(key, WORLD_HEIGHT, blocks);
+        return new ChunkGenerationData(key, WORLD_HEIGHT, blocks, blockSizes);
     }
 
     private static ChunkGenerationData withNorthEdgeChanged(
             ChunkKey key) {
         byte[] blocks = blocks();
+        BlockSize[] blockSizes = blockSizes();
         java.util.Arrays.fill(blocks, (byte) 1);
         blocks[canonicalIndex(3, 4, 0)] = 2;
-        return new ChunkGenerationData(key, WORLD_HEIGHT, blocks);
+        return new ChunkGenerationData(key, WORLD_HEIGHT, blocks, blockSizes);
     }
 
     private static ChunkGenerationData withNorthWestCornerChanged(
             ChunkKey key) {
         byte[] blocks = blocks();
+        BlockSize[] blockSizes = blockSizes();
         java.util.Arrays.fill(blocks, (byte) 1);
         blocks[canonicalIndex(0, 4, 0)] = 2;
-        return new ChunkGenerationData(key, WORLD_HEIGHT, blocks);
+        return new ChunkGenerationData(key, WORLD_HEIGHT, blocks, blockSizes);
     }
 
     private static ChunkGenerationData withAllEdgesChanged(
             ChunkKey key) {
         byte[] blocks = blocks();
+        BlockSize[] blockSizes = blockSizes();
         java.util.Arrays.fill(blocks, (byte) 1);
         blocks[canonicalIndex(0, 1, 1)] = 2;
         blocks[
@@ -1112,7 +1123,7 @@ class ChunkRepositoryGenerationTransactionTest {
                                 4,
                                 GameConfig.Chunk.SIZE - 1)] =
                 2;
-        return new ChunkGenerationData(key, WORLD_HEIGHT, blocks);
+        return new ChunkGenerationData(key, WORLD_HEIGHT, blocks, blockSizes);
     }
 
     private static byte[] blocks() {
@@ -1120,6 +1131,13 @@ class ChunkRepositoryGenerationTransactionTest {
                 GameConfig.Chunk.SIZE
                         * WORLD_HEIGHT
                         * GameConfig.Chunk.SIZE];
+    }
+
+    private static BlockSize[] blockSizes() {
+        int length = GameConfig.Chunk.SIZE * WORLD_HEIGHT * GameConfig.Chunk.SIZE;
+        BlockSize[] sizes = new BlockSize[length];
+        java.util.Arrays.fill(sizes, BlockSize.SIZE_16);
+        return sizes;
     }
 
     private static int canonicalIndex(

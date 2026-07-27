@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.gaia.world.generation.WorldGenerationConfig;
 import com.overlord.config.GameConfig;
+import com.overlord.voxel.BlockSize;
 import com.overlord.voxel.ChunkGenerationData;
 import com.overlord.voxel.ChunkGenerationMode;
 import com.overlord.voxel.ChunkGenerationResult;
@@ -259,6 +260,8 @@ class SafeSpawnSelectorTest {
                 world.chunks()
                         .beginGeneration(
                                 key, ChunkGenerationMode.INITIAL);
+        BlockSize[] blockSizes = new BlockSize[blocks.length];
+        java.util.Arrays.fill(blockSizes, BlockSize.SIZE_16);
         ChunkGenerationResult result =
                 world.chunks()
                         .commitGeneration(
@@ -266,7 +269,8 @@ class SafeSpawnSelectorTest {
                                 new ChunkGenerationData(
                                         key,
                                         GameConfig.Chunk.MAX_HEIGHT,
-                                        blocks));
+                                        blocks,
+                                        blockSizes));
         assertEquals(
                 ChunkGenerationResult.Status.COMMITTED,
                 result.status());

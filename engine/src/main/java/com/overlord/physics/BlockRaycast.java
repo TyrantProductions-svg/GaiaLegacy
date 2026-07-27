@@ -203,7 +203,7 @@ public final class BlockRaycast {
         byte blockId = world.getBlock(blockX, blockY, blockZ);
         BlockCollisionShape shape =
                 Objects.requireNonNull(
-                        shapeResolver.shapeFor(blockId),
+                        shapeResolver.shapeFor(blockId, blockX, blockY, blockZ, world),
                         "shapeResolver result");
         return nearestHit(
                 origin,

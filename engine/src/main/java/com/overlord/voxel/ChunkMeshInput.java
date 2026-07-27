@@ -88,6 +88,51 @@ public record ChunkMeshInput(
                         Math.floorMod(localZ, GameConfig.Chunk.SIZE));
     }
 
+    public BlockSize getBlockSize(int localX, int y, int localZ) {
+        if (localX < -1
+                || localX > GameConfig.Chunk.SIZE
+                || localZ < -1
+                || localZ > GameConfig.Chunk.SIZE) {
+            throw new IllegalArgumentException(
+                    "horizontal coordinates must stay within one-block halo");
+        }
+        if (y < 0 || y >= center.worldHeight()) {
+            return BlockSize.SIZE_16;
+        }
+        int horizontalOffsetX =
+                Math.floorDiv(localX, GameConfig.Chunk.SIZE);
+        int horizontalOffsetZ =
+                Math.floorDiv(localZ, GameConfig.Chunk.SIZE);
+        return snapshotFor(horizontalOffsetX, horizontalOffsetZ)
+                .getBlockSize(
+                        Math.floorMod(localX, GameConfig.Chunk.SIZE),
+                        y,
+                        Math.floorMod(localZ, GameConfig.Chunk.SIZE));
+    }
+
+    public BlockPlacement getBlockPlacement(
+            int localX, int y, int localZ) {
+        if (localX < -1
+                || localX > GameConfig.Chunk.SIZE
+                || localZ < -1
+                || localZ > GameConfig.Chunk.SIZE) {
+            throw new IllegalArgumentException(
+                    "horizontal coordinates must stay within one-block halo");
+        }
+        if (y < 0 || y >= center.worldHeight()) {
+            return BlockPlacement.full();
+        }
+        int horizontalOffsetX =
+                Math.floorDiv(localX, GameConfig.Chunk.SIZE);
+        int horizontalOffsetZ =
+                Math.floorDiv(localZ, GameConfig.Chunk.SIZE);
+        return snapshotFor(horizontalOffsetX, horizontalOffsetZ)
+                .getBlockPlacement(
+                        Math.floorMod(localX, GameConfig.Chunk.SIZE),
+                        y,
+                        Math.floorMod(localZ, GameConfig.Chunk.SIZE));
+    }
+
     private ChunkSnapshot snapshotFor(
             int horizontalOffsetX, int horizontalOffsetZ) {
         if (horizontalOffsetX == -1) {

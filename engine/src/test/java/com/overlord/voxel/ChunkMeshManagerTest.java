@@ -1341,7 +1341,9 @@ class ChunkMeshManagerTest {
                                 * worldHeight
                                 * GameConfig.Chunk.SIZE];
         java.util.Arrays.fill(blocks, blockId);
-        return new ChunkGenerationData(key, worldHeight, blocks);
+        BlockSize[] blockSizes = new BlockSize[blocks.length];
+        java.util.Arrays.fill(blockSizes, BlockSize.SIZE_16);
+        return new ChunkGenerationData(key, worldHeight, blocks, blockSizes);
     }
 
     private static ChunkMeshData meshFor(ChunkMeshInput input) {

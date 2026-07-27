@@ -351,6 +351,9 @@ class VoxelAmbientOcclusionTest {
         for (int offsetZ = -1; offsetZ <= 1; offsetZ++) {
             for (int offsetX = -1; offsetX <= 1; offsetX++) {
                 int snapshotIndex = (offsetZ + 1) * 3 + offsetX + 1;
+                int length = snapshotBlocks[snapshotIndex].length;
+                BlockSize[] blockSizes = new BlockSize[length];
+                java.util.Arrays.fill(blockSizes, BlockSize.SIZE_16);
                 snapshots[snapshotIndex] =
                         ChunkSnapshot.of(
                                 new ChunkKey(
@@ -358,7 +361,8 @@ class VoxelAmbientOcclusionTest {
                                         centerKey.z() + offsetZ),
                                 1,
                                 WORLD_HEIGHT,
-                                snapshotBlocks[snapshotIndex]);
+                                snapshotBlocks[snapshotIndex],
+                                blockSizes);
             }
         }
         return new ChunkMeshInput(

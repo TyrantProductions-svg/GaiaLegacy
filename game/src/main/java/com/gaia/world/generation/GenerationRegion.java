@@ -1,6 +1,8 @@
 package com.gaia.world.generation;
 
 import com.overlord.config.GameConfig;
+import com.overlord.voxel.BlockPlacement;
+import com.overlord.voxel.BlockSize;
 import com.overlord.voxel.ChunkGenerationData;
 import com.overlord.voxel.ChunkKey;
 import java.util.Arrays;
@@ -14,6 +16,7 @@ public final class GenerationRegion {
     private final int worldHeight;
     private final byte air;
     private final byte[] blocks;
+    private final BlockPlacement[] blockPlacements;
     private final BiomeSample[] biomes;
     private final int[] heights;
     private int writeCount;
@@ -39,6 +42,8 @@ public final class GenerationRegion {
         this.worldHeight = worldHeight;
         this.air = air;
         this.blocks = new byte[blockCount];
+        this.blockPlacements = new BlockPlacement[blockCount];
+        Arrays.fill(blockPlacements, BlockPlacement.full());
         if (air != 0) {
             Arrays.fill(blocks, air);
         }
@@ -80,6 +85,39 @@ public final class GenerationRegion {
     public void setBlock(
             int localX, int y, int localZ, byte block) {
         writeBlock(localX, y, localZ, block);
+    }
+
+    public BlockSize getBlockSize(
+            int localX, int y, int localZ) {
+        validateBlockCoordinates(localX, y, localZ);
+        return blockPlacements[blockIndex(localX, y, localZ)].size();
+    }
+
+    public BlockPlacement getBlockPlacement(
+            int localX, int y, int localZ) {
+        validateBlockCoordinates(localX, y, localZ);
+        return blockPlacements[blockIndex(localX, y, localZ)];
+    }
+
+    public void writeBlockSize(
+            int localX, int y, int localZ, BlockSize size) {
+        validateBlockCoordinates(localX, y, localZ);
+        blockPlacements[blockIndex(localX, y, localZ)] =
+                BlockPlacement.of(Objects.requireNonNull(size, "size"));
+        writeCount++;
+    }
+
+    public void writeBlockPlacement(
+            int localX, int y, int localZ, BlockPlacement placement) {
+        validateBlockCoordinates(localX, y, localZ);
+        blockPlacements[blockIndex(localX, y, localZ)] =
+                Objects.requireNonNull(placement, "placement");
+        writeCount++;
+    }
+
+    public void setBlockSize(
+            int localX, int y, int localZ, BlockSize size) {
+        writeBlockSize(localX, y, localZ, size);
     }
 
     public int writeCount() {
@@ -152,7 +190,7 @@ public final class GenerationRegion {
 
     public ChunkGenerationData freeze() {
         return new ChunkGenerationData(
-                key, worldHeight, blocks);
+                key, worldHeight, blocks, blockPlacements);
     }
 
     private boolean containsLocal(

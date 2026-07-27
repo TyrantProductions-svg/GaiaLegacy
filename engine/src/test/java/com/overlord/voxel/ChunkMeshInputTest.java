@@ -227,7 +227,9 @@ class ChunkMeshInputTest {
             ChunkKey key, int x, int z, byte marker) {
         byte[] blocks = new byte[CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE];
         blocks[x + 2 * CHUNK_SIZE + z * CHUNK_SIZE * WORLD_HEIGHT] = marker;
-        return ChunkSnapshot.of(key, 1, WORLD_HEIGHT, blocks);
+        BlockSize[] blockSizes = new BlockSize[blocks.length];
+        java.util.Arrays.fill(blockSizes, BlockSize.SIZE_16);
+        return ChunkSnapshot.of(key, 1, WORLD_HEIGHT, blocks, blockSizes);
     }
 
     private static ChunkSnapshot empty(ChunkKey key) {

@@ -1,5 +1,6 @@
 package com.gaia.world;
 
+import com.gaia.world.generation.AdaptiveSubdivider;
 import com.gaia.world.generation.BlendedHeightProvider;
 import com.gaia.world.generation.BiomeShapedHeightProvider;
 import com.gaia.world.generation.CompositeDecorationProvider;
@@ -25,7 +26,8 @@ public final class GaiaWorldGenerator {
                         new DefaultStrataDensityProvider(),
                         new NoiseCaveProvider(),
                         new DefaultSurfaceProvider(),
-                        new StoneOutcropDecorationProvider()));
+                        new StoneOutcropDecorationProvider(),
+                        new AdaptiveSubdivider()));
     }
 
     public static WorldGenerator createVisualRevisionCandidate() {
@@ -36,6 +38,7 @@ public final class GaiaWorldGenerator {
                         new DefaultStrataDensityProvider(),
                         new HybridCaveProvider(),
                         new DefaultSurfaceProvider(),
-                        new CompositeDecorationProvider()));
+                        new CompositeDecorationProvider(),
+                        new AdaptiveSubdivider()));
     }
 }

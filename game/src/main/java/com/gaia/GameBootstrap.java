@@ -76,7 +76,7 @@ public final class GameBootstrap {
             inputManager.install(engine.getWindow().getWindow());
 
             BlockCollisionShapeResolver shapes =
-                    BlockCollisionShapeResolver.fullCubesForNonAir();
+                    BlockCollisionShapeResolver.sizeAwareForNonAir();
             CollisionWorld collisionWorld =
                     new CollisionWorld(engine.getWorld(), shapes);
             BlockRaycast blockRaycast =

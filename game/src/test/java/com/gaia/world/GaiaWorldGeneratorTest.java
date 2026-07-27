@@ -54,7 +54,8 @@ class GaiaWorldGeneratorTest {
                         parse("gaia:strata_density"),
                         parse("gaia:cave"),
                         parse("gaia:surface"),
-                        parse("gaia:decoration")),
+                        parse("gaia:decoration"),
+                        parse("gaia:adaptive_subdivision")),
                 result.stageResults().stream()
                         .map(GenerationStageResult::stageId)
                         .toList());

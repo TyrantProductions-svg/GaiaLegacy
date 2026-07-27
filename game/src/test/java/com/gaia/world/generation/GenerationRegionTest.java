@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.overlord.config.GameConfig;
+import com.overlord.voxel.BlockSize;
 import com.overlord.voxel.ChunkGenerationData;
 import com.overlord.voxel.ChunkKey;
 import org.junit.jupiter.api.Test;
@@ -179,15 +180,18 @@ class GenerationRegionTest {
         ChunkKey key = new ChunkKey(-2, 3);
         GenerationRegion region = region(key, 32);
         region.writeBlock(1, 2, 3, (byte) 4);
+        region.writeBlockSize(1, 2, 3, BlockSize.SIZE_8);
 
         ChunkGenerationData frozen = region.freeze();
         region.writeBlock(1, 2, 3, (byte) 9);
+        region.writeBlockSize(1, 2, 3, BlockSize.SIZE_4);
         byte[] returned = frozen.copyBlocks();
         returned[1 + 2 * 16 + 3 * 16 * 32] = 8;
 
         assertEquals(key, frozen.key());
         assertEquals(32, frozen.worldHeight());
         assertEquals((byte) 4, frozen.getBlock(1, 2, 3));
+        assertEquals(BlockSize.SIZE_8, frozen.getBlockSize(1, 2, 3));
     }
 
     @Test
@@ -204,6 +208,50 @@ class GenerationRegionTest {
                                 new ChunkKey(0, 0),
                                 Integer.MAX_VALUE,
                                 (byte) 0));
+    }
+
+    @Test
+    void storesAndRetrievesBlockSizes() {
+        GenerationRegion region = region(new ChunkKey(0, 0), 32);
+
+        assertEquals(BlockSize.SIZE_16, region.getBlockSize(2, 7, 3));
+        region.writeBlockSize(2, 7, 3, BlockSize.SIZE_8);
+        assertEquals(BlockSize.SIZE_8, region.getBlockSize(2, 7, 3));
+        region.writeBlockSize(2, 7, 3, BlockSize.SIZE_4);
+        assertEquals(BlockSize.SIZE_4, region.getBlockSize(2, 7, 3));
+    }
+
+    @Test
+    void blockSizeWriteIncrementsWriteCount() {
+        GenerationRegion region = region(new ChunkKey(0, 0), 32);
+        
+        int initialCount = region.writeCount();
+        region.writeBlockSize(2, 7, 3, BlockSize.SIZE_8);
+        assertEquals(initialCount + 1, region.writeCount());
+    }
+
+    @Test
+    void blockSizeRejectsOutOfBounds() {
+        GenerationRegion region = region(new ChunkKey(-1, 2), 64);
+
+        assertThrows(
+                IndexOutOfBoundsException.class,
+                () -> region.writeBlockSize(-1, 2, 1, BlockSize.SIZE_8));
+        assertThrows(
+                IndexOutOfBoundsException.class,
+                () -> region.writeBlockSize(16, 2, 1, BlockSize.SIZE_8));
+        assertThrows(
+                IndexOutOfBoundsException.class,
+                () -> region.writeBlockSize(1, -1, 1, BlockSize.SIZE_8));
+        assertThrows(
+                IndexOutOfBoundsException.class,
+                () -> region.writeBlockSize(1, 64, 1, BlockSize.SIZE_8));
+        assertThrows(
+                IndexOutOfBoundsException.class,
+                () -> region.writeBlockSize(1, 2, -1, BlockSize.SIZE_8));
+        assertThrows(
+                IndexOutOfBoundsException.class,
+                () -> region.writeBlockSize(1, 2, 16, BlockSize.SIZE_8));
     }
 
     private static GenerationRegion region(

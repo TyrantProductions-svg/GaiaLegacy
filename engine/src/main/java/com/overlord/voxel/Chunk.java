@@ -7,15 +7,14 @@ import java.util.Map;
 import java.util.Objects;
 
 public class Chunk {
-    
     private final int worldHeight;
     private final int numSubChunks;
     private Map<Integer, SubChunk> subChunks;
-    
+
     public Chunk() {
         this(GameConfig.Chunk.MAX_HEIGHT);
     }
-    
+
     public Chunk(int worldHeight) {
         this.worldHeight = worldHeight;
         this.numSubChunks = worldHeight / GameConfig.Chunk.SUBCHUNK_HEIGHT;
@@ -76,12 +75,25 @@ public class Chunk {
     }
 
     static Chunk fromCanonicalBytes(
-            int worldHeight, byte[] blocks) {
+            int worldHeight, byte[] blocks, BlockSize[] blockSizes) {
+        BlockPlacement[] blockPlacements =
+                new BlockPlacement[blockSizes.length];
+        for (int i = 0; i < blockSizes.length; i++) {
+            blockPlacements[i] = BlockPlacement.of(blockSizes[i]);
+        }
+        return fromCanonicalBytes(worldHeight, blocks, blockPlacements);
+    }
+
+    static Chunk fromCanonicalBytes(
+            int worldHeight,
+            byte[] blocks,
+            BlockPlacement[] blockPlacements) {
         if (worldHeight <= 0) {
             throw new IllegalArgumentException(
                     "worldHeight must be greater than zero");
         }
         Objects.requireNonNull(blocks, "blocks");
+        Objects.requireNonNull(blockPlacements, "blockPlacements");
         int expectedLength =
                 Math.multiplyExact(
                         Math.multiplyExact(
@@ -92,6 +104,12 @@ public class Chunk {
                     "blocks must contain exactly "
                             + expectedLength
                             + " bytes");
+        }
+        if (blockPlacements.length != expectedLength) {
+            throw new IllegalArgumentException(
+                    "blockPlacements must contain exactly "
+                            + expectedLength
+                            + " entries");
         }
 
         Chunk chunk = new Chunk(worldHeight);
@@ -110,6 +128,11 @@ public class Chunk {
                                             * worldHeight;
                     chunk.setBlock(
                             localX, y, localZ, blocks[index]);
+                    chunk.setBlockPlacement(
+                            localX,
+                            y,
+                            localZ,
+                            blockPlacements[index]);
                 }
             }
         }
@@ -125,5 +148,75 @@ public class Chunk {
                                     * GameConfig.Chunk.SUBCHUNK_HEIGHT,
                             worldHeight);
         }
+    }
+
+    void copyBlockSizesTo(BlockSize[] target) {
+        for (Map.Entry<Integer, SubChunk> entry : subChunks.entrySet()) {
+            entry.getValue()
+                    .copyBlockSizesTo(
+                            target,
+                            entry.getKey() * GameConfig.Chunk.SUBCHUNK_HEIGHT,
+                            worldHeight);
+        }
+    }
+
+    void copyBlockPlacementsTo(BlockPlacement[] target) {
+        for (Map.Entry<Integer, SubChunk> entry : subChunks.entrySet()) {
+            entry.getValue()
+                    .copyBlockPlacementsTo(
+                            target,
+                            entry.getKey() * GameConfig.Chunk.SUBCHUNK_HEIGHT,
+                            worldHeight);
+        }
+    }
+
+    public BlockPlacement getBlockPlacement(int x, int y, int z) {
+        if (x < 0
+                || x >= GameConfig.Chunk.SIZE
+                || y < 0
+                || y >= worldHeight
+                || z < 0
+                || z >= GameConfig.Chunk.SIZE) {
+            return BlockPlacement.full();
+        }
+
+        int sectionIndex = y / GameConfig.Chunk.SUBCHUNK_HEIGHT;
+        int localY = y % GameConfig.Chunk.SUBCHUNK_HEIGHT;
+
+        SubChunk subChunk = subChunks.get(sectionIndex);
+        if (subChunk == null) {
+            return BlockPlacement.full();
+        }
+
+        return subChunk.getBlockPlacement(x, localY, z);
+    }
+
+    public BlockSize getBlockSize(int x, int y, int z) {
+        return getBlockPlacement(x, y, z).size();
+    }
+
+    public void setBlockPlacement(
+            int x,
+            int y,
+            int z,
+            BlockPlacement placement) {
+        if (x < 0
+                || x >= GameConfig.Chunk.SIZE
+                || y < 0
+                || y >= worldHeight
+                || z < 0
+                || z >= GameConfig.Chunk.SIZE) {
+            return;
+        }
+
+        int sectionIndex = y / GameConfig.Chunk.SUBCHUNK_HEIGHT;
+        int localY = y % GameConfig.Chunk.SUBCHUNK_HEIGHT;
+
+        SubChunk subChunk = subChunks.computeIfAbsent(sectionIndex, k -> new SubChunk());
+        subChunk.setBlockPlacement(x, localY, z, placement);
+    }
+
+    public void setBlockSize(int x, int y, int z, BlockSize size) {
+        setBlockPlacement(x, y, z, BlockPlacement.of(size));
     }
 }
