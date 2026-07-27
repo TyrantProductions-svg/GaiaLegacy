@@ -55,7 +55,12 @@ class BlockRegistryTest {
                                 (byte) 200,
                                 registry.requireStoredId(
                                         ResourceLocation.parse(
-                                                "gaia:high"))),
+                                        "gaia:high"))),
+                () -> assertEquals(
+                        high.item(),
+                        registry.itemForm(
+                                        ResourceLocation.parse("gaia:high"))
+                                .orElseThrow()),
                 () -> assertTrue(registry.resolve(200).renderable()));
     }
 

@@ -14,7 +14,7 @@
   "item": {
     "id": "gaia:oak_leaves",
     "maxStackSize": 64,
-    "mouthHoldable": false,
+    "mouthHoldable": true,
     "twoHanded": false
   }
 }

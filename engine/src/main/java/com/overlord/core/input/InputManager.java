@@ -5,11 +5,14 @@ import static org.lwjgl.glfw.GLFW.GLFW_PRESS;
 import static org.lwjgl.glfw.GLFW.GLFW_RELEASE;
 import static org.lwjgl.glfw.GLFW.glfwSetCursorPosCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetKeyCallback;
+import static org.lwjgl.glfw.GLFW.glfwSetScrollCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetWindowFocusCallback;
 
 import com.overlord.core.thread.MainThreadGuard;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
@@ -23,6 +26,8 @@ public final class InputManager {
     private double lastMouseY;
     private double accumulatedMouseX;
     private double accumulatedMouseY;
+    private final List<Integer> accumulatedScrollDeltas = new ArrayList<>();
+    private int accumulatedScrollMagnitude;
 
     public InputManager() {
         this(MainThreadGuard.captureCurrentThread());
@@ -37,6 +42,7 @@ public final class InputManager {
         mainThreadGuard.assertMainThread("GLFW input callback installation");
         glfwSetKeyCallback(window, (ignored, key, scancode, action, mods) -> onKey(key, action));
         glfwSetCursorPosCallback(window, (ignored, x, y) -> onCursorPosition(x, y));
+        glfwSetScrollCallback(window, (ignored, xOffset, yOffset) -> onScroll(xOffset, yOffset));
         glfwSetWindowFocusCallback(window, (ignored, focused) -> onWindowFocus(focused));
     }
 
@@ -44,8 +50,17 @@ public final class InputManager {
         mainThreadGuard.assertMainThread("fixed input consumption");
         Set<Integer> down = copySetBits(downKeys);
         Set<Integer> pressed = copySetBits(pressedKeys);
+        List<Integer> scrollDeltas = List.copyOf(accumulatedScrollDeltas);
         Arrays.fill(pressedKeys, false);
-        return new InputSnapshot(down, pressed);
+        clearScrollEdges();
+        return new InputSnapshot(down, pressed, scrollDeltas);
+    }
+
+    /** Discards gameplay edges while retaining held-key state. */
+    public void discardFixedInputEdges() {
+        mainThreadGuard.assertMainThread("fixed input edge discard");
+        Arrays.fill(pressedKeys, false);
+        clearScrollEdges();
     }
 
     public boolean isKeyDown(int key) {
@@ -112,13 +127,36 @@ public final class InputManager {
         lastMouseY = y;
     }
 
+    void onScroll(double xOffset, double yOffset) {
+        mainThreadGuard.assertMainThread("GLFW scroll callback");
+        if (!Double.isFinite(xOffset) || !Double.isFinite(yOffset) || yOffset == 0.0) {
+            return;
+        }
+        int available = InputSnapshot.MAX_SCROLL_STEPS_PER_SAMPLE
+                - accumulatedScrollMagnitude;
+        if (available == 0) {
+            return;
+        }
+        long roundedMagnitude = Math.max(1L, Math.round(Math.abs(yOffset)));
+        int acceptedMagnitude = (int) Math.min(available, roundedMagnitude);
+        accumulatedScrollDeltas.add(
+                yOffset > 0.0 ? acceptedMagnitude : -acceptedMagnitude);
+        accumulatedScrollMagnitude += acceptedMagnitude;
+    }
+
     void onWindowFocus(boolean focused) {
         mainThreadGuard.assertMainThread("GLFW focus callback");
         resetMouseState();
         if (!focused) {
             Arrays.fill(downKeys, false);
             Arrays.fill(pressedKeys, false);
+            clearScrollEdges();
         }
+    }
+
+    private void clearScrollEdges() {
+        accumulatedScrollDeltas.clear();
+        accumulatedScrollMagnitude = 0;
     }
 
     private void resetMouseState() {

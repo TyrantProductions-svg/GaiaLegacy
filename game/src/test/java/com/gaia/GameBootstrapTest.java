@@ -365,6 +365,16 @@ class GameBootstrapTest {
     }
 
     @Test
+    void gameContextCarriesTheInjectedBodyInventoryComposition() {
+        assertEquals(
+                com.gaia.inventory.BodyInventoryService.class,
+                componentNamed("inventoryService").getType());
+        assertEquals(
+                com.gaia.inventory.BodyInventoryInputController.class,
+                componentNamed("inventoryInput").getType());
+    }
+
+    @Test
     void bootstrapComposesSharedPhysicsServicesAndEightStepCatchUp()
             throws IOException {
         String source =

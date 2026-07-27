@@ -7,19 +7,23 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 public final class BlockRegistry implements BlockRenderResolver {
     private final Map<Integer, BlockDefinition> definitionsById;
     private final Map<ResourceLocation, BlockDefinition> definitionsByName;
+    private final Map<ResourceLocation, ItemFormDefinition> itemsById;
     private final Map<Integer, BlockRenderInfo> renderInfoById;
     private final BlockRenderInfo airRenderInfo;
 
     private BlockRegistry(
             Map<Integer, BlockDefinition> definitionsById,
             Map<ResourceLocation, BlockDefinition> definitionsByName,
+            Map<ResourceLocation, ItemFormDefinition> itemsById,
             Map<Integer, BlockRenderInfo> renderInfoById) {
         this.definitionsById = Map.copyOf(definitionsById);
         this.definitionsByName = Map.copyOf(definitionsByName);
+        this.itemsById = Map.copyOf(itemsById);
         this.renderInfoById = Map.copyOf(renderInfoById);
         this.airRenderInfo = this.renderInfoById.get(0);
     }
@@ -33,6 +37,7 @@ public final class BlockRegistry implements BlockRenderResolver {
         Map<Integer, BlockDefinition> byId = new HashMap<>();
         Map<ResourceLocation, BlockDefinition> byName =
                 new HashMap<>();
+        Map<ResourceLocation, ItemFormDefinition> byItemId = new HashMap<>();
         for (BlockDefinition definition : definitions) {
             Objects.requireNonNull(definition, "block definition");
             if (byId.putIfAbsent(
@@ -47,6 +52,11 @@ public final class BlockRegistry implements BlockRenderResolver {
                 throw new IllegalArgumentException(
                         "Duplicate block name: "
                                 + definition.name());
+            }
+            ItemFormDefinition item = definition.item();
+            if (item != null && byItemId.putIfAbsent(item.id(), item) != null) {
+                throw new IllegalArgumentException(
+                        "Duplicate item form id: " + item.id());
             }
         }
         if (!byId.containsKey(0)) {
@@ -78,7 +88,7 @@ public final class BlockRegistry implements BlockRenderResolver {
         }
 
         return new BlockRegistry(
-                byId, byName, copiedRenderInfos);
+                byId, byName, byItemId, copiedRenderInfos);
     }
 
     public BlockDefinition require(ResourceLocation name) {
@@ -106,6 +116,15 @@ public final class BlockRegistry implements BlockRenderResolver {
 
     public byte requireStoredId(ResourceLocation name) {
         return (byte) require(name).id();
+    }
+
+    /**
+     * Resolves item rules from the data-driven block registry. This is an
+     * index over existing block definitions, not a second item registry.
+     */
+    public Optional<ItemFormDefinition> itemForm(ResourceLocation itemId) {
+        return Optional.ofNullable(
+                itemsById.get(Objects.requireNonNull(itemId, "itemId")));
     }
 
     @Override

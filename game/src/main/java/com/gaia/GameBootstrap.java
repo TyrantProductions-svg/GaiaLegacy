@@ -3,6 +3,12 @@ package com.gaia;
 import com.gaia.assets.GaiaAssetCatalog;
 import com.gaia.assets.GaiaResourceLoader;
 import com.gaia.blocks.BlockRegistry;
+import com.gaia.inventory.BodyInventoryInputController;
+import com.gaia.inventory.BodyInventoryService;
+import com.gaia.inventory.DebugInventoryProfile;
+import com.gaia.inventory.InventoryDebugCommands;
+import com.gaia.inventory.InventoryDebugSeeder;
+import com.gaia.inventory.InventorySnapshotFormatter;
 import com.gaia.world.GaiaWorldGenerator;
 import com.gaia.world.SafeSpawnSelector;
 import com.gaia.world.WorldLoadResult;
@@ -12,6 +18,7 @@ import com.gaia.world.generation.WorldGenerator;
 import com.overlord.assets.AssetDiagnostic;
 import com.overlord.assets.AssetLoadReport;
 import com.overlord.assets.AssetManager;
+import com.overlord.assets.ResourceLocation;
 import com.overlord.config.GameConfig;
 import com.overlord.core.Engine;
 import com.overlord.core.ModuleManager;
@@ -19,6 +26,9 @@ import com.overlord.core.PlayerManager;
 import com.overlord.core.input.InputManager;
 import com.overlord.core.lifecycle.ShutdownCoordinator;
 import com.overlord.core.thread.MainThreadGuard;
+import com.overlord.event.EventBus;
+import com.overlord.interaction.api.EntityRef;
+import com.overlord.inventory.api.ItemStack;
 import com.overlord.core.time.FixedStepClock;
 import com.overlord.core.time.FrameClock;
 import com.overlord.physics.Aabb;
@@ -33,6 +43,7 @@ import com.overlord.renderer.visual.RenderVisualSettings;
 import com.overlord.voxel.ChunkMeshBuilder;
 import com.overlord.voxel.ChunkMeshManager;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -119,6 +130,22 @@ public final class GameBootstrap {
                             FIXED_STEP_SECONDS, MAX_FIXED_STEPS_PER_FRAME);
 
             BlockRegistry blocks = catalog.blockRegistry();
+            EntityRef inventoryOwner = new EntityRef(0);
+            BodyInventoryService inventoryService =
+                    new BodyInventoryService(
+                            inventoryOwner,
+                            blocks,
+                            mainThreadGuard,
+                            EventBus.getInstance()::publish);
+            InventoryDebugCommands inventoryDebugCommands =
+                    createInventoryDebugCommands(
+                            inventoryService, inventoryOwner);
+            BodyInventoryInputController inventoryInput =
+                    new BodyInventoryInputController(
+                            inventoryService,
+                            inventoryOwner,
+                            Optional.empty());
+            runConfiguredInventoryDebugCommand(inventoryDebugCommands);
             WorldGenerator generator =
                     GaiaWorldGenerator.createVisualRevisionCandidate();
             WorldGenerationConfig worldGenerationConfig =
@@ -179,6 +206,11 @@ public final class GameBootstrap {
                             chunkMeshes,
                             worldLoader,
                             worldLoad,
+                            inventoryOwner,
+                            inventoryService,
+                            inventoryInput,
+                            inventoryDebugCommands,
+                            Boolean.getBoolean("gaia.inventory.debugShortcuts"),
                             shutdownCoordinator,
                             new RenderMetricsConsoleReporter(Boolean.getBoolean("gaia.renderMetrics"), System::nanoTime, System.out));
             new GameLoop(context).run();
@@ -215,6 +247,29 @@ public final class GameBootstrap {
             }
             System.out.println(line);
         }
+    }
+
+    private static InventoryDebugCommands createInventoryDebugCommands(
+            BodyInventoryService inventoryService, EntityRef owner) {
+        DebugInventoryProfile profile = new DebugInventoryProfile(
+                new ItemStack(ResourceLocation.parse("gaia:dirt"), 12),
+                new ItemStack(ResourceLocation.parse("gaia:dirt"), 64),
+                new ItemStack(ResourceLocation.parse("gaia:stone"), 64),
+                new ItemStack(ResourceLocation.parse("gaia:oak_leaves"), 1));
+        return new InventoryDebugCommands(
+                new InventoryDebugSeeder(inventoryService, owner, profile),
+                inventoryService,
+                owner,
+                new InventorySnapshotFormatter());
+    }
+
+    private static void runConfiguredInventoryDebugCommand(
+            InventoryDebugCommands commands) {
+        String command = System.getProperty("gaia.inventory.debugCommand");
+        if (command == null || command.isBlank()) {
+            return;
+        }
+        System.out.println("[InventoryDebug] " + commands.execute(command).message());
     }
 
     static void closeAfterRun(

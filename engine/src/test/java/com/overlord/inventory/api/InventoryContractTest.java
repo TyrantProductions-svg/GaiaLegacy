@@ -6,11 +6,14 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.overlord.assets.ResourceLocation;
+import com.overlord.event.EventBus;
 import com.overlord.interaction.api.EntityRef;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.Optional;
+import java.util.ArrayList;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class InventoryContractTest {
@@ -192,6 +195,33 @@ class InventoryContractTest {
                     InventoryService.class.isAssignableFrom(
                             method.getReturnType()),
                     method.toString());
+        }
+    }
+
+    @Test
+    void committedInventoryNotificationsCannotCancelLaterObservers() {
+        EventBus events = EventBus.getInstance();
+        events.clear();
+        List<String> deliveries = new ArrayList<>();
+        try {
+            events.subscribe(InventoryChanged.class, event -> {
+                deliveries.add("first");
+                event.cancel();
+            });
+            events.subscribe(InventoryChanged.class, event -> deliveries.add("second"));
+            InventoryChanged notification = new InventoryChanged(OWNER, 1);
+
+            events.publish(notification);
+            events.processAll();
+
+            assertFalse(notification.isCancelled());
+            assertEquals(List.of("first", "second"), deliveries);
+            ActiveBodySlotChanged selection = new ActiveBodySlotChanged(
+                    OWNER, BodySlot.LEFT_HAND, BodySlot.RIGHT_HAND);
+            selection.cancel();
+            assertFalse(selection.isCancelled());
+        } finally {
+            events.clear();
         }
     }
 

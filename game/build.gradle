@@ -37,6 +37,17 @@ test {
     useJUnitPlatform()
 }
 
+tasks.named('run') {
+    if (project.hasProperty('gaiaInventoryDebugCommand')) {
+        systemProperty 'gaia.inventory.debugCommand',
+            project.property('gaiaInventoryDebugCommand')
+    }
+    if (project.hasProperty('gaiaInventoryDebugShortcuts')) {
+        systemProperty 'gaia.inventory.debugShortcuts',
+            project.property('gaiaInventoryDebugShortcuts')
+    }
+}
+
 tasks.register('verifyPackagedResources') {
     dependsOn tasks.named('jar')
     doLast {

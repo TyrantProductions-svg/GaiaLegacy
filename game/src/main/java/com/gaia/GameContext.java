@@ -1,5 +1,8 @@
 package com.gaia;
 
+import com.gaia.inventory.BodyInventoryInputController;
+import com.gaia.inventory.BodyInventoryService;
+import com.gaia.inventory.InventoryDebugCommands;
 import com.gaia.world.WorldLoadResult;
 import com.gaia.world.WorldLoader;
 import com.overlord.core.Engine;
@@ -12,6 +15,7 @@ import com.overlord.physics.BlockRaycast;
 import com.overlord.physics.CollisionWorld;
 import com.overlord.physics.PhysicsWorld;
 import com.overlord.physics.PlayerController;
+import com.overlord.interaction.api.EntityRef;
 import com.overlord.voxel.ChunkMeshManager;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -29,6 +33,11 @@ public record GameContext(
         ChunkMeshManager chunkMeshes,
         WorldLoader worldLoader,
         CompletableFuture<WorldLoadResult> worldLoad,
+        EntityRef inventoryOwner,
+        BodyInventoryService inventoryService,
+        BodyInventoryInputController inventoryInput,
+        InventoryDebugCommands inventoryDebugCommands,
+        boolean inventoryDebugShortcuts,
         ShutdownCoordinator shutdownCoordinator,
         RenderMetricsConsoleReporter renderMetricsReporter) {
     public GameContext {
@@ -47,6 +56,11 @@ public record GameContext(
         chunkMeshes = Objects.requireNonNull(chunkMeshes, "chunkMeshes");
         worldLoader = Objects.requireNonNull(worldLoader, "worldLoader");
         worldLoad = Objects.requireNonNull(worldLoad, "worldLoad");
+        inventoryOwner = Objects.requireNonNull(inventoryOwner, "inventoryOwner");
+        inventoryService = Objects.requireNonNull(inventoryService, "inventoryService");
+        inventoryInput = Objects.requireNonNull(inventoryInput, "inventoryInput");
+        inventoryDebugCommands = Objects.requireNonNull(
+                inventoryDebugCommands, "inventoryDebugCommands");
         shutdownCoordinator =
                 Objects.requireNonNull(shutdownCoordinator, "shutdownCoordinator");
     }
