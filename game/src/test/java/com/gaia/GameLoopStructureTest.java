@@ -46,14 +46,13 @@ class GameLoopStructureTest {
         assertTrue(compact.contains("chunkMeshes().pollFailure()"));
         assertTrue(compact.contains("loadResult.initialChunks()"));
         assertTrue(compact.contains("chunkMeshes().allRenderable("));
-        assertTrue(
-                compact.contains(
-                        "context.engine().getRenderer().renderFrame("
-                                + "newRenderFrameInput("
-                                + "state==State.RUNNING?"
-                                + "List.copyOf(context.chunkMeshes().renderObjects()):"
-                                + "List.of(),frameDeltaSeconds,"
-                                + "context.chunkMeshes().meshQueueDepth()))"));
+        assertTrue(compact.contains("dispatchFeedbackFrame("));
+        assertTrue(compact.contains(
+                "feedback->context.engine().getRenderer().renderFrame(newRenderFrameInput("));
+        assertTrue(compact.contains(
+                "state==State.RUNNING?List.copyOf(context.chunkMeshes().renderObjects()):"
+                        + "List.of(),frameDeltaSeconds,"
+                        + "context.chunkMeshes().meshQueueDepth(),feedback"));
 
         int schedule = compact.indexOf("chunkMeshes().scheduleEligible()");
         int process =
@@ -177,14 +176,44 @@ class GameLoopStructureTest {
         int render = compact.indexOf("renderFrame(");
         int interactionUpdate =
                 compact.indexOf("blockInteraction().fixedUpdate(");
+        int feedbackUpdate =
+                compact.indexOf("interactionFeedback().fixedUpdate(");
         assertTrue(inventoryInput < playerUpdate);
         assertTrue(playerUpdate < physicsStep);
         assertTrue(physicsStep < interactionUpdate);
+        assertTrue(interactionUpdate < feedbackUpdate);
+        assertTrue(feedbackUpdate < moduleUpdate);
         assertTrue(interactionUpdate < moduleUpdate);
         assertTrue(moduleUpdate < eventProcessing);
         assertTrue(interpolation < cameraPosition);
         assertTrue(renderCameraUpdate < render);
         assertFalse(source.contains("PhysicsManager"));
+        assertTrue(compact.contains("handleFeedbackLifecycle("
+                + "context.interactionFeedback(),"
+                + "feedbackLifecycleBoundaryForRender,"
+                + "state==State.RUNNING,"
+                + "cursorCaptured,"
+                + "focused,"
+                + "feedbackBlocked),()->feedbackSnapshot("));
+    }
+
+    @Test
+    void samplesAuthoritativeUiBlockStateAfterFixedUpdatesBeforeFeedbackRender()
+            throws IOException {
+        String source = Files.readString(
+                Path.of("src/main/java/com/gaia/GameLoop.java"));
+        String compact = source.replaceAll("\\s+", "");
+
+        int fixedUpdates = compact.indexOf("runFixedUpdates(frameDeltaSeconds,mouseDelta);");
+        int blockedSample = compact.indexOf(
+                "booleanfeedbackBlocked=context.interactionBlockState().blocked();");
+        int feedbackDispatch = compact.indexOf("dispatchFeedbackFrame(");
+
+        assertTrue(fixedUpdates >= 0);
+        assertTrue(blockedSample > fixedUpdates,
+                "render feedback must resample blocking state after fixed systems");
+        assertTrue(blockedSample < feedbackDispatch,
+                "blocking state must be sampled before lifecycle clear and snapshot");
     }
 
     @Test

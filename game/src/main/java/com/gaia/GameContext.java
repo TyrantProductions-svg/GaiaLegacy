@@ -4,6 +4,8 @@ import com.gaia.inventory.BodyInventoryInputController;
 import com.gaia.inventory.BodyInventoryService;
 import com.gaia.inventory.InventoryDebugCommands;
 import com.gaia.interaction.BlockInteractionController;
+import com.gaia.interaction.feedback.InteractionBlockState;
+import com.gaia.interaction.feedback.InteractionFeedbackCoordinator;
 import com.gaia.world.WorldLoadResult;
 import com.gaia.world.WorldLoader;
 import com.overlord.core.Engine;
@@ -42,6 +44,8 @@ public record GameContext(
         boolean inventoryDebugShortcuts,
         BlockInteractionController blockInteraction,
         LogicalWorldItemService worldItems,
+        InteractionFeedbackCoordinator interactionFeedback,
+        InteractionBlockState interactionBlockState,
         ShutdownCoordinator shutdownCoordinator,
         RenderMetricsConsoleReporter renderMetricsReporter) {
     public GameContext {
@@ -68,6 +72,8 @@ public record GameContext(
         blockInteraction = Objects.requireNonNull(
                 blockInteraction, "blockInteraction");
         worldItems = Objects.requireNonNull(worldItems, "worldItems");
+        interactionFeedback = Objects.requireNonNull(interactionFeedback, "interactionFeedback");
+        interactionBlockState = Objects.requireNonNull(interactionBlockState, "interactionBlockState");
         shutdownCoordinator =
                 Objects.requireNonNull(shutdownCoordinator, "shutdownCoordinator");
     }

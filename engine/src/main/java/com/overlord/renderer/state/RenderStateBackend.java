@@ -8,4 +8,9 @@ public interface RenderStateBackend {
     void restore(RenderStateSnapshot snapshot);
 
     void clearColorAndDepth();
+
+    default void setViewport(Viewport viewport) {
+        throw new UnsupportedOperationException(
+                "viewport operation is not supported");
+    }
 }

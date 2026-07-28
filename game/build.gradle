@@ -62,7 +62,8 @@ tasks.register('verifyPackagedResources') {
             'assets/gaia/materials/opaque.json',
             'assets/gaia/materials/missing.json',
             'assets/gaia/atlases/blocks.json',
-            'assets/gaia/textures/atlas.png'
+            'assets/gaia/textures/atlas.png',
+            'assets/gaia/textures/effects/block_damage.png'
         ]
         new java.util.zip.ZipFile(archive).withCloseable { zip ->
             required.each { path ->
@@ -97,7 +98,15 @@ tasks.register('verifyInstalledShaderResources') {
             'assets/overlord/shaders/world.vert',
             'assets/overlord/shaders/world.frag',
             'assets/overlord/shaders/sky.vert',
-            'assets/overlord/shaders/sky.frag'
+            'assets/overlord/shaders/sky.frag',
+            'assets/overlord/shaders/feedback/crosshair.vert',
+            'assets/overlord/shaders/feedback/crosshair.frag',
+            'assets/overlord/shaders/feedback/block_damage.vert',
+            'assets/overlord/shaders/feedback/block_damage.frag',
+            'assets/overlord/shaders/feedback/particle.vert',
+            'assets/overlord/shaders/feedback/particle.frag',
+            'assets/overlord/shaders/feedback/world_item.vert',
+            'assets/overlord/shaders/feedback/world_item.frag'
         ]
         new java.util.zip.ZipFile(engineJar).withCloseable { zip ->
             required.each { path ->

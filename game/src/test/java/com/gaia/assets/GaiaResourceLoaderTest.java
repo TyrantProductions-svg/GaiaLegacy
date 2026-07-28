@@ -63,6 +63,8 @@ class GaiaResourceLoaderTest {
             "assets/test/atlases/blocks.json";
     private static final String ATLAS_IMAGE =
             "assets/test/textures/atlas.png";
+    private static final String DAMAGE_ATLAS_IMAGE =
+            "assets/gaia/textures/effects/block_damage.png";
     private static final ResourceLocation TEST_MISSING =
             ResourceLocation.parse("test:missing");
     private static final byte[] PNG =
@@ -1560,7 +1562,22 @@ class GaiaResourceLoaderTest {
                         "test:textures/atlas.png",
                         Map.of("test:missing", region())));
         entries.put(ATLAS_IMAGE, PNG);
+        entries.put(DAMAGE_ATLAS_IMAGE, damageAtlasPng());
         return entries;
+    }
+
+    private static byte[] damageAtlasPng() {
+        BufferedImage image =
+                new BufferedImage(160, 16, BufferedImage.TYPE_INT_ARGB);
+        image.setRGB(0, 0, 0xFFFFFFFF);
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            if (!ImageIO.write(image, "png", output)) {
+                throw new AssertionError("PNG ImageIO writer is unavailable");
+            }
+            return output.toByteArray();
+        } catch (IOException failure) {
+            throw new AssertionError("Failed to encode damage atlas PNG", failure);
+        }
     }
 
     private static Stream<Arguments>

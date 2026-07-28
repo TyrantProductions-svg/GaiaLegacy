@@ -1,8 +1,10 @@
 package com.overlord.renderer;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.overlord.renderer.feedback.InteractionFeedbackFrame;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -22,5 +24,18 @@ class RenderFrameInputTest {
         assertThrows(UnsupportedOperationException.class, () -> input.chunks().add(null));
         assertDoesNotThrow(() -> new RenderFrameInput(List.of(), Double.MIN_VALUE, 0));
         assertDoesNotThrow(() -> new RenderFrameInput(List.of(), Double.MAX_VALUE, 0));
+    }
+
+    @Test
+    void compatibilityConstructorUsesHiddenFeedbackAndCanonicalConstructorKeepsFrame() {
+        RenderFrameInput compatible = new RenderFrameInput(List.of(), 0.0d, 0);
+        InteractionFeedbackFrame feedback = InteractionFeedbackFrame.hidden();
+        RenderFrameInput canonical = new RenderFrameInput(List.of(), 0.0d, 0, feedback);
+
+        assertEquals(InteractionFeedbackFrame.hidden(), compatible.feedback());
+        assertEquals(feedback, canonical.feedback());
+        assertThrows(
+                NullPointerException.class,
+                () -> new RenderFrameInput(List.of(), 0.0d, 0, null));
     }
 }

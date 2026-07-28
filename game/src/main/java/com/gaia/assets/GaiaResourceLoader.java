@@ -14,6 +14,9 @@ import com.overlord.assets.AssetSource;
 import com.overlord.assets.ResourceIndex;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.renderer.RenderAssets;
+import com.overlord.renderer.feedback.DamageAtlasLayout;
+import com.overlord.renderer.feedback.DamageAtlasResourceLoader;
+import com.overlord.renderer.feedback.InteractionFeedbackAssets;
 import com.overlord.renderer.material.MaterialDefinition;
 import com.overlord.renderer.material.RenderType;
 import com.overlord.renderer.texture.TextureAtlasMetadata;
@@ -949,6 +952,9 @@ public final class GaiaResourceLoader {
                             "Required world material gaia:opaque is not declared",
                             null));
         }
+        DamageAtlasLayout damageAtlas =
+                new DamageAtlasResourceLoader()
+                        .load(assetManager, GaiaAssetCatalog.DAMAGE_ATLAS, diagnostics::add);
         RenderAssets renderAssets =
                 new RenderAssets(
                         loadedAtlas.image(),
@@ -956,7 +962,10 @@ public final class GaiaResourceLoader {
                                 ? fallbackMaterial
                                 : worldMaterial,
                         RenderAssets.DEFAULT_WORLD_VERTEX_SHADER,
-                        RenderAssets.DEFAULT_WORLD_FRAGMENT_SHADER);
+                        RenderAssets.DEFAULT_WORLD_FRAGMENT_SHADER,
+                        RenderAssets.DEFAULT_SKY_VERTEX_SHADER,
+                        RenderAssets.DEFAULT_SKY_FRAGMENT_SHADER,
+                        InteractionFeedbackAssets.withDamageAtlas(damageAtlas));
 
         return new GaiaAssetCatalog(
                 registry,

@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import org.joml.Matrix4fc;
+import org.joml.Vector2fc;
 import org.joml.Vector3fc;
 
 public final class ShaderProgram implements ShaderBinding, AutoCloseable {
@@ -114,6 +115,17 @@ public final class ShaderProgram implements ShaderBinding, AutoCloseable {
             throw new IllegalArgumentException("float uniform value must be finite");
         }
         backend.uploadFloat(locationFor(uniform), value);
+    }
+
+    @Override
+    public void setVector2(String uniform, Vector2fc value) {
+        guard.assertMainThread("shader program vector2 uniform upload");
+        ensureOpen();
+        Vector2fc vector = Objects.requireNonNull(value, "value");
+        if (!Float.isFinite(vector.x()) || !Float.isFinite(vector.y())) {
+            throw new IllegalArgumentException("vector2 uniform value must be finite");
+        }
+        backend.uploadVector2(locationFor(uniform), vector.x(), vector.y());
     }
 
     @Override

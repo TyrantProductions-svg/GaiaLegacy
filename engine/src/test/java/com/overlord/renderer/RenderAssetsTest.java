@@ -10,6 +10,8 @@ import com.overlord.assets.ResourceLocation;
 import com.overlord.core.Engine;
 import com.overlord.core.thread.MainThreadGuard;
 import com.overlord.renderer.material.RenderType;
+import com.overlord.renderer.feedback.DamageAtlasResourceLoader;
+import com.overlord.renderer.feedback.InteractionFeedbackAssets;
 import com.overlord.renderer.texture.TextureImage;
 import com.overlord.renderer.visual.RenderVisualSettings;
 import org.junit.jupiter.api.Test;
@@ -49,6 +51,33 @@ class RenderAssetsTest {
         assertEquals(
                 RenderAssets.DEFAULT_SKY_FRAGMENT_SHADER,
                 assets.skyFragmentShader());
+        assertNotNull(assets.feedback());
+        assertEquals(
+                DamageAtlasResourceLoader.WIDTH,
+                assets.feedback().damageAtlas().image().width());
+        assertEquals(
+                InteractionFeedbackAssets.DEFAULT_CROSSHAIR_FRAGMENT_SHADER,
+                assets.feedback().crosshairFragmentShader());
+    }
+
+    @Test
+    void legacyConstructorsSupplyExplicitFallbackFeedbackAssets() {
+        RenderAssets missing = RenderAssets.missing();
+        RenderAssets legacySixArgument = new RenderAssets(
+                missing.blockAtlas(),
+                missing.worldMaterial(),
+                missing.worldVertexShader(),
+                missing.worldFragmentShader(),
+                missing.skyVertexShader(),
+                missing.skyFragmentShader());
+        RenderAssets legacyFourArgument = new RenderAssets(
+                missing.blockAtlas(),
+                missing.worldMaterial(),
+                missing.worldVertexShader(),
+                missing.worldFragmentShader());
+
+        assertEquals(InteractionFeedbackAssets.fallback(), legacySixArgument.feedback());
+        assertEquals(InteractionFeedbackAssets.fallback(), legacyFourArgument.feedback());
     }
 
     @Test

@@ -12,9 +12,20 @@ import org.junit.jupiter.api.Test;
 class RenderStateScopeTest {
     private static final RenderStateSpec WORLD_OPAQUE =
             new RenderStateSpec(true, true, BlendMode.DISABLED, true);
+    private static final RenderStateSpec OVERLAY_STATE =
+            new RenderStateSpec(
+                    true,
+                    DepthFunction.LEQUAL,
+                    false,
+                    BlendMode.DISABLED,
+                    false,
+                    true,
+                    -1.0f,
+                    -1.0f);
     private static final RenderStateSnapshot INCOMING =
             new RenderStateSnapshot(
                     false,
+                    DepthFunction.LESS,
                     false,
                     true,
                     1,
@@ -24,9 +35,62 @@ class RenderStateScopeTest {
                     5,
                     6,
                     false,
+                    17,
+                    18,
+                    19,
+                    false,
+                    -2.25f,
+                    3.5f,
                     7,
                     8,
-                    9);
+                    9,
+                    new Viewport(41, 42, 43, 44));
+
+    @Test
+    void exceptionalExitRestoresEveryCapturedValue() {
+        RecordingRenderStateBackend backend =
+                new RecordingRenderStateBackend(INCOMING);
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> {
+                    try (RenderStateScope ignored =
+                            RenderStateScope.open(backend, OVERLAY_STATE)) {
+                        backend.setViewport(new Viewport(0, 0, 1024, 768));
+                        throw new IllegalStateException("draw failed");
+                    }
+                });
+
+        assertEquals(INCOMING, backend.current());
+        assertEquals(1, backend.restoreCount());
+    }
+
+    @Test
+    void fourArgumentSpecKeepsLegacyDepthAndPolygonOffsetDefaults() {
+        assertEquals(DepthFunction.LESS, WORLD_OPAQUE.depthFunction());
+        assertFalse(WORLD_OPAQUE.polygonOffsetFill());
+        assertEquals(0.0f, WORLD_OPAQUE.polygonOffsetFactor());
+        assertEquals(0.0f, WORLD_OPAQUE.polygonOffsetUnits());
+    }
+
+    @Test
+    void viewportRejectsNegativeDimensions() {
+        IllegalArgumentException negativeWidth =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> new Viewport(0, 0, -1, 1));
+        IllegalArgumentException negativeHeight =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> new Viewport(0, 0, 1, -1));
+
+        assertEquals(
+                "viewport dimensions must be non-negative",
+                negativeWidth.getMessage());
+        assertEquals(
+                "viewport dimensions must be non-negative",
+                negativeHeight.getMessage());
+    }
 
     @Test
     void capturesThenAppliesRequestedStateAndRestoresIncomingStateOnClose() {
@@ -216,6 +280,97 @@ class RenderStateScopeTest {
         @Override
         public void clearColorAndDepth() {
             calls.add("clearColorAndDepth");
+        }
+
+        @Override
+        public void setViewport(Viewport viewport) {
+            calls.add("setViewport:" + viewport);
+        }
+    }
+
+    private static final class RecordingRenderStateBackend
+            implements RenderStateBackend {
+        private RenderStateSnapshot current;
+        private int restoreCount;
+
+        private RecordingRenderStateBackend(RenderStateSnapshot incoming) {
+            current = incoming;
+        }
+
+        RenderStateSnapshot current() {
+            return current;
+        }
+
+        int restoreCount() {
+            return restoreCount;
+        }
+
+        @Override
+        public RenderStateSnapshot capture() {
+            return current;
+        }
+
+        @Override
+        public void apply(RenderStateSpec state) {
+            current =
+                    new RenderStateSnapshot(
+                            state.depthTest(),
+                            state.depthFunction(),
+                            state.depthWrite(),
+                            state.blendMode() != BlendMode.DISABLED,
+                            current.blendSourceRgb(),
+                            current.blendDestinationRgb(),
+                            current.blendSourceAlpha(),
+                            current.blendDestinationAlpha(),
+                            current.blendEquationRgb(),
+                            current.blendEquationAlpha(),
+                            state.cullFace(),
+                            current.vertexArray(),
+                            current.arrayBuffer(),
+                            current.elementArrayBuffer(),
+                            state.polygonOffsetFill(),
+                            state.polygonOffsetFactor(),
+                            state.polygonOffsetUnits(),
+                            current.currentProgram(),
+                            current.activeTexture(),
+                            current.texture2dUnit0(),
+                            current.viewport());
+        }
+
+        @Override
+        public void restore(RenderStateSnapshot snapshot) {
+            current = snapshot;
+            restoreCount++;
+        }
+
+        @Override
+        public void clearColorAndDepth() {}
+
+        @Override
+        public void setViewport(Viewport viewport) {
+            current =
+                    new RenderStateSnapshot(
+                            current.depthTest(),
+                            current.depthFunction(),
+                            current.depthWrite(),
+                            current.blend(),
+                            current.blendSourceRgb(),
+                            current.blendDestinationRgb(),
+                            current.blendSourceAlpha(),
+                            current.blendDestinationAlpha(),
+                            current.blendEquationRgb(),
+                            current.blendEquationAlpha(),
+                            current.cullFace(),
+                            current.vertexArray(),
+                            current.arrayBuffer(),
+                            current.elementArrayBuffer(),
+                            current.polygonOffsetFill(),
+                            current.polygonOffsetFactor(),
+                            current.polygonOffsetUnits(),
+                            current.currentProgram(),
+                            current.activeTexture(),
+                            current.texture2dUnit0(),
+                            viewport);
         }
     }
 }

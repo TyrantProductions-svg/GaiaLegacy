@@ -376,15 +376,32 @@ class RenderPipelineArchitectureTest {
     void phase5bShadersRemainGlsl410WithoutComputeOrStorageBuffers() throws IOException {
         Path shaderDirectory = MAIN.resolve("resources/assets/overlord/shaders");
         List<Path> shaders;
-        try (Stream<Path> paths = Files.list(shaderDirectory)) {
+        try (Stream<Path> paths = Files.walk(shaderDirectory)) {
             shaders =
-                    paths.filter(path -> path.toString().endsWith(".vert") || path.toString().endsWith(".frag"))
+                    paths.filter(Files::isRegularFile)
+                            .filter(path -> path.toString().endsWith(".vert") || path.toString().endsWith(".frag"))
                             .sorted()
                             .toList();
         }
         assertEquals(
-                List.of("sky.frag", "sky.vert", "world.frag", "world.vert"),
-                shaders.stream().map(path -> path.getFileName().toString()).toList());
+                List.of(
+                        "feedback/block_damage.frag",
+                        "feedback/block_damage.vert",
+                        "feedback/crosshair.frag",
+                        "feedback/crosshair.vert",
+                        "feedback/particle.frag",
+                        "feedback/particle.vert",
+                        "feedback/world_item.frag",
+                        "feedback/world_item.vert",
+                        "sky.frag",
+                        "sky.vert",
+                        "world.frag",
+                        "world.vert"),
+                shaders.stream()
+                        .map(shaderDirectory::relativize)
+                        .map(Path::toString)
+                        .map(path -> path.replace('\\', '/'))
+                        .toList());
         for (Path shader : shaders) {
             String source = read(shader);
             assertEquals("#version 410 core", source.lines().findFirst().orElseThrow(), shader::toString);
@@ -392,6 +409,28 @@ class RenderPipelineArchitectureTest {
             assertFalse(code.contains("layout(local_size"), shader::toString);
             assertFalse(code.contains("buffer "), shader::toString);
             assertFalse(code.contains("430"), shader::toString);
+        }
+    }
+
+    @Test
+    void crosshairShadersUseFramebufferPixelNdcAndPureWhiteWithoutGameplayInputs() {
+        String vertex =
+                read(MAIN.resolve("resources/assets/overlord/shaders/feedback/crosshair.vert"));
+        String fragment =
+                read(MAIN.resolve("resources/assets/overlord/shaders/feedback/crosshair.frag"));
+
+        assertEquals("#version 410 core", vertex.lines().findFirst().orElseThrow());
+        assertEquals("#version 410 core", fragment.lines().findFirst().orElseThrow());
+        assertTrue(vertex.contains("layout(location = 0) in vec2 pixelPosition;"));
+        assertTrue(vertex.contains("uniform vec2 framebufferSize;"));
+        assertTrue(vertex.contains("pixelPosition / framebufferSize * 2.0 - 1.0"));
+        assertTrue(vertex.contains("gl_Position = vec4(ndc, 0.0, 1.0);"));
+        assertTrue(fragment.contains("fragmentColor = vec4(1.0);"));
+
+        String combined = sanitizeCode(vertex + "\n" + fragment).toLowerCase();
+        for (String forbidden :
+                List.of("sampler", "texture", "target", "raycast", "compute", "ssbo", "buffer ", "buffer{")) {
+            assertFalse(combined.contains(forbidden), "Forbidden crosshair shader token: " + forbidden);
         }
     }
 

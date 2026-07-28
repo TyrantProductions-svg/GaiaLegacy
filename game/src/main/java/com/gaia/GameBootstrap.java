@@ -19,6 +19,13 @@ import com.gaia.interaction.GaiaBlockWorldAccess;
 import com.gaia.interaction.GameMode;
 import com.gaia.interaction.GameModeManager;
 import com.gaia.interaction.PlayerBlockTargeting;
+import com.gaia.interaction.feedback.CommittedBreakVisualAdapter;
+import com.gaia.interaction.feedback.GaiaVisualRegionResolver;
+import com.gaia.interaction.feedback.InteractionBlockState;
+import com.gaia.interaction.feedback.InteractionFeedbackCoordinator;
+import com.gaia.interaction.feedback.VisualFeedbackDiagnostics;
+import com.gaia.interaction.feedback.VisualRegionDiagnostics;
+import com.gaia.interaction.feedback.WorldItemVisualTracker;
 import com.gaia.world.GaiaWorldGenerator;
 import com.gaia.world.SafeSpawnSelector;
 import com.gaia.world.WorldLoadResult;
@@ -40,6 +47,7 @@ import com.overlord.event.EventBus;
 import com.overlord.interaction.DefaultWorldMutationService;
 import com.overlord.interaction.SynchronousBlockChangeEventPublisher;
 import com.overlord.interaction.api.EntityRef;
+import com.overlord.interaction.api.BlockChangeDecision;
 import com.overlord.inventory.api.ItemStack;
 import com.overlord.core.time.FixedStepClock;
 import com.overlord.core.time.FrameClock;
@@ -52,6 +60,7 @@ import com.overlord.physics.PhysicsBody;
 import com.overlord.physics.PhysicsWorld;
 import com.overlord.physics.PlayerController;
 import com.overlord.renderer.visual.RenderVisualSettings;
+import com.overlord.renderer.particle.ParticleSystem;
 import com.overlord.voxel.ChunkMeshBuilder;
 import com.overlord.voxel.ChunkMeshManager;
 import com.overlord.worlditem.LogicalWorldItemService;
@@ -158,6 +167,42 @@ public final class GameBootstrap {
                             mainThreadGuard,
                             GameConfig.Interaction.MAX_LOGICAL_WORLD_ITEMS,
                             GameConfig.Interaction.WORLD_ITEM_PICKUP_DELAY_TICKS);
+            VisualRegionDiagnostics visualRegionDiagnostics =
+                    VisualRegionDiagnostics.safe(
+                            (item, failure) ->
+                                    System.err.println(
+                                            "[InteractionFeedback] item="
+                                                    + item
+                                                    + " failure="
+                                                    + failure));
+            GaiaVisualRegionResolver visualRegions =
+                    new GaiaVisualRegionResolver(
+                            blocks,
+                            catalog.blockAtlas(),
+                            visualRegionDiagnostics);
+            ParticleSystem particles = new ParticleSystem();
+            WorldItemVisualTracker worldItemVisuals =
+                    new WorldItemVisualTracker(visualRegions::resolve);
+            VisualFeedbackDiagnostics visualDiagnostics =
+                    (event, failure) ->
+                            System.err.println(
+                                    "[InteractionFeedback] event="
+                                            + event
+                                            + " failure="
+                                            + failure);
+            CommittedBreakVisualAdapter committedBreaks =
+                    new CommittedBreakVisualAdapter(
+                            ResourceLocation.parse("gaia:air"),
+                            visualRegions::resolve,
+                            particles,
+                            visualDiagnostics);
+            InteractionFeedbackCoordinator feedback =
+                    new InteractionFeedbackCoordinator(
+                            committedBreaks,
+                            particles,
+                            worldItemVisuals,
+                            visualRegions::resolve);
+            shutdownCoordinator.register("interaction-feedback", feedback::clearAll);
             BodyInventoryInputController inventoryInput =
                     new BodyInventoryInputController(
                             inventoryService,
@@ -170,7 +215,10 @@ public final class GameBootstrap {
                     new DefaultWorldMutationService(
                             mainThreadGuard,
                             blockWorld,
-                            SynchronousBlockChangeEventPublisher.noSubscribers());
+                            new SynchronousBlockChangeEventPublisher(
+                                    ignored -> BlockChangeDecision.ALLOW,
+                                    feedback::onBlockChanged,
+                                    ignored -> {}));
             PlayerBlockTargeting blockTargeting =
                     new PlayerBlockTargeting(
                             new GaiaBlockRaycastService(blockRaycast, blocks),
@@ -279,6 +327,8 @@ public final class GameBootstrap {
                             Boolean.getBoolean("gaia.inventory.debugShortcuts"),
                             blockInteraction,
                             worldItems,
+                            feedback,
+                            InteractionBlockState.unblocked(),
                             shutdownCoordinator,
                             new RenderMetricsConsoleReporter(Boolean.getBoolean("gaia.renderMetrics"), System::nanoTime, System.out));
             new GameLoop(context).run();

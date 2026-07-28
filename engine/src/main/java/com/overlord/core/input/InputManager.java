@@ -121,6 +121,12 @@ public final class InputManager {
         return invalidated;
     }
 
+    /** Reads the callback-owned GLFW focus state without introducing another authority. */
+    public boolean isWindowFocused() {
+        mainThreadGuard.assertMainThread("window focus state query");
+        return windowFocused;
+    }
+
     public MouseDelta consumeMouseDelta() {
         mainThreadGuard.assertMainThread("mouse input consumption");
         if (accumulatedMouseX == 0.0 && accumulatedMouseY == 0.0) {
