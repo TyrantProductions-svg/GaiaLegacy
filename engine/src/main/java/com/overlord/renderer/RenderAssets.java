@@ -3,6 +3,7 @@ package com.overlord.renderer;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.renderer.material.MaterialDefinition;
 import com.overlord.renderer.material.RenderType;
+import com.overlord.renderer.feedback.InteractionFeedbackAssets;
 import com.overlord.renderer.texture.TextureImage;
 import java.util.Objects;
 
@@ -12,7 +13,8 @@ public record RenderAssets(
         ResourceLocation worldVertexShader,
         ResourceLocation worldFragmentShader,
         ResourceLocation skyVertexShader,
-        ResourceLocation skyFragmentShader) {
+        ResourceLocation skyFragmentShader,
+        InteractionFeedbackAssets feedback) {
     public static final ResourceLocation DEFAULT_WORLD_VERTEX_SHADER =
             ResourceLocation.parse("overlord:shaders/world.vert");
     public static final ResourceLocation DEFAULT_WORLD_FRAGMENT_SHADER =
@@ -29,6 +31,24 @@ public record RenderAssets(
         Objects.requireNonNull(worldFragmentShader, "worldFragmentShader");
         Objects.requireNonNull(skyVertexShader, "skyVertexShader");
         Objects.requireNonNull(skyFragmentShader, "skyFragmentShader");
+        Objects.requireNonNull(feedback, "feedback");
+    }
+
+    public RenderAssets(
+            TextureImage blockAtlas,
+            MaterialDefinition worldMaterial,
+            ResourceLocation worldVertexShader,
+            ResourceLocation worldFragmentShader,
+            ResourceLocation skyVertexShader,
+            ResourceLocation skyFragmentShader) {
+        this(
+                blockAtlas,
+                worldMaterial,
+                worldVertexShader,
+                worldFragmentShader,
+                skyVertexShader,
+                skyFragmentShader,
+                InteractionFeedbackAssets.fallback());
     }
 
     public RenderAssets(
@@ -42,7 +62,8 @@ public record RenderAssets(
                 worldVertexShader,
                 worldFragmentShader,
                 DEFAULT_SKY_VERTEX_SHADER,
-                DEFAULT_SKY_FRAGMENT_SHADER);
+                DEFAULT_SKY_FRAGMENT_SHADER,
+                InteractionFeedbackAssets.fallback());
     }
 
     public static RenderAssets missing() {
@@ -58,6 +79,7 @@ public record RenderAssets(
                 DEFAULT_WORLD_VERTEX_SHADER,
                 DEFAULT_WORLD_FRAGMENT_SHADER,
                 DEFAULT_SKY_VERTEX_SHADER,
-                DEFAULT_SKY_FRAGMENT_SHADER);
+                DEFAULT_SKY_FRAGMENT_SHADER,
+                InteractionFeedbackAssets.fallback());
     }
 }

@@ -20,6 +20,7 @@ import static org.lwjgl.opengl.GL30C.glLinkProgram;
 import static org.lwjgl.opengl.GL30C.glShaderSource;
 import static org.lwjgl.opengl.GL30C.glUniform1i;
 import static org.lwjgl.opengl.GL30C.glUniform1f;
+import static org.lwjgl.opengl.GL30C.glUniform2f;
 import static org.lwjgl.opengl.GL30C.glUniform3f;
 import static org.lwjgl.opengl.GL30C.glUniformMatrix4fv;
 import static org.lwjgl.opengl.GL30C.glUseProgram;
@@ -107,6 +108,11 @@ final class OpenGlShaderBackend implements ShaderBackend {
     @Override
     public void uploadFloat(int location, float value) {
         glUniform1f(location, value);
+    }
+
+    @Override
+    public void uploadVector2(int location, float x, float y) {
+        glUniform2f(location, x, y);
     }
 
     @Override

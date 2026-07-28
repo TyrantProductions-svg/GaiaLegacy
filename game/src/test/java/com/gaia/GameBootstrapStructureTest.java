@@ -1,6 +1,7 @@
 package com.gaia;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -171,6 +172,22 @@ class GameBootstrapStructureTest {
         assertTrue(assetLoad < engineConstruction);
         assertTrue(engineConstruction < engineInitialization);
         assertTrue(engineInitialization < worldConstruction);
+    }
+
+    @Test
+    void composesOneFeedbackAuthorityAndPostWriteSubscriber() throws IOException {
+        String source = Files.readString(Path.of("src/main/java/com/gaia/GameBootstrap.java"));
+        String compact = source.replaceAll("\\s+", "");
+
+        assertEquals(1, occurrences(compact, "newParticleSystem("));
+        assertEquals(1, occurrences(compact, "newWorldItemVisualTracker("));
+        assertEquals(1, occurrences(compact, "newCommittedBreakVisualAdapter("));
+        assertEquals(1, occurrences(compact, "newInteractionFeedbackCoordinator("));
+        assertEquals(1, occurrences(compact, "newSynchronousBlockChangeEventPublisher("));
+        assertFalse(compact.contains("SynchronousBlockChangeEventPublisher.noSubscribers()"));
+        assertTrue(compact.contains("ignored->BlockChangeDecision.ALLOW"));
+        assertTrue(compact.contains("feedback::onBlockChanged"));
+        assertTrue(compact.contains("ignored->{}"));
     }
 
     @Test
@@ -347,6 +364,16 @@ class GameBootstrapStructureTest {
             }
         }
         return false;
+    }
+
+    private static int occurrences(String source, String token) {
+        int count = 0;
+        int index = 0;
+        while ((index = source.indexOf(token, index)) >= 0) {
+            count++;
+            index += token.length();
+        }
+        return count;
     }
 
     private static int matchingDelimiter(

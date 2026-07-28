@@ -1,6 +1,7 @@
 package com.gaia.assets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -11,14 +12,91 @@ import com.overlord.renderer.texture.TextureAtlasMetadata;
 import com.overlord.voxel.BlockFace;
 import java.awt.image.BufferedImage;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import javax.imageio.ImageIO;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class GaiaProductionAssetsTest {
+    private static final String DAMAGE_ATLAS_SHA256 =
+            "10866639349013a1abf50472f32b2b06071bcdfabf26f4e5eaf9a304cb3b2fcb";
     private static final String ATLAS_PATH =
             "assets/gaia/textures/atlas.png";
+    private static final String DAMAGE_ATLAS_PATH =
+            "assets/gaia/textures/effects/block_damage.png";
+
+    @Test
+    void packagesTenStageDamageAtlasWithoutChangingBlockAtlas() throws Exception {
+        ClassLoader loader = GaiaProductionAssetsTest.class.getClassLoader();
+        BufferedImage damage;
+        try (InputStream input = loader.getResourceAsStream(DAMAGE_ATLAS_PATH)) {
+            assertNotNull(input);
+            damage = ImageIO.read(input);
+        }
+
+        assertNotNull(damage);
+        assertEquals(160, damage.getWidth());
+        assertEquals(16, damage.getHeight());
+        for (int stage = 0; stage < 10; stage++) {
+            boolean containsVisiblePixel = false;
+            for (int y = 0; y < 16; y++) {
+                for (int x = stage * 16; x < (stage + 1) * 16; x++) {
+                    containsVisiblePixel |= ((damage.getRGB(x, y) >>> 24) & 0xff) != 0;
+                }
+            }
+            assertTrue(containsVisiblePixel, "damage stage " + stage + " is empty");
+            if (stage > 0) {
+                assertPreviousDamageStageIsCumulative(damage, stage);
+            }
+        }
+
+        BufferedImage blockAtlas;
+        try (InputStream input = loader.getResourceAsStream(ATLAS_PATH)) {
+            assertNotNull(input);
+            blockAtlas = ImageIO.read(input);
+        }
+        assertEquals(
+                "e5b2b34d81dcc396efff2c071f7f6bd3"
+                        + "b90e03b2278f8ce80c3fe98a314739f6",
+                hashArgbRegion(blockAtlas, 0, 0, 128, 64));
+    }
+
+    @Test
+    void generatedDamageAtlasIsDeterministicAndMatchesProductionResource(
+            @TempDir Path temporaryDirectory) throws Exception {
+        Path repositoryRoot = repositoryRoot();
+        Path generator =
+                repositoryRoot.resolve(
+                        "tools/src/main/java/com/gaia/tools/BlockDamageAtlasGenerator.java");
+        Path first = temporaryDirectory.resolve("first.png");
+        Path second = temporaryDirectory.resolve("second.png");
+
+        runGenerator(repositoryRoot, generator, first);
+        runGenerator(repositoryRoot, generator, second);
+
+        byte[] firstBytes = Files.readAllBytes(first);
+        byte[] secondBytes = Files.readAllBytes(second);
+        byte[] productionBytes;
+        try (InputStream input =
+                GaiaProductionAssetsTest.class
+                        .getClassLoader()
+                        .getResourceAsStream(DAMAGE_ATLAS_PATH)) {
+            assertNotNull(input);
+            productionBytes = input.readAllBytes();
+        }
+        assertArrayEquals(firstBytes, secondBytes);
+        assertArrayEquals(firstBytes, productionBytes);
+        assertEquals(DAMAGE_ATLAS_SHA256, hashBytes(firstBytes));
+
+        BufferedImage generated = ImageIO.read(first.toFile());
+        assertNotNull(generated);
+        assertEquals(160, generated.getWidth());
+        assertEquals(16, generated.getHeight());
+    }
 
     @Test
     void loadsProductionResourcesWithStableIdsAndUvs() {
@@ -93,6 +171,15 @@ class GaiaProductionAssetsTest {
         assertEquals(
                 RenderAssets.DEFAULT_WORLD_VERTEX_SHADER,
                 catalog.renderAssets().worldVertexShader());
+        assertEquals(
+                160,
+                catalog.renderAssets().feedback().damageAtlas().image().width());
+        assertEquals(
+                16,
+                catalog.renderAssets().feedback().damageAtlas().image().height());
+        assertEquals(
+                ResourceLocation.parse("overlord:shaders/feedback/block_damage.vert"),
+                catalog.renderAssets().feedback().damageVertexShader());
         assertTrue(oakLog.flammable());
         assertTrue(oakLeaves.flammable());
 
@@ -233,10 +320,55 @@ class GaiaProductionAssetsTest {
         }
     }
 
+    private static void assertPreviousDamageStageIsCumulative(
+            BufferedImage damage, int stage) {
+        int previousOffset = (stage - 1) * 16;
+        int currentOffset = stage * 16;
+        for (int y = 0; y < 16; y++) {
+            for (int localX = 0; localX < 16; localX++) {
+                int previous = damage.getRGB(previousOffset + localX, y);
+                if (((previous >>> 24) & 0xff) != 0) {
+                    assertEquals(previous, damage.getRGB(currentOffset + localX, y));
+                }
+            }
+        }
+    }
+
     private static String hashArgbRegion(
             BufferedImage image, int startX, int startY)
             throws Exception {
         return hashArgbRegion(image, startX, startY, 16, 16);
+    }
+
+    private static String hashBytes(byte[] bytes) throws Exception {
+        return HexFormat.of()
+                .formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+    }
+
+    private static Path repositoryRoot() {
+        Path current = Path.of("").toAbsolutePath();
+        while (current != null && !Files.isRegularFile(current.resolve("settings.gradle"))) {
+            current = current.getParent();
+        }
+        assertNotNull(current, "Could not locate repository root");
+        return current;
+    }
+
+    private static void runGenerator(
+            Path repositoryRoot, Path generator, Path output) throws Exception {
+        String executable =
+                System.getProperty("os.name").toLowerCase().contains("win")
+                        ? "java.exe"
+                        : "java";
+        Path java = Path.of(System.getProperty("java.home"), "bin", executable);
+        Process process =
+                new ProcessBuilder(java.toString(), generator.toString(), output.toString())
+                        .directory(repositoryRoot.toFile())
+                        .redirectErrorStream(true)
+                        .start();
+        String outputText =
+                new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertEquals(0, process.waitFor(), outputText);
     }
 
     private static String hashArgbRegion(

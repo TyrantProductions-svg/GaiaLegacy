@@ -2,6 +2,7 @@ package com.overlord.renderer.state;
 
 public record RenderStateSnapshot(
         boolean depthTest,
+        DepthFunction depthFunction,
         boolean depthWrite,
         boolean blend,
         int blendSourceRgb,
@@ -11,6 +12,51 @@ public record RenderStateSnapshot(
         int blendEquationRgb,
         int blendEquationAlpha,
         boolean cullFace,
+        int vertexArray,
+        int arrayBuffer,
+        int elementArrayBuffer,
+        boolean polygonOffsetFill,
+        float polygonOffsetFactor,
+        float polygonOffsetUnits,
         int currentProgram,
         int activeTexture,
-        int texture2dUnit0) {}
+        int texture2dUnit0,
+        Viewport viewport) {
+    public RenderStateSnapshot(
+            boolean depthTest,
+            boolean depthWrite,
+            boolean blend,
+            int blendSourceRgb,
+            int blendDestinationRgb,
+            int blendSourceAlpha,
+            int blendDestinationAlpha,
+            int blendEquationRgb,
+            int blendEquationAlpha,
+            boolean cullFace,
+            int currentProgram,
+            int activeTexture,
+            int texture2dUnit0) {
+        this(
+                depthTest,
+                DepthFunction.LESS,
+                depthWrite,
+                blend,
+                blendSourceRgb,
+                blendDestinationRgb,
+                blendSourceAlpha,
+                blendDestinationAlpha,
+                blendEquationRgb,
+                blendEquationAlpha,
+                cullFace,
+                0,
+                0,
+                0,
+                false,
+                0.0f,
+                0.0f,
+                currentProgram,
+                activeTexture,
+                texture2dUnit0,
+                new Viewport(0, 0, 0, 0));
+    }
+}

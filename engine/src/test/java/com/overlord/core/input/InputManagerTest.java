@@ -10,9 +10,42 @@ import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT;
 import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_RIGHT;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class InputManagerTest {
+    @Test
+    void windowFocusAccessorTracksTheCallbackOwnedState() {
+        InputManager manager = new InputManager();
+
+        assertTrue(manager.isWindowFocused());
+        manager.onWindowFocus(false);
+        assertFalse(manager.isWindowFocused());
+        manager.onWindowFocus(true);
+        assertTrue(manager.isWindowFocused());
+    }
+
+    @Test
+    void windowFocusAccessorRejectsOffOwnerThreadReads() throws InterruptedException {
+        InputManager manager = new InputManager();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread worker = new Thread(
+                () -> {
+                    try {
+                        manager.isWindowFocused();
+                    } catch (Throwable thrown) {
+                        failure.set(thrown);
+                    }
+                },
+                "focus-reader");
+
+        worker.start();
+        worker.join();
+
+        assertTrue(failure.get() instanceof IllegalStateException);
+        assertTrue(failure.get().getMessage().contains("window focus state query"));
+    }
+
     @Test
     void accumulatesMouseMovementAfterInitialBaseline() {
         InputManager manager = new InputManager();

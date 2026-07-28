@@ -33,6 +33,10 @@ interface ShaderBackend {
 
     void uploadFloat(int location, float value);
 
+    default void uploadVector2(int location, float x, float y) {
+        throw new UnsupportedOperationException("vector2 uniforms are not supported");
+    }
+
     void uploadVector3(int location, float x, float y, float z);
 
     void deleteProgram(int programId);

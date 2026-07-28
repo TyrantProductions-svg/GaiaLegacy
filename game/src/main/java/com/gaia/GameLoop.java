@@ -2,6 +2,8 @@ package com.gaia;
 
 import com.gaia.inventory.InventoryDropLocation;
 import com.gaia.interaction.MouseInteractionLifecycle;
+import com.gaia.interaction.BlockInteractionViewModel;
+import com.gaia.interaction.feedback.InteractionFeedbackCoordinator;
 import com.gaia.world.WorldLoadResult;
 import com.gaia.world.WorldLoadState;
 import com.overlord.config.GameConfig;
@@ -12,11 +14,18 @@ import com.overlord.core.input.MouseDelta;
 import com.overlord.event.EventBus;
 import com.overlord.physics.PlayerController;
 import com.overlord.renderer.RenderFrameInput;
+import com.overlord.renderer.feedback.FeedbackVisibility;
+import com.overlord.renderer.feedback.InteractionFeedbackFrame;
+import com.overlord.worlditem.api.WorldItemSnapshot;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletionException;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
+import java.util.function.IntConsumer;
+import java.util.function.Supplier;
 import org.joml.Vector3f;
 
 public final class GameLoop {
@@ -41,13 +50,16 @@ public final class GameLoop {
         while (state != State.STOPPING) {
             double frameDeltaSeconds = context.frameClock().tick();
             window.pollEvents();
+            boolean feedbackLifecycleBoundary = false;
             if (context.inputManager().consumeKeyPress(GameConfig.Input.KEY_CURSOR_CAPTURE)) {
                 cursorCaptured = mouseInteractionLifecycle.toggleCursorCapture(
                         cursorCaptured, window::setCursorCaptured);
                 context.inputManager().resetMouseBaseline();
+                feedbackLifecycleBoundary = true;
             }
             if (context.inputManager().consumeMouseInteractionInvalidation()) {
                 mouseInteractionLifecycle.onFocusLost();
+                feedbackLifecycleBoundary = true;
             }
             MouseDelta mouseDelta = context.inputManager().consumeMouseDelta();
 
@@ -62,6 +74,8 @@ public final class GameLoop {
             if (state != State.RUNNING) {
                 context.inputManager().discardFixedInputEdges();
             }
+
+            boolean focused = context.inputManager().isWindowFocused();
 
             window.consumeSurfaceUpdate()
                     .ifPresent(
@@ -86,15 +100,35 @@ public final class GameLoop {
             if (state == State.RUNNING) {
                 updateRenderCamera();
             }
-            context.engine()
-                    .getRenderer()
-                    .renderFrame(
-                            new RenderFrameInput(
-                                    state == State.RUNNING
-                                            ? List.copyOf(context.chunkMeshes().renderObjects())
-                                            : List.of(),
-                                    frameDeltaSeconds,
-                                    context.chunkMeshes().meshQueueDepth()));
+            boolean feedbackBlocked = context.interactionBlockState().blocked();
+            boolean feedbackLifecycleBoundaryForRender = feedbackLifecycleBoundary;
+            dispatchFeedbackFrame(
+                    () -> handleFeedbackLifecycle(
+                            context.interactionFeedback(),
+                            feedbackLifecycleBoundaryForRender,
+                            state == State.RUNNING,
+                            cursorCaptured,
+                            focused,
+                            feedbackBlocked),
+                    () -> feedbackSnapshot(
+                            context.interactionFeedback(),
+                            context.blockInteraction().viewModel(),
+                            List.copyOf(context.worldItems().snapshots()),
+                            state == State.RUNNING,
+                            cursorCaptured,
+                            focused,
+                            feedbackBlocked),
+                    feedback -> context.engine()
+                            .getRenderer()
+                            .renderFrame(
+                                    new RenderFrameInput(
+                                            state == State.RUNNING
+                                                    ? List.copyOf(
+                                                            context.chunkMeshes().renderObjects())
+                                                    : List.of(),
+                                            frameDeltaSeconds,
+                                            context.chunkMeshes().meshQueueDepth(),
+                                            feedback)));
             context.renderMetricsReporter().report(context.engine().getRenderer().metrics().snapshot());
             window.swapBuffers();
         }
@@ -199,25 +233,39 @@ public final class GameLoop {
             state = State.STOPPING;
             return;
         }
-        for (int step = 0; step < fixedSteps; step++) {
+        runFixedBatch(fixedSteps, step -> {
             float fixedDelta = context.fixedStepClock().fixedStepSeconds();
             InputSnapshot stepInput =
                     step == 0 ? input : input.heldOnly();
-            context.inventoryInput().handle(
-                    stepInput, inventoryTick, Optional.of(dropLocation()));
-            runInventoryDebugShortcut(stepInput);
-            context.playerManager().fixedUpdate(fixedDelta, stepInput);
-            context.physicsWorld().step(fixedDelta);
-            context.blockInteraction().fixedUpdate(
-                    stepInput,
-                    fixedDelta,
-                    inventoryTick,
-                    Math.max(0L, System.nanoTime()),
-                    cursorCaptured);
-            ModuleManager.getInstance().updateAll(fixedDelta);
-            EventBus.getInstance().processAll();
+            runFixedSystemStep(
+                    () -> {
+                        context.inventoryInput().handle(
+                                stepInput, inventoryTick, Optional.of(dropLocation()));
+                        runInventoryDebugShortcut(stepInput);
+                        context.playerManager().fixedUpdate(fixedDelta, stepInput);
+                        context.physicsWorld().step(fixedDelta);
+                    },
+                    () -> interactionEnabled(
+                            state == State.RUNNING,
+                            cursorCaptured,
+                            context.inputManager().isWindowFocused(),
+                            context.interactionBlockState().blocked()),
+                    fixedInteractionEnabled -> context.blockInteraction().fixedUpdate(
+                            stepInput,
+                            fixedDelta,
+                            inventoryTick,
+                            Math.max(0L, System.nanoTime()),
+                            fixedInteractionEnabled),
+                    fixedInteractionEnabled -> context.interactionFeedback().fixedUpdate(
+                            context.blockInteraction().viewModel(),
+                            fixedInteractionEnabled,
+                            inventoryTick),
+                    () -> {
+                        ModuleManager.getInstance().updateAll(fixedDelta);
+                        EventBus.getInstance().processAll();
+                    });
             inventoryTick++;
-        }
+        });
     }
 
     private InventoryDropLocation dropLocation() {
@@ -265,6 +313,89 @@ public final class GameLoop {
                                 interpolationScratch);
         cameraFeet.y += GameConfig.Player.EYE_HEIGHT;
         context.engine().getCamera().setPosition(cameraFeet);
+    }
+
+    static boolean interactionEnabled(
+            boolean running,
+            boolean cursorCaptured,
+            boolean focused,
+            boolean blocked) {
+        return running && cursorCaptured && focused && !blocked;
+    }
+
+    static void clearFeedbackForLifecycleBoundary(
+            InteractionFeedbackCoordinator coordinator) {
+        Objects.requireNonNull(coordinator, "coordinator").clearTransient();
+    }
+
+    static void handleFeedbackLifecycle(
+            InteractionFeedbackCoordinator coordinator,
+            boolean lifecycleBoundary,
+            boolean running,
+            boolean cursorCaptured,
+            boolean focused,
+            boolean blocked) {
+        if (lifecycleBoundary || !interactionEnabled(running, cursorCaptured, focused, blocked)) {
+            clearFeedbackForLifecycleBoundary(coordinator);
+        }
+    }
+
+    static InteractionFeedbackFrame dispatchFeedbackFrame(
+            Runnable lifecycle,
+            Supplier<InteractionFeedbackFrame> snapshot,
+            Consumer<InteractionFeedbackFrame> renderer) {
+        Objects.requireNonNull(lifecycle, "lifecycle").run();
+        InteractionFeedbackFrame frame =
+                Objects.requireNonNull(snapshot, "snapshot").get();
+        Objects.requireNonNull(renderer, "renderer")
+                .accept(Objects.requireNonNull(frame, "feedback frame"));
+        return frame;
+    }
+
+    static void runFixedBatch(int fixedSteps, IntConsumer fixedStep) {
+        if (fixedSteps < 0) {
+            throw new IllegalArgumentException("fixedSteps must be non-negative");
+        }
+        Objects.requireNonNull(fixedStep, "fixedStep");
+        for (int step = 0; step < fixedSteps; step++) {
+            fixedStep.accept(step);
+        }
+    }
+
+    static void runFixedSystemStep(
+            Runnable leadingSystems,
+            BooleanSupplier interactionEnablement,
+            Consumer<Boolean> interaction,
+            Consumer<Boolean> feedback,
+            Runnable trailingSystems) {
+        Objects.requireNonNull(leadingSystems, "leadingSystems").run();
+        boolean enabled = Objects.requireNonNull(
+                interactionEnablement, "interactionEnablement").getAsBoolean();
+        Objects.requireNonNull(interaction, "interaction").accept(enabled);
+        Objects.requireNonNull(feedback, "feedback").accept(enabled);
+        Objects.requireNonNull(trailingSystems, "trailingSystems").run();
+    }
+
+    static InteractionFeedbackFrame feedbackSnapshot(
+            InteractionFeedbackCoordinator coordinator,
+            BlockInteractionViewModel view,
+            List<WorldItemSnapshot> worldItems,
+            boolean running,
+            boolean cursorCaptured,
+            boolean focused,
+            boolean blocked) {
+        FeedbackVisibility visibility =
+                new FeedbackVisibility(running, cursorCaptured, focused, blocked);
+        List<WorldItemSnapshot> snapshots =
+                List.copyOf(Objects.requireNonNull(worldItems, "worldItems"));
+        List<WorldItemSnapshot> presentedWorldItems = running
+                ? snapshots
+                : List.of();
+        return Objects.requireNonNull(coordinator, "coordinator")
+                .snapshot(
+                        Objects.requireNonNull(view, "view"),
+                        presentedWorldItems,
+                        visibility);
     }
 
     private enum State {

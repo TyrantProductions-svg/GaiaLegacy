@@ -55,17 +55,24 @@ class RendererStructureTest {
                 source.substring(
                         source.indexOf("public void renderFrame("),
                         source.indexOf("public void cleanup()"));
+        String drawableFrame =
+                source.substring(
+                        source.indexOf("private void renderDrawableFrame("),
+                        source.indexOf("public void cleanup()"));
 
         assertInOrder(
                 renderFrame,
                 "metricsCollector.beginFrame(",
+                "dispatchIfDrawable(",
+                "metricsCollector.finishFrame()");
+        assertInOrder(
+                drawableFrame,
                 "Frustum.from(",
                 "for (ChunkRenderObject chunk : frameInput.chunks())",
                 ".intersects(chunk.worldBounds())",
                 "frameQueue.submit(chunk, frameMaterial)",
-                "metricsCollector.setVisibleChunks(",
-                "metricsCollector.finishFrame()");
-        assertEquals(1, occurrences(renderFrame, "Frustum.from("));
+                "metricsCollector.setVisibleChunks(");
+        assertEquals(1, occurrences(drawableFrame, "Frustum.from("));
         for (String forbidden :
                 java.util.List.of(
                         "unload",
@@ -90,7 +97,8 @@ class RendererStructureTest {
         assertFalse(source.contains("resizeFramebuffer("));
         assertTrue(source.contains("next.framebufferWidth() <= 0 || next.framebufferHeight() <= 0"));
         assertTrue(source.contains("boolean rebuild = surfaceController.update(next);"));
-        assertTrue(source.contains("if (!surfaceController.drawable()) return;"));
+        assertTrue(source.contains("dispatchIfDrawable("));
+        assertTrue(source.contains("if (surface.drawable())"));
         assertTrue(source.contains("metricsCollector.beginFrame("));
         assertTrue(source.contains("metricsCollector.finishFrame();"));
     }

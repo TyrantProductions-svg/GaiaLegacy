@@ -16,6 +16,9 @@ public record GaiaAssetCatalog(
         TextureAtlasMetadata blockAtlas,
         RenderAssets renderAssets,
         AssetLoadReport report) {
+    public static final ResourceLocation DAMAGE_ATLAS =
+            ResourceLocation.parse("gaia:textures/effects/block_damage.png");
+
     public GaiaAssetCatalog {
         Objects.requireNonNull(blockRegistry, "blockRegistry");
         materials =

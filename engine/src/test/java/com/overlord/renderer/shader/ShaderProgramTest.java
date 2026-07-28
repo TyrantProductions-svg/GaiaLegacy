@@ -19,6 +19,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import org.joml.Matrix4f;
+import org.joml.Vector2f;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
@@ -155,11 +156,12 @@ class ShaderProgramTest {
         backend.uniformLocation("textureAtlas", 23);
         backend.uniformLocation("fogStart", 29);
         backend.uniformLocation("sunDirection", 31);
+        backend.uniformLocation("framebufferSize", 37);
         ShaderProgram program =
                 new ShaderProgram(
                         MainThreadGuard.captureCurrentThread(),
                         sources(),
-                        List.of("projection", "textureAtlas", "fogStart", "sunDirection"),
+                        List.of("projection", "textureAtlas", "fogStart", "sunDirection", "framebufferSize"),
                         backend);
 
         Matrix4f matrix = new Matrix4f().translate(2.0f, 3.0f, 4.0f);
@@ -168,6 +170,8 @@ class ShaderProgramTest {
         program.setInt("textureAtlas", 4);
         program.setFloat("fogStart", 64.0f);
         program.setVector3("sunDirection", new Vector3f(-0.45f, 0.85f, -0.30f));
+        program.setVector2("framebufferSize", new Vector2f(2048.0f, 1536.0f));
+        program.setVector2("framebufferSize", new Vector2f(2048.0f, 1536.0f));
         program.cleanup();
         program.cleanup();
 
@@ -184,6 +188,11 @@ class ShaderProgramTest {
         assertEquals(List.of(64.0f), backend.floatValues());
         assertEquals(List.of(31), backend.vector3Locations());
         assertEquals(List.of(new Vector3f(-0.45f, 0.85f, -0.30f)), backend.vector3Values());
+        assertEquals(1, backend.uniformLocationCalls("framebufferSize"));
+        assertEquals(List.of(37, 37), backend.vector2Locations());
+        assertEquals(
+                List.of(new Vector2f(2048.0f, 1536.0f), new Vector2f(2048.0f, 1536.0f)),
+                backend.vector2Values());
         assertEquals(List.of(201), backend.deletedPrograms());
     }
 
@@ -194,14 +203,18 @@ class ShaderProgramTest {
                 new ShaderProgram(
                         MainThreadGuard.captureCurrentThread(),
                         sources(),
-                        List.of("fogStart", "sunDirection"),
+                        List.of("fogStart", "sunDirection", "framebufferSize"),
                         backend);
 
         assertThrows(IllegalArgumentException.class, () -> program.setFloat("fogStart", Float.NaN));
         assertThrows(
                 IllegalArgumentException.class,
                 () -> program.setVector3("sunDirection", new Vector3f(0.0f, Float.POSITIVE_INFINITY, 0.0f)));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> program.setVector2("framebufferSize", new Vector2f(2048.0f, Float.NaN)));
         assertEquals(List.of(), backend.floatLocations());
+        assertEquals(List.of(), backend.vector2Locations());
         assertEquals(List.of(), backend.vector3Locations());
     }
 
@@ -209,16 +222,22 @@ class ShaderProgramTest {
     void rejectsWorkerThreadUniformUploadsBeforeBackendCalls() throws InterruptedException {
         MainThreadGuard guard = MainThreadGuard.captureCurrentThread();
         FakeShaderBackend backend = new FakeShaderBackend();
-        ShaderProgram program = new ShaderProgram(guard, sources(), List.of("fogStart"), backend);
+        ShaderProgram program = new ShaderProgram(guard, sources(), List.of("framebufferSize"), backend);
         ExecutorService worker = Executors.newSingleThreadExecutor();
         try {
             ExecutionException failure =
                     assertThrows(
                             ExecutionException.class,
-                            () -> worker.submit(() -> program.setFloat("fogStart", 64.0f)).get());
+                            () ->
+                                    worker.submit(
+                                                    () ->
+                                                            program.setVector2(
+                                                                    "framebufferSize",
+                                                                    new Vector2f(2048.0f, 1536.0f)))
+                                            .get());
 
             assertInstanceOf(IllegalStateException.class, failure.getCause());
-            assertEquals(List.of(), backend.floatLocations());
+            assertEquals(List.of(), backend.vector2Locations());
         } finally {
             worker.shutdownNow();
             assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
@@ -248,6 +267,16 @@ class ShaderProgramTest {
                                 List.of(" "),
                                 blankBackend));
         assertEquals(0, blankBackend.callCount());
+    }
+
+    @Test
+    void openGlBackendUploadsVector2WithGlUniform2f() throws Exception {
+        String source =
+                java.nio.file.Files.readString(
+                        java.nio.file.Path.of(
+                                "src/main/java/com/overlord/renderer/shader/OpenGlShaderBackend.java"));
+
+        assertTrue(source.contains("glUniform2f(location, x, y);"));
     }
 
     @Test
@@ -296,6 +325,8 @@ class ShaderProgramTest {
         private final List<Integer> intValues = new ArrayList<>();
         private final List<Integer> floatLocations = new ArrayList<>();
         private final List<Float> floatValues = new ArrayList<>();
+        private final List<Integer> vector2Locations = new ArrayList<>();
+        private final List<Vector2f> vector2Values = new ArrayList<>();
         private final List<Integer> vector3Locations = new ArrayList<>();
         private final List<Vector3f> vector3Values = new ArrayList<>();
         private final Map<Integer, String> compileFailures = new HashMap<>();
@@ -381,6 +412,14 @@ class ShaderProgramTest {
 
         List<Float> floatValues() {
             return floatValues;
+        }
+
+        List<Integer> vector2Locations() {
+            return vector2Locations;
+        }
+
+        List<Vector2f> vector2Values() {
+            return vector2Values;
         }
 
         List<Integer> vector3Locations() {
@@ -496,6 +535,13 @@ class ShaderProgramTest {
             calls++;
             floatLocations.add(location);
             floatValues.add(value);
+        }
+
+        @Override
+        public void uploadVector2(int location, float x, float y) {
+            calls++;
+            vector2Locations.add(location);
+            vector2Values.add(new Vector2f(x, y));
         }
 
         @Override
