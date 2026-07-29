@@ -1,0 +1,17 @@
+{
+  "provenanceVersion": 1,
+  "font": {
+    "image": "gaia:ui/ui_font.png",
+    "metadata": "gaia:ui/ui_font.json",
+    "atlasVersion": 1,
+    "width": 128,
+    "height": 64
+  },
+  "icons": {
+    "image": "gaia:ui/ui_icons.png",
+    "metadata": "gaia:ui/ui_icons.json",
+    "atlasVersion": 1,
+    "width": 128,
+    "height": 64
+  }
+}

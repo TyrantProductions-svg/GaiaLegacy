@@ -3,6 +3,7 @@ package com.overlord.renderer.pass;
 import com.overlord.renderer.metrics.RenderMetricsRecorder;
 import com.overlord.renderer.RenderSurfaceMetrics;
 import com.overlord.renderer.feedback.InteractionFeedbackFrame;
+import com.overlord.renderer.ui.UiFrame;
 import com.overlord.renderer.visual.RenderVisualSettings;
 import java.util.Objects;
 import org.joml.Matrix4f;
@@ -18,6 +19,7 @@ public final class RenderContext {
     private final RenderMetricsRecorder metricsRecorder;
     private final RenderSurfaceMetrics surfaceMetrics;
     private final InteractionFeedbackFrame feedback;
+    private final UiFrame uiFrame;
 
     public RenderContext(Matrix4fc projection, Matrix4fc view) {
         this(
@@ -26,7 +28,8 @@ public final class RenderContext {
                 RenderVisualSettings.milestoneOneDefaults(),
                 triangles -> {},
                 HIDDEN_SURFACE,
-                InteractionFeedbackFrame.hidden());
+                InteractionFeedbackFrame.hidden(),
+                UiFrame.empty());
     }
 
     public RenderContext(
@@ -39,7 +42,8 @@ public final class RenderContext {
                 visualSettings,
                 triangles -> {},
                 HIDDEN_SURFACE,
-                InteractionFeedbackFrame.hidden());
+                InteractionFeedbackFrame.hidden(),
+                UiFrame.empty());
     }
 
     public RenderContext(
@@ -53,7 +57,8 @@ public final class RenderContext {
                 visualSettings,
                 metricsRecorder,
                 HIDDEN_SURFACE,
-                InteractionFeedbackFrame.hidden());
+                InteractionFeedbackFrame.hidden(),
+                UiFrame.empty());
     }
 
     public RenderContext(
@@ -63,6 +68,24 @@ public final class RenderContext {
             RenderMetricsRecorder metricsRecorder,
             RenderSurfaceMetrics surfaceMetrics,
             InteractionFeedbackFrame feedback) {
+        this(
+                projection,
+                view,
+                visualSettings,
+                metricsRecorder,
+                surfaceMetrics,
+                feedback,
+                UiFrame.empty());
+    }
+
+    public RenderContext(
+            Matrix4fc projection,
+            Matrix4fc view,
+            RenderVisualSettings visualSettings,
+            RenderMetricsRecorder metricsRecorder,
+            RenderSurfaceMetrics surfaceMetrics,
+            InteractionFeedbackFrame feedback,
+            UiFrame uiFrame) {
         this.projection = new Matrix4f(Objects.requireNonNull(projection, "projection"));
         this.view = new Matrix4f(Objects.requireNonNull(view, "view"));
         this.visualSettings =
@@ -70,6 +93,7 @@ public final class RenderContext {
         this.metricsRecorder = Objects.requireNonNull(metricsRecorder, "metricsRecorder");
         this.surfaceMetrics = Objects.requireNonNull(surfaceMetrics, "surfaceMetrics");
         this.feedback = Objects.requireNonNull(feedback, "feedback");
+        this.uiFrame = Objects.requireNonNull(uiFrame, "uiFrame");
     }
 
     public Matrix4f projection() {
@@ -94,5 +118,9 @@ public final class RenderContext {
 
     public InteractionFeedbackFrame feedback() {
         return feedback;
+    }
+
+    public UiFrame uiFrame() {
+        return uiFrame;
     }
 }

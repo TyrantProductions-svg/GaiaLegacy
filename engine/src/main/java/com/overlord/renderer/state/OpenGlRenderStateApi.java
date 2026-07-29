@@ -16,6 +16,8 @@ interface OpenGlRenderStateApi {
 
     void glBindBuffer(int target, int buffer);
 
+    void glBindFramebuffer(int target, int framebuffer);
+
     void glBindTexture(int target, int texture);
 
     void glBindVertexArray(int vertexArray);
@@ -35,6 +37,8 @@ interface OpenGlRenderStateApi {
     void glEnable(int capability);
 
     void glPolygonOffset(float factor, float units);
+
+    void glScissor(int x, int y, int width, int height);
 
     void glUseProgram(int program);
 

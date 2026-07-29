@@ -63,7 +63,12 @@ tasks.register('verifyPackagedResources') {
             'assets/gaia/materials/missing.json',
             'assets/gaia/atlases/blocks.json',
             'assets/gaia/textures/atlas.png',
-            'assets/gaia/textures/effects/block_damage.png'
+            'assets/gaia/textures/effects/block_damage.png',
+            'assets/gaia/ui/ui-assets.json',
+            'assets/gaia/ui/ui_font.png',
+            'assets/gaia/ui/ui_font.json',
+            'assets/gaia/ui/ui_icons.png',
+            'assets/gaia/ui/ui_icons.json'
         ]
         new java.util.zip.ZipFile(archive).withCloseable { zip ->
             required.each { path ->
@@ -99,20 +104,47 @@ tasks.register('verifyInstalledShaderResources') {
             'assets/overlord/shaders/world.frag',
             'assets/overlord/shaders/sky.vert',
             'assets/overlord/shaders/sky.frag',
-            'assets/overlord/shaders/feedback/crosshair.vert',
-            'assets/overlord/shaders/feedback/crosshair.frag',
             'assets/overlord/shaders/feedback/block_damage.vert',
             'assets/overlord/shaders/feedback/block_damage.frag',
             'assets/overlord/shaders/feedback/particle.vert',
             'assets/overlord/shaders/feedback/particle.frag',
             'assets/overlord/shaders/feedback/world_item.vert',
-            'assets/overlord/shaders/feedback/world_item.frag'
+            'assets/overlord/shaders/feedback/world_item.frag',
+            'assets/overlord/shaders/ui/ui.vert',
+            'assets/overlord/shaders/ui/ui.frag'
         ]
         new java.util.zip.ZipFile(engineJar).withCloseable { zip ->
             required.each { path ->
                 if (zip.getEntry(path) == null) {
                     throw new GradleException(
                         "Installed engine JAR is missing ${path}")
+                }
+            }
+        }
+
+        def gameJars = fileTree(libraryDirectory) {
+            include 'game-*.jar'
+        }.files.sort()
+        if (gameJars.size() != 1) {
+            throw new GradleException(
+                "Expected exactly one installed game JAR in "
+                    + "${libraryDirectory}, found ${gameJars}")
+        }
+        def gameJar = gameJars[0]
+        def requiredGameUi = [
+            'META-INF/gaialegacy/resource-indexes.list',
+            'assets/gaia/resource-index.json',
+            'assets/gaia/ui/ui-assets.json',
+            'assets/gaia/ui/ui_font.png',
+            'assets/gaia/ui/ui_font.json',
+            'assets/gaia/ui/ui_icons.png',
+            'assets/gaia/ui/ui_icons.json'
+        ]
+        new java.util.zip.ZipFile(gameJar).withCloseable { zip ->
+            requiredGameUi.each { path ->
+                if (zip.getEntry(path) == null) {
+                    throw new GradleException(
+                        "Installed game JAR is missing ${path}")
                 }
             }
         }

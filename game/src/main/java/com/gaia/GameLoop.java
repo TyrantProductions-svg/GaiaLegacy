@@ -4,6 +4,9 @@ import com.gaia.inventory.InventoryDropLocation;
 import com.gaia.interaction.MouseInteractionLifecycle;
 import com.gaia.interaction.BlockInteractionViewModel;
 import com.gaia.interaction.feedback.InteractionFeedbackCoordinator;
+import com.gaia.ui.HudDebugSnapshot;
+import com.gaia.ui.HudFrameCoordinator;
+import com.gaia.ui.HudVisibility;
 import com.gaia.world.WorldLoadResult;
 import com.gaia.world.WorldLoadState;
 import com.overlord.config.GameConfig;
@@ -14,6 +17,7 @@ import com.overlord.core.input.MouseDelta;
 import com.overlord.event.EventBus;
 import com.overlord.physics.PlayerController;
 import com.overlord.renderer.RenderFrameInput;
+import com.overlord.renderer.RenderSurfaceMetrics;
 import com.overlord.renderer.feedback.FeedbackVisibility;
 import com.overlord.renderer.feedback.InteractionFeedbackFrame;
 import com.overlord.worlditem.api.WorldItemSnapshot;
@@ -35,6 +39,7 @@ public final class GameLoop {
     private WorldLoadResult loadResult;
     private boolean cursorCaptured = true;
     private long inventoryTick;
+    private final FrameDebugInputCapture hudDebugInputs;
     private final Vector3f interpolationScratch = new Vector3f();
     private final Vector3f dropPositionScratch = new Vector3f();
     private final Vector3f dropVelocityScratch = new Vector3f();
@@ -43,12 +48,17 @@ public final class GameLoop {
         this.context = context;
         mouseInteractionLifecycle = new MouseInteractionLifecycle(
                 context.blockInteraction()::cancel);
+        hudDebugInputs = new FrameDebugInputCapture(
+                context.playerController().body(),
+                () -> context.engine().getRenderer().metrics().snapshot());
     }
 
     public void run() {
         Window window = context.engine().getWindow();
         while (state != State.STOPPING) {
             double frameDeltaSeconds = context.frameClock().tick();
+            GameLoopFrameOrchestrator.FixedBatch hudFixedBatch =
+                    GameLoopFrameOrchestrator.FixedBatch.zeroSteps();
             window.pollEvents();
             boolean feedbackLifecycleBoundary = false;
             if (context.inputManager().consumeKeyPress(GameConfig.Input.KEY_CURSOR_CAPTURE)) {
@@ -87,7 +97,7 @@ public final class GameLoop {
             if (state == State.LOADING) {
                 completeLoadingIfReady();
             } else if (state == State.RUNNING) {
-                runFixedUpdates(frameDeltaSeconds, mouseDelta);
+                hudFixedBatch = runFixedUpdates(frameDeltaSeconds, mouseDelta);
             }
             if (loadResult != null) {
                 pumpChunkMeshes();
@@ -102,6 +112,10 @@ public final class GameLoop {
             }
             boolean feedbackBlocked = context.interactionBlockState().blocked();
             boolean feedbackLifecycleBoundaryForRender = feedbackLifecycleBoundary;
+            GameLoopFrameOrchestrator.FixedBatch presentationBatch = hudFixedBatch;
+            FrameDebugInputCapture.CapturedInput hudDebugInput = hudDebugInputs.capture();
+            List<WorldItemSnapshot> worldItemSnapshots =
+                    List.copyOf(context.worldItems().snapshots());
             dispatchFeedbackFrame(
                     () -> handleFeedbackLifecycle(
                             context.interactionFeedback(),
@@ -113,22 +127,36 @@ public final class GameLoop {
                     () -> feedbackSnapshot(
                             context.interactionFeedback(),
                             context.blockInteraction().viewModel(),
-                            List.copyOf(context.worldItems().snapshots()),
+                            worldItemSnapshots,
                             state == State.RUNNING,
                             cursorCaptured,
                             focused,
                             feedbackBlocked),
-                    feedback -> context.engine()
-                            .getRenderer()
-                            .renderFrame(
-                                    new RenderFrameInput(
-                                            state == State.RUNNING
-                                                    ? List.copyOf(
-                                                            context.chunkMeshes().renderObjects())
-                                                    : List.of(),
-                                            frameDeltaSeconds,
-                                            context.chunkMeshes().meshQueueDepth(),
-                                            feedback)));
+                    feedback -> {
+                        GameLoopFrameOrchestrator.captureAndRender(
+                                presentationBatch,
+                                fixedInput -> captureHudFrame(
+                                        fixedInput,
+                                        hudDebugInput,
+                                        worldItemSnapshots,
+                                        feedback,
+                                        frameDeltaSeconds,
+                                        focused,
+                                        feedbackBlocked,
+                                        window.currentSurfaceMetrics()),
+                                hud -> context.engine().getRenderer().renderFrame(
+                                        new RenderFrameInput(
+                                                state == State.RUNNING
+                                                        ? List.copyOf(
+                                                                context.chunkMeshes()
+                                                                        .renderObjects())
+                                                        : List.of(),
+                                                frameDeltaSeconds,
+                                                context.chunkMeshes().meshQueueDepth(),
+                                                feedback,
+                                                hud.frame())));
+                    });
+            hudDebugInputs.recordCompletedRender();
             context.renderMetricsReporter().report(context.engine().getRenderer().metrics().snapshot());
             window.swapBuffers();
         }
@@ -219,53 +247,98 @@ public final class GameLoop {
         throw (Error) failure;
     }
 
-    private void runFixedUpdates(double frameDeltaSeconds, MouseDelta mouseDelta) {
+    private GameLoopFrameOrchestrator.FixedBatch runFixedUpdates(
+            double frameDeltaSeconds, MouseDelta mouseDelta) {
         if (cursorCaptured) {
             context.playerManager().applyLook(mouseDelta);
         }
         int fixedSteps = context.fixedStepClock().advance(frameDeltaSeconds);
         if (fixedSteps == 0) {
-            return;
+            return GameLoopFrameOrchestrator.FixedBatch.zeroSteps();
         }
 
-        InputSnapshot input = context.inputManager().consumeFixedInput();
-        if (input.isKeyPressed(GameConfig.Input.KEY_CLOSE)) {
-            state = State.STOPPING;
-            return;
-        }
-        runFixedBatch(fixedSteps, step -> {
-            float fixedDelta = context.fixedStepClock().fixedStepSeconds();
-            InputSnapshot stepInput =
-                    step == 0 ? input : input.heldOnly();
-            runFixedSystemStep(
-                    () -> {
-                        context.inventoryInput().handle(
-                                stepInput, inventoryTick, Optional.of(dropLocation()));
-                        runInventoryDebugShortcut(stepInput);
-                        context.playerManager().fixedUpdate(fixedDelta, stepInput);
-                        context.physicsWorld().step(fixedDelta);
-                    },
-                    () -> interactionEnabled(
-                            state == State.RUNNING,
-                            cursorCaptured,
-                            context.inputManager().isWindowFocused(),
-                            context.interactionBlockState().blocked()),
-                    fixedInteractionEnabled -> context.blockInteraction().fixedUpdate(
-                            stepInput,
-                            fixedDelta,
-                            inventoryTick,
-                            Math.max(0L, System.nanoTime()),
-                            fixedInteractionEnabled),
-                    fixedInteractionEnabled -> context.interactionFeedback().fixedUpdate(
-                            context.blockInteraction().viewModel(),
-                            fixedInteractionEnabled,
-                            inventoryTick),
-                    () -> {
-                        ModuleManager.getInstance().updateAll(fixedDelta);
-                        EventBus.getInstance().processAll();
-                    });
-            inventoryTick++;
-        });
+        GameLoopFrameOrchestrator.FixedBatch batch =
+                GameLoopFrameOrchestrator.runFixedBatch(
+                        fixedSteps,
+                        () -> {
+                            InputSnapshot input = context.inputManager().consumeFixedInput();
+                            if (input.isKeyPressed(GameConfig.Input.KEY_CLOSE)) {
+                                state = State.STOPPING;
+                            }
+                            return input;
+                        },
+                        stepInput -> {
+                            if (state == State.STOPPING) {
+                                return;
+                            }
+                            float fixedDelta = context.fixedStepClock().fixedStepSeconds();
+                            runFixedSystemStep(
+                                    () -> {
+                                        context.inventoryInput().handle(
+                                                stepInput,
+                                                inventoryTick,
+                                                Optional.of(dropLocation()));
+                                        runInventoryDebugShortcut(stepInput);
+                                        context.playerManager().fixedUpdate(fixedDelta, stepInput);
+                                        context.physicsWorld().step(fixedDelta);
+                                    },
+                                    () -> interactionEnabled(
+                                            state == State.RUNNING,
+                                            cursorCaptured,
+                                            context.inputManager().isWindowFocused(),
+                                            context.interactionBlockState().blocked()),
+                                    fixedInteractionEnabled ->
+                                            context.blockInteraction().fixedUpdate(
+                                                    stepInput,
+                                                    fixedDelta,
+                                                    inventoryTick,
+                                                    Math.max(0L, System.nanoTime()),
+                                                    fixedInteractionEnabled),
+                                    fixedInteractionEnabled ->
+                                            context.interactionFeedback().fixedUpdate(
+                                                    context.blockInteraction().viewModel(),
+                                                    fixedInteractionEnabled,
+                                                    inventoryTick),
+                                    () -> {
+                                        ModuleManager.getInstance().updateAll(fixedDelta);
+                                        EventBus.getInstance().processAll();
+                                    });
+                            inventoryTick++;
+                        });
+        return batch;
+    }
+
+    private HudFrameCoordinator.CapturedFrame captureHudFrame(
+            Optional<InputSnapshot> fixedInput,
+            FrameDebugInputCapture.CapturedInput hudDebugInput,
+            List<WorldItemSnapshot> worldItems,
+            InteractionFeedbackFrame feedback,
+            double frameDeltaSeconds,
+            boolean focused,
+            boolean blocked,
+            RenderSurfaceMetrics surface) {
+        HudDebugSnapshot.Counts counts = new HudDebugSnapshot.Counts(
+                context.engine().getWorld().chunks().keys().size(),
+                context.physicsWorld().bodies().size(),
+                worldItems.size(),
+                feedback.blockDamage().isPresent() ? 1 : 0,
+                feedback.worldItems().size(),
+                feedback.particles().particles().size());
+        return context.hudFrames().capture(new HudFrameCoordinator.FrameCapture(
+                context.inventoryService().viewModel(context.inventoryOwner()).orElseThrow(),
+                context.blockInteraction().viewModel(),
+                hudDebugInput.previousFrameMetrics(),
+                hudDebugInput.feet(),
+                counts,
+                fixedInput,
+                frameDeltaSeconds,
+                state == State.RUNNING
+                        ? HudVisibility.Lifecycle.RUNNING
+                        : HudVisibility.Lifecycle.LOADING,
+                focused,
+                cursorCaptured,
+                blocked,
+                surface));
     }
 
     private InventoryDropLocation dropLocation() {

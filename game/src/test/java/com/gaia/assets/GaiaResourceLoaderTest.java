@@ -93,7 +93,7 @@ class GaiaResourceLoaderTest {
                 () ->
                         assertEquals(
                                 RenderType.OPAQUE,
-                                catalog.materials()
+                                                catalog.materials()
                                         .get(
                                                 ResourceLocation.parse(
                                                         "test:opaque"))
@@ -134,6 +134,67 @@ class GaiaResourceLoaderTest {
                                                                         ResourceLocation
                                                                                 .parse(
                                                                                         "test:opaque")))));
+    }
+
+    @Test
+    void acceptsManifestWithoutOptionalUiList() throws Exception {
+        GaiaAssetCatalog catalog = load(validEntries());
+
+        assertEquals(
+                ResourceLocation.parse("test:solid"),
+                catalog.blockRegistry().require(1).name());
+    }
+
+    @Test
+    void acceptsSafeUiListWithoutChangingBlockLoading() throws Exception {
+        Map<String, byte[]> entries = validEntries();
+        putJson(
+                entries,
+                MANIFEST,
+                withUi(
+                        manifestJson(
+                                "test",
+                                List.of("blocks/air.json", "blocks/solid.json"),
+                                List.of(
+                                        "materials/missing.json",
+                                        "materials/opaque.json"),
+                                List.of("atlases/blocks.json")),
+                        List.of(
+                                "ui/ui-assets.json",
+                                "ui/ui_icons.png",
+                                "ui/ui_icons.json")));
+
+        GaiaAssetCatalog catalog = load(entries);
+
+        assertEquals(
+                ResourceLocation.parse("test:solid"),
+                catalog.blockRegistry().require(1).name());
+        assertTrue(catalog.report().errors().isEmpty());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"../escape.json", "ui/../escape.json", "/absolute.json"})
+    void rejectsUnsafeOptionalUiPaths(String unsafePath) throws Exception {
+        Map<String, byte[]> entries = validEntries();
+        putJson(
+                entries,
+                MANIFEST,
+                withUi(
+                        manifestJson(
+                                "test",
+                                List.of("blocks/air.json", "blocks/solid.json"),
+                                List.of(
+                                        "materials/missing.json",
+                                        "materials/opaque.json"),
+                                List.of("atlases/blocks.json")),
+                        List.of(unsafePath)));
+
+        assertFatal(
+                entries,
+                "ASSET_JSON_INVALID",
+                MANIFEST,
+                ResourceLocation.parse("test:resource-index.json"),
+                "ui[0]");
     }
 
     @Test
@@ -1744,6 +1805,13 @@ class GaiaResourceLoaderTest {
                 + strings(materials)
                 + ",\"atlases\":"
                 + strings(atlases)
+                + "}";
+    }
+
+    private static String withUi(String manifest, List<String> ui) {
+        return manifest.substring(0, manifest.length() - 1)
+                + ",\"ui\":"
+                + strings(ui)
                 + "}";
     }
 

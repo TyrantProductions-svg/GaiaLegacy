@@ -13,4 +13,9 @@ public interface RenderStateBackend {
         throw new UnsupportedOperationException(
                 "viewport operation is not supported");
     }
+
+    default void setScissor(ScissorBox scissorBox) {
+        throw new UnsupportedOperationException(
+                "scissor operation is not supported");
+    }
 }

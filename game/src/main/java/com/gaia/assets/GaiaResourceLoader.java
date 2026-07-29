@@ -109,10 +109,21 @@ public final class GaiaResourceLoader {
                         "namespace",
                         "blocks",
                         "materials",
-                        "atlases");
+                        "atlases",
+                        "ui");
                 String namespace =
                         strict.requireString("namespace");
                 ResourceLocation.of(namespace, "probe");
+                if (root.has("ui")) {
+                    List<String> uiPaths =
+                            strict.requireStringList("ui");
+                    for (int index = 0; index < uiPaths.size(); index++) {
+                        String path = uiPaths.get(index);
+                        strict.requireSemantic(
+                                "ui[" + index + "]",
+                                () -> ResourceLocation.of(namespace, path));
+                    }
+                }
                 ResourceIndex index =
                         new ResourceIndex(
                                 namespace,

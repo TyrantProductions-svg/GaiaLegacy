@@ -18,9 +18,12 @@ import static org.lwjgl.opengl.GL30C.GL_DEPTH_BUFFER_BIT;
 import static org.lwjgl.opengl.GL30C.GL_DEPTH_FUNC;
 import static org.lwjgl.opengl.GL30C.GL_DEPTH_TEST;
 import static org.lwjgl.opengl.GL30C.GL_DEPTH_WRITEMASK;
+import static org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER;
+import static org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER_BINDING;
 import static org.lwjgl.opengl.GL30C.GL_EQUAL;
 import static org.lwjgl.opengl.GL30C.GL_ELEMENT_ARRAY_BUFFER;
 import static org.lwjgl.opengl.GL30C.GL_ELEMENT_ARRAY_BUFFER_BINDING;
+import static org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_SRGB;
 import static org.lwjgl.opengl.GL30C.GL_FUNC_ADD;
 import static org.lwjgl.opengl.GL30C.GL_GEQUAL;
 import static org.lwjgl.opengl.GL30C.GL_GREATER;
@@ -32,6 +35,10 @@ import static org.lwjgl.opengl.GL30C.GL_ONE_MINUS_SRC_ALPHA;
 import static org.lwjgl.opengl.GL30C.GL_POLYGON_OFFSET_FACTOR;
 import static org.lwjgl.opengl.GL30C.GL_POLYGON_OFFSET_FILL;
 import static org.lwjgl.opengl.GL30C.GL_POLYGON_OFFSET_UNITS;
+import static org.lwjgl.opengl.GL30C.GL_READ_FRAMEBUFFER;
+import static org.lwjgl.opengl.GL30C.GL_READ_FRAMEBUFFER_BINDING;
+import static org.lwjgl.opengl.GL30C.GL_SCISSOR_BOX;
+import static org.lwjgl.opengl.GL30C.GL_SCISSOR_TEST;
 import static org.lwjgl.opengl.GL30C.GL_SRC_ALPHA;
 import static org.lwjgl.opengl.GL30C.GL_TEXTURE0;
 import static org.lwjgl.opengl.GL30C.GL_TEXTURE_2D;
@@ -73,6 +80,8 @@ public final class OpenGlRenderStateBackend implements RenderStateBackend {
         int vertexArray = gl.glGetInteger(GL_VERTEX_ARRAY_BINDING);
         int arrayBuffer = gl.glGetInteger(GL_ARRAY_BUFFER_BINDING);
         int elementArrayBuffer = gl.glGetInteger(GL_ELEMENT_ARRAY_BUFFER_BINDING);
+        int drawFramebuffer = gl.glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
+        int readFramebuffer = gl.glGetInteger(GL_READ_FRAMEBUFFER_BINDING);
         boolean polygonOffsetFill = gl.glIsEnabled(GL_POLYGON_OFFSET_FILL);
         float polygonOffsetFactor = gl.glGetFloat(GL_POLYGON_OFFSET_FACTOR);
         float polygonOffsetUnits = gl.glGetFloat(GL_POLYGON_OFFSET_UNITS);
@@ -93,6 +102,16 @@ public final class OpenGlRenderStateBackend implements RenderStateBackend {
                         viewportValues[1],
                         viewportValues[2],
                         viewportValues[3]);
+        boolean scissorTest = gl.glIsEnabled(GL_SCISSOR_TEST);
+        int[] scissorValues = new int[4];
+        gl.glGetIntegerv(GL_SCISSOR_BOX, scissorValues);
+        ScissorBox scissorBox =
+                new ScissorBox(
+                        scissorValues[0],
+                        scissorValues[1],
+                        scissorValues[2],
+                        scissorValues[3]);
+        boolean framebufferSrgb = gl.glIsEnabled(GL_FRAMEBUFFER_SRGB);
 
         return new RenderStateSnapshot(
                 depthTest,
@@ -115,7 +134,12 @@ public final class OpenGlRenderStateBackend implements RenderStateBackend {
                 currentProgram,
                 activeTexture,
                 texture2dUnit0,
-                viewport);
+                viewport,
+                scissorTest,
+                scissorBox,
+                drawFramebuffer,
+                readFramebuffer,
+                framebufferSrgb);
     }
 
     @Override
@@ -153,12 +177,19 @@ public final class OpenGlRenderStateBackend implements RenderStateBackend {
         } else {
             gl.glDisable(GL_POLYGON_OFFSET_FILL);
         }
+        if (state.scissorTest()) {
+            gl.glEnable(GL_SCISSOR_TEST);
+        } else {
+            gl.glDisable(GL_SCISSOR_TEST);
+        }
     }
 
     @Override
     public void restore(RenderStateSnapshot snapshot) {
         mainThreadGuard.assertMainThread("restore OpenGL render state");
 
+        gl.glBindFramebuffer(GL_DRAW_FRAMEBUFFER, snapshot.drawFramebuffer());
+        gl.glBindFramebuffer(GL_READ_FRAMEBUFFER, snapshot.readFramebuffer());
         gl.glBindVertexArray(snapshot.vertexArray());
         gl.glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, snapshot.elementArrayBuffer());
         gl.glBindBuffer(GL_ARRAY_BUFFER, snapshot.arrayBuffer());
@@ -204,6 +235,22 @@ public final class OpenGlRenderStateBackend implements RenderStateBackend {
         Viewport viewport = snapshot.viewport();
         gl.glViewport(
                 viewport.x(), viewport.y(), viewport.width(), viewport.height());
+        ScissorBox scissorBox = snapshot.scissorBox();
+        gl.glScissor(
+                scissorBox.x(),
+                scissorBox.y(),
+                scissorBox.width(),
+                scissorBox.height());
+        if (snapshot.scissorTest()) {
+            gl.glEnable(GL_SCISSOR_TEST);
+        } else {
+            gl.glDisable(GL_SCISSOR_TEST);
+        }
+        if (snapshot.framebufferSrgb()) {
+            gl.glEnable(GL_FRAMEBUFFER_SRGB);
+        } else {
+            gl.glDisable(GL_FRAMEBUFFER_SRGB);
+        }
     }
 
     @Override
@@ -217,6 +264,16 @@ public final class OpenGlRenderStateBackend implements RenderStateBackend {
         mainThreadGuard.assertMainThread("set OpenGL viewport");
         gl.glViewport(
                 viewport.x(), viewport.y(), viewport.width(), viewport.height());
+    }
+
+    @Override
+    public void setScissor(ScissorBox scissorBox) {
+        mainThreadGuard.assertMainThread("set OpenGL scissor box");
+        gl.glScissor(
+                scissorBox.x(),
+                scissorBox.y(),
+                scissorBox.width(),
+                scissorBox.height());
     }
 
     static int toGl(DepthFunction depthFunction) {

@@ -39,7 +39,8 @@ class OpenGlRenderStateBackendTest {
                     false,
                     true,
                     1.25f,
-                    2.5f);
+                    2.5f,
+                    false);
 
     @Test
     void captureReadsEveryFieldAndPreservesTheIncomingActiveTextureUnit() {
@@ -66,6 +67,8 @@ class OpenGlRenderStateBackendTest {
                         "getInteger:" + GL_VERTEX_ARRAY_BINDING,
                         "getInteger:" + GL_ARRAY_BUFFER_BINDING,
                         "getInteger:" + GL_ELEMENT_ARRAY_BUFFER_BINDING,
+                        "getInteger:" + GL_DRAW_FRAMEBUFFER_BINDING,
+                        "getInteger:" + GL_READ_FRAMEBUFFER_BINDING,
                         "isEnabled:" + GL_POLYGON_OFFSET_FILL,
                         "getFloat:" + GL_POLYGON_OFFSET_FACTOR,
                         "getFloat:" + GL_POLYGON_OFFSET_UNITS,
@@ -74,8 +77,21 @@ class OpenGlRenderStateBackendTest {
                         "activeTexture:" + GL_TEXTURE0,
                         "getInteger:" + GL_TEXTURE_BINDING_2D,
                         "activeTexture:" + incoming.activeTexture(),
-                        "getIntegerv:" + GL_VIEWPORT),
+                        "getIntegerv:" + GL_VIEWPORT,
+                        "isEnabled:" + GL_SCISSOR_TEST,
+                        "getIntegerv:" + GL_SCISSOR_BOX,
+                        "isEnabled:" + GL_FRAMEBUFFER_SRGB),
                 gl.calls);
+    }
+
+    @Test
+    void setScissorWritesTheExactRequestedBox() {
+        RecordingGl gl = new RecordingGl(incoming(DepthFunction.LESS));
+        OpenGlRenderStateBackend backend = backend(gl);
+
+        backend.setScissor(new ScissorBox(4, 5, 6, 7));
+
+        assertEquals(List.of("scissor:4:5:6:7"), gl.calls);
     }
 
     @Test
@@ -105,7 +121,8 @@ class OpenGlRenderStateBackendTest {
                         "blendEquationSeparate:" + GL_FUNC_ADD + ":" + GL_FUNC_ADD,
                         "disable:" + GL_CULL_FACE,
                         "polygonOffset:1.25:2.5",
-                        "enable:" + GL_POLYGON_OFFSET_FILL),
+                        "enable:" + GL_POLYGON_OFFSET_FILL,
+                        "disable:" + GL_SCISSOR_TEST),
                 applyCommandsBeforeRestoration(gl.calls, incoming));
         assertEquals(restoreCalls(incoming), restorationTail(gl.calls, incoming));
     }
@@ -184,31 +201,53 @@ class OpenGlRenderStateBackendTest {
                 301,
                 GL_TEXTURE0 + 5,
                 302,
-                new Viewport(11, 12, 1300, 900));
+                new Viewport(11, 12, 1300, 900),
+                true,
+                new ScissorBox(13, 14, 1200, 800),
+                303,
+                304,
+                true);
     }
 
     private static List<String> restorationTail(
             List<String> calls, RenderStateSnapshot incoming) {
-        int start = calls.lastIndexOf("bindVertexArray:" + incoming.vertexArray());
+        int start =
+                calls.lastIndexOf(
+                        "bindFramebuffer:"
+                                + GL_DRAW_FRAMEBUFFER
+                                + ":"
+                                + incoming.drawFramebuffer());
         return calls.subList(start, calls.size());
     }
 
     private static List<String> applyCommandsBeforeRestoration(
             List<String> calls, RenderStateSnapshot incoming) {
         int start = calls.indexOf("enable:" + GL_DEPTH_TEST);
-        int end = calls.lastIndexOf("bindVertexArray:" + incoming.vertexArray());
+        int end =
+                calls.lastIndexOf(
+                        "bindFramebuffer:"
+                                + GL_DRAW_FRAMEBUFFER
+                                + ":"
+                                + incoming.drawFramebuffer());
         return calls.subList(start, end);
     }
 
     private static List<String> drawMutationCommandsBeforeRestoration(
             List<String> calls, RenderStateSnapshot incoming) {
         int start = calls.indexOf("useProgram:601");
-        int end = calls.lastIndexOf("bindVertexArray:" + incoming.vertexArray());
+        int end =
+                calls.lastIndexOf(
+                        "bindFramebuffer:"
+                                + GL_DRAW_FRAMEBUFFER
+                                + ":"
+                                + incoming.drawFramebuffer());
         return calls.subList(start, end);
     }
 
     private static List<String> restoreCalls(RenderStateSnapshot incoming) {
         return List.of(
+                "bindFramebuffer:" + GL_DRAW_FRAMEBUFFER + ":" + incoming.drawFramebuffer(),
+                "bindFramebuffer:" + GL_READ_FRAMEBUFFER + ":" + incoming.readFramebuffer(),
                 "bindVertexArray:" + incoming.vertexArray(),
                 "bindBuffer:" + GL_ELEMENT_ARRAY_BUFFER + ":" + incoming.elementArrayBuffer(),
                 "bindBuffer:" + GL_ARRAY_BUFFER + ":" + incoming.arrayBuffer(),
@@ -225,7 +264,10 @@ class OpenGlRenderStateBackendTest {
                 "enable:" + GL_CULL_FACE,
                 "polygonOffset:3.25:4.5",
                 "enable:" + GL_POLYGON_OFFSET_FILL,
-                "viewport:11:12:1300:900");
+                "viewport:11:12:1300:900",
+                "scissor:13:14:1200:800",
+                "enable:" + GL_SCISSOR_TEST,
+                "enable:" + GL_FRAMEBUFFER_SRGB);
     }
 
     private static ShaderBinding shaderUsing(RecordingGl gl, int program) {
@@ -331,6 +373,8 @@ class OpenGlRenderStateBackendTest {
                 case GL_BLEND -> incoming.blend();
                 case GL_CULL_FACE -> incoming.cullFace();
                 case GL_POLYGON_OFFSET_FILL -> incoming.polygonOffsetFill();
+                case GL_SCISSOR_TEST -> incoming.scissorTest();
+                case GL_FRAMEBUFFER_SRGB -> true;
                 default -> throw new AssertionError(capability);
             };
         }
@@ -349,6 +393,8 @@ class OpenGlRenderStateBackendTest {
                 case GL_VERTEX_ARRAY_BINDING -> incoming.vertexArray();
                 case GL_ARRAY_BUFFER_BINDING -> incoming.arrayBuffer();
                 case GL_ELEMENT_ARRAY_BUFFER_BINDING -> incoming.elementArrayBuffer();
+                case GL_DRAW_FRAMEBUFFER_BINDING -> incoming.drawFramebuffer();
+                case GL_READ_FRAMEBUFFER_BINDING -> incoming.readFramebuffer();
                 case GL_CURRENT_PROGRAM -> incoming.currentProgram();
                 case GL_ACTIVE_TEXTURE -> activeTexture;
                 case GL_TEXTURE_BINDING_2D -> {
@@ -381,14 +427,23 @@ class OpenGlRenderStateBackendTest {
         @Override
         public void glGetIntegerv(int parameter, int[] values) {
             record("getIntegerv:" + parameter);
-            if (parameter != GL_VIEWPORT) {
-                throw new AssertionError(parameter);
+            switch (parameter) {
+                case GL_VIEWPORT -> {
+                    Viewport viewport = incoming.viewport();
+                    values[0] = viewport.x();
+                    values[1] = viewport.y();
+                    values[2] = viewport.width();
+                    values[3] = viewport.height();
+                }
+                case GL_SCISSOR_BOX -> {
+                    ScissorBox scissorBox = incoming.scissorBox();
+                    values[0] = scissorBox.x();
+                    values[1] = scissorBox.y();
+                    values[2] = scissorBox.width();
+                    values[3] = scissorBox.height();
+                }
+                default -> throw new AssertionError(parameter);
             }
-            Viewport viewport = incoming.viewport();
-            values[0] = viewport.x();
-            values[1] = viewport.y();
-            values[2] = viewport.width();
-            values[3] = viewport.height();
         }
 
         @Override
@@ -398,6 +453,7 @@ class OpenGlRenderStateBackendTest {
         }
 
         @Override public void glBindBuffer(int target, int buffer) { record("bindBuffer:" + target + ":" + buffer); }
+        @Override public void glBindFramebuffer(int target, int framebuffer) { record("bindFramebuffer:" + target + ":" + framebuffer); }
         @Override public void glBindTexture(int target, int texture) { record("bindTexture:" + target + ":" + texture); }
         @Override public void glBindVertexArray(int vao) { record("bindVertexArray:" + vao); }
         @Override public void glBlendEquationSeparate(int rgb, int alpha) { record("blendEquationSeparate:" + rgb + ":" + alpha); }
@@ -408,6 +464,7 @@ class OpenGlRenderStateBackendTest {
         @Override public void glDisable(int capability) { record("disable:" + capability); }
         @Override public void glEnable(int capability) { record("enable:" + capability); }
         @Override public void glPolygonOffset(float factor, float units) { record("polygonOffset:" + factor + ":" + units); }
+        @Override public void glScissor(int x, int y, int width, int height) { record("scissor:" + x + ":" + y + ":" + width + ":" + height); }
         @Override public void glUseProgram(int program) { record("useProgram:" + program); }
         @Override public void glViewport(int x, int y, int width, int height) { record("viewport:" + x + ":" + y + ":" + width + ":" + height); }
     }

@@ -77,14 +77,14 @@ tasks.register('verifyPackagedShaderResources') {
             'assets/overlord/shaders/world.frag',
             'assets/overlord/shaders/sky.vert',
             'assets/overlord/shaders/sky.frag',
-            'assets/overlord/shaders/feedback/crosshair.vert',
-            'assets/overlord/shaders/feedback/crosshair.frag',
             'assets/overlord/shaders/feedback/block_damage.vert',
             'assets/overlord/shaders/feedback/block_damage.frag',
             'assets/overlord/shaders/feedback/particle.vert',
             'assets/overlord/shaders/feedback/particle.frag',
             'assets/overlord/shaders/feedback/world_item.vert',
-            'assets/overlord/shaders/feedback/world_item.frag'
+            'assets/overlord/shaders/feedback/world_item.frag',
+            'assets/overlord/shaders/ui/ui.vert',
+            'assets/overlord/shaders/ui/ui.frag'
         ]
         new java.util.zip.ZipFile(archive).withCloseable { zip ->
             required.each { path ->

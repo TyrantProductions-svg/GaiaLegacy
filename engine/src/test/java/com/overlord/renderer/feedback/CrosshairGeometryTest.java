@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.overlord.core.thread.MainThreadGuard;
+import com.overlord.renderer.ui.UiRect;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
@@ -13,6 +14,20 @@ import java.util.concurrent.Executors;
 import org.junit.jupiter.api.Test;
 
 class CrosshairGeometryTest {
+    @Test
+    void projectsOrderedOddFramebufferQuadsLosslesslyIntoGenericUiRectangles() {
+        assertEquals(
+                List.of(
+                        new UiRect(492.5, 349.5, 498.5, 351.5),
+                        new UiRect(502.5, 349.5, 508.5, 351.5),
+                        new UiRect(499.5, 342.5, 501.5, 348.5),
+                        new UiRect(499.5, 352.5, 501.5, 358.5)),
+                CrosshairGeometry.quads(1001, 701).stream()
+                        .map(quad -> new UiRect(
+                                quad.xMin(), quad.yMin(), quad.xMax(), quad.yMax()))
+                        .toList());
+    }
+
     @Test
     void createsExactSixteenPixelCrosshairAtEvenFramebufferCenter() {
         assertEquals(

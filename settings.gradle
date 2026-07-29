@@ -1,2 +1,2 @@
 rootProject.name = 'GaiaLegacy'
-include 'engine', 'game'
+include 'engine', 'game', 'tools'

@@ -14,5 +14,12 @@
   ],
   "atlases": [
     "atlases/blocks.json"
+  ],
+  "ui": [
+    "ui/ui-assets.json",
+    "ui/ui_font.png",
+    "ui/ui_font.json",
+    "ui/ui_icons.png",
+    "ui/ui_icons.json"
   ]
 }
