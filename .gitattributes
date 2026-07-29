@@ -1,0 +1,3 @@
+# Deterministic generated UI metadata must retain LF bytes on every platform.
+/game/src/main/resources/assets/gaia/ui/ui_font.json text eol=lf
+/game/src/main/resources/assets/gaia/ui/ui_icons.json text eol=lf
