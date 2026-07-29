@@ -26,6 +26,12 @@ import com.gaia.interaction.feedback.InteractionFeedbackCoordinator;
 import com.gaia.interaction.feedback.VisualFeedbackDiagnostics;
 import com.gaia.interaction.feedback.VisualRegionDiagnostics;
 import com.gaia.interaction.feedback.WorldItemVisualTracker;
+import com.gaia.ui.GaiaHudScreen;
+import com.gaia.ui.GaiaUiAssetLoader;
+import com.gaia.ui.GaiaUiAssets;
+import com.gaia.ui.HudFrameCoordinator;
+import com.gaia.ui.HudPresenter;
+import com.gaia.ui.UiIconResolver;
 import com.gaia.world.GaiaWorldGenerator;
 import com.gaia.world.SafeSpawnSelector;
 import com.gaia.world.WorldLoadResult;
@@ -61,6 +67,7 @@ import com.overlord.physics.PhysicsWorld;
 import com.overlord.physics.PlayerController;
 import com.overlord.renderer.visual.RenderVisualSettings;
 import com.overlord.renderer.particle.ParticleSystem;
+import com.overlord.renderer.ui.TextRenderer;
 import com.overlord.voxel.ChunkMeshBuilder;
 import com.overlord.voxel.ChunkMeshManager;
 import com.overlord.worlditem.LogicalWorldItemService;
@@ -91,6 +98,7 @@ public final class GameBootstrap {
                             GameBootstrap.class.getClassLoader());
             GaiaAssetCatalog catalog =
                     new GaiaResourceLoader(assetManager).load();
+            GaiaUiAssets uiAssets = new GaiaUiAssetLoader(assetManager).load();
             logAssetReport(catalog.report());
 
             RenderVisualSettings visualSettings = RenderVisualSettings.milestoneOneDefaults();
@@ -104,6 +112,7 @@ public final class GameBootstrap {
             shutdownCoordinator.register(
                     "engine",
                     () -> shutdownBarrier.closeEngine(engine::shutdown));
+            engine.getRenderer().installUiAssets(uiAssets.renderAssets());
 
             InputManager inputManager = new InputManager(mainThreadGuard);
             inputManager.install(engine.getWindow().getWindow());
@@ -152,6 +161,20 @@ public final class GameBootstrap {
                             FIXED_STEP_SECONDS, MAX_FIXED_STEPS_PER_FRAME);
 
             BlockRegistry blocks = catalog.blockRegistry();
+            TextRenderer hudText = new TextRenderer(
+                    uiAssets.renderAssets().glyphs(),
+                    codePoint -> System.err.println(
+                            "[UI] Missing glyph for U+"
+                                    + Integer.toHexString(codePoint)
+                                            .toUpperCase(java.util.Locale.ROOT)));
+            HudFrameCoordinator hudFrames = new HudFrameCoordinator(
+                    new HudPresenter(blocks::itemForm),
+                    new GaiaHudScreen(
+                            new UiIconResolver(
+                                    uiAssets.icons(),
+                                    item -> System.err.println(
+                                            "[UI] Missing icon for " + item)),
+                            hudText));
             EntityRef inventoryOwner = new EntityRef(0);
             BodyInventoryService inventoryService =
                     new BodyInventoryService(
@@ -329,6 +352,7 @@ public final class GameBootstrap {
                             worldItems,
                             feedback,
                             InteractionBlockState.unblocked(),
+                            hudFrames,
                             shutdownCoordinator,
                             new RenderMetricsConsoleReporter(Boolean.getBoolean("gaia.renderMetrics"), System::nanoTime, System.out));
             new GameLoop(context).run();

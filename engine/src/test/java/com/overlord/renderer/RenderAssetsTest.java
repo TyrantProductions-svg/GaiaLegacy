@@ -56,8 +56,8 @@ class RenderAssetsTest {
                 DamageAtlasResourceLoader.WIDTH,
                 assets.feedback().damageAtlas().image().width());
         assertEquals(
-                InteractionFeedbackAssets.DEFAULT_CROSSHAIR_FRAGMENT_SHADER,
-                assets.feedback().crosshairFragmentShader());
+                InteractionFeedbackAssets.DEFAULT_PARTICLE_FRAGMENT_SHADER,
+                assets.feedback().particleFragmentShader());
     }
 
     @Test

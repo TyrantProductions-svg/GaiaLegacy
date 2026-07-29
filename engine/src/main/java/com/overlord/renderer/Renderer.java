@@ -11,16 +11,13 @@ import com.overlord.config.GameConfig;
 import com.overlord.core.thread.MainThreadGuard;
 import com.overlord.renderer.frustum.Frustum;
 import com.overlord.renderer.feedback.InteractionFeedbackAssets;
-import com.overlord.renderer.feedback.OpenGlScreenQuadBatch;
 import com.overlord.renderer.feedback.OpenGlStreamingTexturedCubeBatch;
 import com.overlord.renderer.feedback.OpenGlUnitCubeMesh;
-import com.overlord.renderer.feedback.ScreenQuadBatch;
 import com.overlord.renderer.feedback.StreamingTexturedCubeBatch;
 import com.overlord.renderer.feedback.UnitCubeMesh;
 import com.overlord.renderer.metrics.RenderMetrics;
 import com.overlord.renderer.material.Material;
 import com.overlord.renderer.pass.BlockDamageOverlayPass;
-import com.overlord.renderer.pass.CrosshairRenderPass;
 import com.overlord.renderer.pass.DebugRenderPass;
 import com.overlord.renderer.pass.ParticleRenderPass;
 import com.overlord.renderer.pass.RenderContext;
@@ -29,6 +26,7 @@ import com.overlord.renderer.pass.RenderPipeline;
 import com.overlord.renderer.pass.SkyRenderPass;
 import com.overlord.renderer.pass.WorldItemVisualPass;
 import com.overlord.renderer.pass.WorldRenderPass;
+import com.overlord.renderer.pass.UiRenderPass;
 import com.overlord.renderer.queue.RenderQueue;
 import com.overlord.renderer.shader.ShaderProgram;
 import com.overlord.renderer.shader.ShaderResourceLoader;
@@ -37,6 +35,9 @@ import com.overlord.renderer.shader.ShaderBinding;
 import com.overlord.renderer.state.OpenGlRenderStateBackend;
 import com.overlord.renderer.texture.TextureImage;
 import com.overlord.renderer.visual.RenderVisualSettings;
+import com.overlord.renderer.ui.OpenGlUiGpuBackend;
+import com.overlord.renderer.ui.UiAssetBundle;
+import com.overlord.renderer.ui.UiRenderer;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkMeshData;
 import java.util.List;
@@ -48,6 +49,7 @@ public final class Renderer implements ChunkRenderBackend {
     private final RenderAssets renderAssets;
     private final AssetManager assetManager;
     private final RenderVisualSettings visualSettings;
+    private final UiInstallationFactory uiInstallationFactory;
     private final RenderMetricsCollector metricsCollector = new RenderMetricsCollector();
 
     private ShaderProgram worldShaderProgram;
@@ -57,9 +59,11 @@ public final class Renderer implements ChunkRenderBackend {
     private Material worldMaterial;
     private RenderQueue renderQueue;
     private RenderPipeline renderPipeline;
+    private List<RenderPass> baseRenderPasses;
     private Matrix4f projectionMatrix;
     private FullscreenTriangle fullscreenTriangle;
     private FeedbackResources feedbackResources;
+    private InstalledUi installedUi;
     private RenderSurfaceMetrics surfaceMetrics;
     private RenderSurfaceController surfaceController;
 
@@ -70,7 +74,8 @@ public final class Renderer implements ChunkRenderBackend {
                 mainThreadGuard,
                 renderAssets,
                 new AssetManager(Renderer.class.getClassLoader()),
-                RenderVisualSettings.milestoneOneDefaults());
+                RenderVisualSettings.milestoneOneDefaults(),
+                Renderer::createOpenGlUi);
     }
 
     public Renderer(
@@ -81,7 +86,8 @@ public final class Renderer implements ChunkRenderBackend {
                 mainThreadGuard,
                 renderAssets,
                 assetManager,
-                RenderVisualSettings.milestoneOneDefaults());
+                RenderVisualSettings.milestoneOneDefaults(),
+                Renderer::createOpenGlUi);
     }
 
     public Renderer(
@@ -89,6 +95,20 @@ public final class Renderer implements ChunkRenderBackend {
             RenderAssets renderAssets,
             AssetManager assetManager,
             RenderVisualSettings visualSettings) {
+        this(
+                mainThreadGuard,
+                renderAssets,
+                assetManager,
+                visualSettings,
+                Renderer::createOpenGlUi);
+    }
+
+    Renderer(
+            MainThreadGuard mainThreadGuard,
+            RenderAssets renderAssets,
+            AssetManager assetManager,
+            RenderVisualSettings visualSettings,
+            UiInstallationFactory uiInstallationFactory) {
         this.mainThreadGuard =
                 Objects.requireNonNull(
                         mainThreadGuard, "mainThreadGuard");
@@ -98,6 +118,8 @@ public final class Renderer implements ChunkRenderBackend {
                 Objects.requireNonNull(assetManager, "assetManager");
         this.visualSettings =
                 Objects.requireNonNull(visualSettings, "visualSettings");
+        this.uiInstallationFactory = Objects.requireNonNull(
+                uiInstallationFactory, "uiInstallationFactory");
     }
 
     public void init(Camera camera, RenderSurfaceMetrics surfaceMetrics) {
@@ -186,20 +208,14 @@ public final class Renderer implements ChunkRenderBackend {
                             initializedTexture,
                             initializedFeedbackResources.particleBatch());
             DebugRenderPass debugPass = new DebugRenderPass();
-            CrosshairRenderPass crosshairPass =
-                    new CrosshairRenderPass(
-                            stateBackend,
-                            initializedFeedbackResources.crosshairShader(),
-                            initializedFeedbackResources.crosshairBatch());
-            RenderPipeline initializedPipeline =
-                    createPipeline(
-                            skyPass,
-                            worldPass,
-                            damagePass,
-                            worldItemPass,
-                            particlePass,
-                            debugPass,
-                            crosshairPass);
+            List<RenderPass> initializedBasePasses = List.of(
+                    skyPass,
+                    worldPass,
+                    damagePass,
+                    worldItemPass,
+                    particlePass,
+                    debugPass);
+            RenderPipeline initializedPipeline = new RenderPipeline(initializedBasePasses);
             RenderQueue initializedQueue = new RenderQueue();
             RenderSurfaceMetrics initializedSurfaceMetrics =
                     Objects.requireNonNull(surfaceMetrics, "surfaceMetrics");
@@ -222,6 +238,7 @@ public final class Renderer implements ChunkRenderBackend {
             worldMaterial = initializedWorldMaterial;
             renderQueue = initializedQueue;
             renderPipeline = initializedPipeline;
+            baseRenderPasses = initializedBasePasses;
             projectionMatrix = initializedProjection;
             fullscreenTriangle = initializedTriangle;
             feedbackResources = initializedFeedbackResources;
@@ -301,6 +318,39 @@ public final class Renderer implements ChunkRenderBackend {
         return metricsCollector;
     }
 
+    /** Installs immutable CPU UI assets and creates their GPU resources on the GL owner thread. */
+    public void installUiAssets(UiAssetBundle assets) {
+        mainThreadGuard.assertMainThread("UI asset installation");
+        Objects.requireNonNull(assets, "assets");
+        if (installedUi != null) {
+            throw new IllegalStateException("UI assets are already installed");
+        }
+        List<RenderPass> initializedBasePasses =
+                requireInitialized(baseRenderPasses, "base render passes");
+        InstalledUi created = Objects.requireNonNull(
+                uiInstallationFactory.create(assets, mainThreadGuard),
+                "created UI installation");
+        try {
+            RenderPipeline pipeline = createPipeline(
+                    initializedBasePasses.get(0),
+                    initializedBasePasses.get(1),
+                    initializedBasePasses.get(2),
+                    initializedBasePasses.get(3),
+                    initializedBasePasses.get(4),
+                    initializedBasePasses.get(5),
+                    created.pass());
+            renderPipeline = pipeline;
+            installedUi = created;
+        } catch (RuntimeException | Error failure) {
+            try {
+                created.cleanup();
+            } catch (RuntimeException | Error cleanupFailure) {
+                appendCleanupFailure(failure, cleanupFailure);
+            }
+            throw failure;
+        }
+    }
+
     public void renderFrame(RenderFrameInput frameInput) {
         mainThreadGuard.assertMainThread("frame rendering");
         Objects.requireNonNull(frameInput, "frameInput");
@@ -358,7 +408,8 @@ public final class Renderer implements ChunkRenderBackend {
                         visualSettings,
                         metricsCollector,
                         surfaceMetrics,
-                        frameInput.feedback());
+                        frameInput.feedback(),
+                        frameInput.uiFrame());
         requireInitialized(renderPipeline, "render pipeline")
                 .render(context, frameQueue);
     }
@@ -367,12 +418,14 @@ public final class Renderer implements ChunkRenderBackend {
         mainThreadGuard.assertMainThread("renderer cleanup");
         FullscreenTriangle triangleToClean = fullscreenTriangle;
         FeedbackResources feedbackToClean = feedbackResources;
+        InstalledUi uiToClean = installedUi;
         Texture textureToClean = textureAtlas;
         ShaderProgram skyProgramToClean = skyShaderProgram;
         ShaderProgram worldProgramToClean = worldShaderProgram;
         clearInitializedFields();
 
         Throwable failure = null;
+        failure = runCleanup(uiToClean, failure);
         failure = runCleanup(feedbackToClean, failure);
         failure = runCleanup(triangleToClean, failure);
         failure = runCleanup(textureToClean, failure);
@@ -390,10 +443,12 @@ public final class Renderer implements ChunkRenderBackend {
         worldMaterial = null;
         renderQueue = null;
         renderPipeline = null;
+        baseRenderPasses = null;
         camera = null;
         projectionMatrix = null;
         fullscreenTriangle = null;
         feedbackResources = null;
+        installedUi = null;
         surfaceMetrics = null;
         surfaceController = null;
     }
@@ -405,10 +460,12 @@ public final class Renderer implements ChunkRenderBackend {
                 || worldMaterial != null
                 || renderQueue != null
                 || renderPipeline != null
+                || baseRenderPasses != null
                 || camera != null
                 || projectionMatrix != null
                 || fullscreenTriangle != null
                 || feedbackResources != null
+                || installedUi != null
                 || surfaceMetrics != null
                 || surfaceController != null) {
             throw new IllegalStateException(
@@ -427,7 +484,7 @@ public final class Renderer implements ChunkRenderBackend {
             RenderPass worldItems,
             RenderPass particles,
             RenderPass debug,
-            RenderPass crosshair) {
+            RenderPass ui) {
         return new RenderPipeline(
                 List.of(
                         Objects.requireNonNull(sky, "sky"),
@@ -436,7 +493,7 @@ public final class Renderer implements ChunkRenderBackend {
                         Objects.requireNonNull(worldItems, "worldItems"),
                         Objects.requireNonNull(particles, "particles"),
                         Objects.requireNonNull(debug, "debug"),
-                        Objects.requireNonNull(crosshair, "crosshair")));
+                        Objects.requireNonNull(ui, "ui")));
     }
 
     private static Matrix4f createProjection(int width, int height) {
@@ -524,6 +581,30 @@ public final class Renderer implements ChunkRenderBackend {
                 primaryFailure.addSuppressed(cleanupFailure);
             }
         }
+    }
+
+    private static Throwable runCleanup(
+            InstalledUi ui,
+            Throwable firstFailure) {
+        if (ui == null) {
+            return firstFailure;
+        }
+        try {
+            ui.cleanup();
+        } catch (RuntimeException | Error cleanupFailure) {
+            return appendCleanupFailure(firstFailure, cleanupFailure);
+        }
+        return firstFailure;
+    }
+
+    private static InstalledUi createOpenGlUi(
+            UiAssetBundle assets,
+            MainThreadGuard guard) {
+        UiRenderer renderer = UiRenderer.create(
+                assets,
+                new OpenGlUiGpuBackend(guard),
+                guard);
+        return new InstalledUi(new UiRenderPass(renderer), renderer::close);
     }
 
     private static Throwable runCleanup(
@@ -633,7 +714,6 @@ public final class Renderer implements ChunkRenderBackend {
 
         StreamingTexturedCubeBatch createParticleBatch();
 
-        ScreenQuadBatch createCrosshairBatch();
     }
 
     static final class FeedbackResources {
@@ -641,11 +721,9 @@ public final class Renderer implements ChunkRenderBackend {
         private final Managed<ShaderBinding> damageShader;
         private final Managed<ShaderBinding> worldItemShader;
         private final Managed<ShaderBinding> particleShader;
-        private final Managed<ShaderBinding> crosshairShader;
         private final Managed<TextureBinding> damageTexture;
         private final UnitCubeMesh unitCube;
         private final StreamingTexturedCubeBatch particleBatch;
-        private final ScreenQuadBatch crosshairBatch;
         private boolean cleanedUp;
 
         private FeedbackResources(
@@ -653,20 +731,16 @@ public final class Renderer implements ChunkRenderBackend {
                 Managed<ShaderBinding> damageShader,
                 Managed<ShaderBinding> worldItemShader,
                 Managed<ShaderBinding> particleShader,
-                Managed<ShaderBinding> crosshairShader,
                 Managed<TextureBinding> damageTexture,
                 UnitCubeMesh unitCube,
-                StreamingTexturedCubeBatch particleBatch,
-                ScreenQuadBatch crosshairBatch) {
+                StreamingTexturedCubeBatch particleBatch) {
             this.guard = guard;
             this.damageShader = damageShader;
             this.worldItemShader = worldItemShader;
             this.particleShader = particleShader;
-            this.crosshairShader = crosshairShader;
             this.damageTexture = damageTexture;
             this.unitCube = unitCube;
             this.particleBatch = particleBatch;
-            this.crosshairBatch = crosshairBatch;
         }
 
         static FeedbackResources create(
@@ -681,11 +755,9 @@ public final class Renderer implements ChunkRenderBackend {
             Managed<ShaderBinding> damageShader = null;
             Managed<ShaderBinding> worldItemShader = null;
             Managed<ShaderBinding> particleShader = null;
-            Managed<ShaderBinding> crosshairShader = null;
             Managed<TextureBinding> damageTexture = null;
             UnitCubeMesh unitCube = null;
             StreamingTexturedCubeBatch particleBatch = null;
-            ScreenQuadBatch crosshairBatch = null;
             try {
                 damageShader = factory.createShader(
                         "block-damage",
@@ -706,33 +778,22 @@ public final class Renderer implements ChunkRenderBackend {
                         assets.particleVertexShader(),
                         assets.particleFragmentShader(),
                         List.of("projection", "view", "blockAtlas"));
-                crosshairShader = factory.createShader(
-                        "crosshair",
-                        assets.crosshairVertexShader(),
-                        assets.crosshairFragmentShader(),
-                        List.of("framebufferSize"));
                 damageTexture = factory.createDamageTexture(assets.damageAtlas().image());
                 unitCube = Objects.requireNonNull(factory.createUnitCube(), "unit cube");
                 particleBatch = Objects.requireNonNull(
                         factory.createParticleBatch(), "particle batch");
-                crosshairBatch = Objects.requireNonNull(
-                        factory.createCrosshairBatch(), "crosshair batch");
                 return new FeedbackResources(
                         guard,
                         damageShader,
                         worldItemShader,
                         particleShader,
-                        crosshairShader,
                         damageTexture,
                         unitCube,
-                        particleBatch,
-                        crosshairBatch);
+                        particleBatch);
             } catch (RuntimeException | Error failure) {
-                suppress(crosshairBatch, failure);
                 suppress(particleBatch, failure);
                 suppress(unitCube, failure);
                 suppress(damageTexture, failure);
-                suppress(crosshairShader, failure);
                 suppress(particleShader, failure);
                 suppress(worldItemShader, failure);
                 suppress(damageShader, failure);
@@ -752,10 +813,6 @@ public final class Renderer implements ChunkRenderBackend {
             return particleShader.value();
         }
 
-        ShaderBinding crosshairShader() {
-            return crosshairShader.value();
-        }
-
         TextureBinding damageTexture() {
             return damageTexture.value();
         }
@@ -768,10 +825,6 @@ public final class Renderer implements ChunkRenderBackend {
             return particleBatch;
         }
 
-        ScreenQuadBatch crosshairBatch() {
-            return crosshairBatch;
-        }
-
         void cleanup() {
             guard.assertMainThread("interaction feedback resource cleanup");
             if (cleanedUp) {
@@ -779,11 +832,9 @@ public final class Renderer implements ChunkRenderBackend {
             }
             cleanedUp = true;
             Throwable failure = null;
-            failure = cleanup(crosshairBatch, failure);
             failure = cleanup(particleBatch, failure);
             failure = cleanup(unitCube, failure);
             failure = cleanup(damageTexture, failure);
-            failure = cleanup(crosshairShader, failure);
             failure = cleanup(particleShader, failure);
             failure = cleanup(worldItemShader, failure);
             failure = cleanup(damageShader, failure);
@@ -881,10 +932,32 @@ public final class Renderer implements ChunkRenderBackend {
         public StreamingTexturedCubeBatch createParticleBatch() {
             return new OpenGlStreamingTexturedCubeBatch(guard);
         }
+    }
 
-        @Override
-        public ScreenQuadBatch createCrosshairBatch() {
-            return new OpenGlScreenQuadBatch(guard);
+    interface UiInstallationFactory {
+        InstalledUi create(UiAssetBundle assets, MainThreadGuard guard);
+    }
+
+    static final class InstalledUi {
+        private final RenderPass pass;
+        private final Runnable cleanup;
+        private boolean cleanedUp;
+
+        InstalledUi(RenderPass pass, Runnable cleanup) {
+            this.pass = Objects.requireNonNull(pass, "pass");
+            this.cleanup = Objects.requireNonNull(cleanup, "cleanup");
+        }
+
+        private RenderPass pass() {
+            return pass;
+        }
+
+        private void cleanup() {
+            if (cleanedUp) {
+                return;
+            }
+            cleanedUp = true;
+            cleanup.run();
         }
     }
 }

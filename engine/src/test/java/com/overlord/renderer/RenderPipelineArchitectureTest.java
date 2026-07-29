@@ -387,14 +387,14 @@ class RenderPipelineArchitectureTest {
                 List.of(
                         "feedback/block_damage.frag",
                         "feedback/block_damage.vert",
-                        "feedback/crosshair.frag",
-                        "feedback/crosshair.vert",
                         "feedback/particle.frag",
                         "feedback/particle.vert",
                         "feedback/world_item.frag",
                         "feedback/world_item.vert",
                         "sky.frag",
                         "sky.vert",
+                        "ui/ui.frag",
+                        "ui/ui.vert",
                         "world.frag",
                         "world.vert"),
                 shaders.stream()
@@ -413,25 +413,11 @@ class RenderPipelineArchitectureTest {
     }
 
     @Test
-    void crosshairShadersUseFramebufferPixelNdcAndPureWhiteWithoutGameplayInputs() {
-        String vertex =
-                read(MAIN.resolve("resources/assets/overlord/shaders/feedback/crosshair.vert"));
-        String fragment =
-                read(MAIN.resolve("resources/assets/overlord/shaders/feedback/crosshair.frag"));
-
-        assertEquals("#version 410 core", vertex.lines().findFirst().orElseThrow());
-        assertEquals("#version 410 core", fragment.lines().findFirst().orElseThrow());
-        assertTrue(vertex.contains("layout(location = 0) in vec2 pixelPosition;"));
-        assertTrue(vertex.contains("uniform vec2 framebufferSize;"));
-        assertTrue(vertex.contains("pixelPosition / framebufferSize * 2.0 - 1.0"));
-        assertTrue(vertex.contains("gl_Position = vec4(ndc, 0.0, 1.0);"));
-        assertTrue(fragment.contains("fragmentColor = vec4(1.0);"));
-
-        String combined = sanitizeCode(vertex + "\n" + fragment).toLowerCase();
-        for (String forbidden :
-                List.of("sampler", "texture", "target", "raycast", "compute", "ssbo", "buffer ", "buffer{")) {
-            assertFalse(combined.contains(forbidden), "Forbidden crosshair shader token: " + forbidden);
-        }
+    void dedicatedCrosshairShadersAreRemovedAfterUiParityMigration() {
+        assertFalse(Files.exists(
+                MAIN.resolve("resources/assets/overlord/shaders/feedback/crosshair.vert")));
+        assertFalse(Files.exists(
+                MAIN.resolve("resources/assets/overlord/shaders/feedback/crosshair.frag")));
     }
 
     @Test
@@ -497,10 +483,13 @@ class RenderPipelineArchitectureTest {
     }
 
     @Test
-    void productionKeepsFramebufferSrgbDisabledForTheManualGammaPath()
+    void productionUsesManualGammaAndOnlyStateRestorationMayReenableFramebufferSrgb()
             throws IOException {
         String renderer = read(JAVA.resolve("com/overlord/renderer/Renderer.java"));
         assertTrue(renderer.contains("glDisable(GL_FRAMEBUFFER_SRGB);"));
+        String uiBackend = read(
+                JAVA.resolve("com/overlord/renderer/ui/OpenGlUiGpuBackend.java"));
+        assertTrue(uiBackend.contains("gl.disable(GL_FRAMEBUFFER_SRGB);"));
 
         try (Stream<Path> sources = Files.walk(MAIN)) {
             List<Path> enables =
@@ -511,10 +500,11 @@ class RenderPipelineArchitectureTest {
                                                     read(source),
                                                     "glEnable(GL_FRAMEBUFFER_SRGB)"))
                             .toList();
-            assertTrue(
-                    enables.isEmpty(),
-                    "Manual gamma path forbids framebuffer sRGB enablement: "
-                            + enables);
+            assertEquals(
+                    List.of(JAVA.resolve(
+                            "com/overlord/renderer/state/OpenGlRenderStateBackend.java")),
+                    enables,
+                    "Only restoration of a captured caller state may re-enable framebuffer sRGB");
         }
     }
 

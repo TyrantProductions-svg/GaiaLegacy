@@ -48,11 +48,15 @@ class GameLoopStructureTest {
         assertTrue(compact.contains("chunkMeshes().allRenderable("));
         assertTrue(compact.contains("dispatchFeedbackFrame("));
         assertTrue(compact.contains(
-                "feedback->context.engine().getRenderer().renderFrame(newRenderFrameInput("));
+                "feedback->{GameLoopFrameOrchestrator.captureAndRender("));
+        assertTrue(compact.contains(
+                "fixedInput->captureHudFrame("));
+        assertTrue(compact.contains(
+                "context.engine().getRenderer().renderFrame(newRenderFrameInput("));
         assertTrue(compact.contains(
                 "state==State.RUNNING?List.copyOf(context.chunkMeshes().renderObjects()):"
                         + "List.of(),frameDeltaSeconds,"
-                        + "context.chunkMeshes().meshQueueDepth(),feedback"));
+                        + "context.chunkMeshes().meshQueueDepth(),feedback,hud.frame()"));
 
         int schedule = compact.indexOf("chunkMeshes().scheduleEligible()");
         int process =
@@ -139,9 +143,8 @@ class GameLoopStructureTest {
                         "if(!playerController"
                                 + ".recoverFromPenetration()){"
                                 + "thrownewIllegalStateException("));
-        assertTrue(
-                compact.contains(
-                        "step==0?input:input.heldOnly()"));
+        assertTrue(compact.contains(
+                "GameLoopFrameOrchestrator.runFixedBatch("));
         assertTrue(compact.contains(
                 "inventoryInput().handle(stepInput,inventoryTick,Optional.of(dropLocation()))"));
         assertTrue(compact.contains("physicsWorld().step(fixedDelta)"));

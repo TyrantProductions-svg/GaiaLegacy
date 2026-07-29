@@ -44,7 +44,11 @@ class RenderStateScopeTest {
                     7,
                     8,
                     9,
-                    new Viewport(41, 42, 43, 44));
+                    new Viewport(41, 42, 43, 44),
+                    true,
+                    new ScissorBox(45, 46, 47, 48),
+                    49,
+                    50);
 
     @Test
     void exceptionalExitRestoresEveryCapturedValue() {
@@ -57,9 +61,28 @@ class RenderStateScopeTest {
                     try (RenderStateScope ignored =
                             RenderStateScope.open(backend, OVERLAY_STATE)) {
                         backend.setViewport(new Viewport(0, 0, 1024, 768));
+                        backend.setScissor(new ScissorBox(4, 5, 6, 7));
                         throw new IllegalStateException("draw failed");
                     }
                 });
+
+        assertEquals(INCOMING, backend.current());
+        assertEquals(1, backend.restoreCount());
+    }
+
+    @Test
+    void normalExitRestoresEveryCapturedValue() {
+        RecordingRenderStateBackend backend =
+                new RecordingRenderStateBackend(INCOMING);
+
+        try (RenderStateScope ignored =
+                RenderStateScope.open(backend, OVERLAY_STATE)) {
+            backend.setViewport(new Viewport(0, 0, 1024, 768));
+            backend.setScissor(new ScissorBox(4, 5, 6, 7));
+
+            assertEquals(new Viewport(0, 0, 1024, 768), backend.current().viewport());
+            assertEquals(new ScissorBox(4, 5, 6, 7), backend.current().scissorBox());
+        }
 
         assertEquals(INCOMING, backend.current());
         assertEquals(1, backend.restoreCount());
@@ -71,6 +94,7 @@ class RenderStateScopeTest {
         assertFalse(WORLD_OPAQUE.polygonOffsetFill());
         assertEquals(0.0f, WORLD_OPAQUE.polygonOffsetFactor());
         assertEquals(0.0f, WORLD_OPAQUE.polygonOffsetUnits());
+        assertFalse(WORLD_OPAQUE.scissorTest());
     }
 
     @Test
@@ -334,7 +358,11 @@ class RenderStateScopeTest {
                             current.currentProgram(),
                             current.activeTexture(),
                             current.texture2dUnit0(),
-                            current.viewport());
+                            current.viewport(),
+                            state.scissorTest(),
+                            current.scissorBox(),
+                            current.drawFramebuffer(),
+                            current.readFramebuffer());
         }
 
         @Override
@@ -370,7 +398,42 @@ class RenderStateScopeTest {
                             current.currentProgram(),
                             current.activeTexture(),
                             current.texture2dUnit0(),
-                            viewport);
+                            viewport,
+                            current.scissorTest(),
+                            current.scissorBox(),
+                            current.drawFramebuffer(),
+                            current.readFramebuffer());
+        }
+
+        @Override
+        public void setScissor(ScissorBox scissorBox) {
+            current =
+                    new RenderStateSnapshot(
+                            current.depthTest(),
+                            current.depthFunction(),
+                            current.depthWrite(),
+                            current.blend(),
+                            current.blendSourceRgb(),
+                            current.blendDestinationRgb(),
+                            current.blendSourceAlpha(),
+                            current.blendDestinationAlpha(),
+                            current.blendEquationRgb(),
+                            current.blendEquationAlpha(),
+                            current.cullFace(),
+                            current.vertexArray(),
+                            current.arrayBuffer(),
+                            current.elementArrayBuffer(),
+                            current.polygonOffsetFill(),
+                            current.polygonOffsetFactor(),
+                            current.polygonOffsetUnits(),
+                            current.currentProgram(),
+                            current.activeTexture(),
+                            current.texture2dUnit0(),
+                            current.viewport(),
+                            current.scissorTest(),
+                            scissorBox,
+                            current.drawFramebuffer(),
+                            current.readFramebuffer());
         }
     }
 }

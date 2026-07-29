@@ -40,6 +40,11 @@ final class LwjglOpenGlRenderStateApi implements OpenGlRenderStateApi {
     }
 
     @Override
+    public void glBindFramebuffer(int target, int framebuffer) {
+        GL30C.glBindFramebuffer(target, framebuffer);
+    }
+
+    @Override
     public void glBindTexture(int target, int texture) {
         GL30C.glBindTexture(target, texture);
     }
@@ -92,6 +97,11 @@ final class LwjglOpenGlRenderStateApi implements OpenGlRenderStateApi {
     @Override
     public void glPolygonOffset(float factor, float units) {
         GL30C.glPolygonOffset(factor, units);
+    }
+
+    @Override
+    public void glScissor(int x, int y, int width, int height) {
+        GL30C.glScissor(x, y, width, height);
     }
 
     @Override

@@ -60,6 +60,8 @@ public class GameConfig {
         public static final int KEY_DESCEND = org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT;
         public static final int KEY_CLOSE = org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE;
         public static final int KEY_CURSOR_CAPTURE = org.lwjgl.glfw.GLFW.GLFW_KEY_F1;
+        public static final int KEY_TOGGLE_HUD = org.lwjgl.glfw.GLFW.GLFW_KEY_F2;
+        public static final int KEY_TOGGLE_DEBUG_HUD = org.lwjgl.glfw.GLFW.GLFW_KEY_F3;
         public static final int KEY_SELECT_LEFT = org.lwjgl.glfw.GLFW.GLFW_KEY_1;
         public static final int KEY_SELECT_RIGHT = org.lwjgl.glfw.GLFW.GLFW_KEY_2;
         public static final int KEY_SELECT_MOUTH = org.lwjgl.glfw.GLFW.GLFW_KEY_3;

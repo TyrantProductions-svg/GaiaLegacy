@@ -1,6 +1,7 @@
 package com.overlord.renderer;
 
 import com.overlord.renderer.feedback.InteractionFeedbackFrame;
+import com.overlord.renderer.ui.UiFrame;
 import java.util.List;
 import java.util.Objects;
 
@@ -8,7 +9,8 @@ public record RenderFrameInput(
         List<ChunkRenderObject> chunks,
         double frameDeltaSeconds,
         int meshQueueDepth,
-        InteractionFeedbackFrame feedback) {
+        InteractionFeedbackFrame feedback,
+        UiFrame uiFrame) {
     public RenderFrameInput(
             List<ChunkRenderObject> chunks,
             double frameDeltaSeconds,
@@ -17,7 +19,16 @@ public record RenderFrameInput(
                 chunks,
                 frameDeltaSeconds,
                 meshQueueDepth,
-                InteractionFeedbackFrame.hidden());
+                InteractionFeedbackFrame.hidden(),
+                UiFrame.empty());
+    }
+
+    public RenderFrameInput(
+            List<ChunkRenderObject> chunks,
+            double frameDeltaSeconds,
+            int meshQueueDepth,
+            InteractionFeedbackFrame feedback) {
+        this(chunks, frameDeltaSeconds, meshQueueDepth, feedback, UiFrame.empty());
     }
 
     public RenderFrameInput {
@@ -32,5 +43,6 @@ public record RenderFrameInput(
             throw new IllegalArgumentException("meshQueueDepth must be non-negative");
         }
         Objects.requireNonNull(feedback, "feedback");
+        Objects.requireNonNull(uiFrame, "uiFrame");
     }
 }

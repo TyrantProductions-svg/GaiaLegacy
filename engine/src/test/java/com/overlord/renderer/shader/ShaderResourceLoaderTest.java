@@ -24,6 +24,10 @@ class ShaderResourceLoaderTest {
             ResourceLocation.parse("overlord:shaders/world.vert");
     private static final ResourceLocation WORLD_FRAGMENT =
             ResourceLocation.parse("overlord:shaders/world.frag");
+    private static final ResourceLocation UI_VERTEX =
+            ResourceLocation.parse("overlord:shaders/ui/ui.vert");
+    private static final ResourceLocation UI_FRAGMENT =
+            ResourceLocation.parse("overlord:shaders/ui/ui.frag");
 
     @TempDir Path temp;
 
@@ -52,6 +56,31 @@ class ShaderResourceLoaderTest {
                             .load("world", WORLD_VERTEX, WORLD_FRAGMENT);
 
             assertWorldSources(jarSources);
+        }
+    }
+
+    @Test
+    void loadsUiShadersFromAnIsolatedClasspathJar() throws Exception {
+        ShaderSourceSet classpathSources =
+                new ShaderResourceLoader(new AssetManager(getClass().getClassLoader()))
+                        .load("ui", UI_VERTEX, UI_FRAGMENT);
+        Path jar = jar(
+                temp.resolve("ui-shaders.jar"),
+                Map.of(
+                        UI_VERTEX.toClasspathPath(), classpathSources.vertexSource(),
+                        UI_FRAGMENT.toClasspathPath(), classpathSources.fragmentSource()));
+
+        try (URLClassLoader loader = new URLClassLoader(
+                new URL[] {jar.toUri().toURL()}, ClassLoader.getPlatformClassLoader())) {
+            ShaderSourceSet jarSources =
+                    new ShaderResourceLoader(new AssetManager(loader))
+                            .load("ui", UI_VERTEX, UI_FRAGMENT);
+
+            assertEquals("ui", jarSources.label());
+            assertTrue(jarSources.vertexSource().startsWith("#version 410 core"));
+            assertTrue(jarSources.fragmentSource().startsWith("#version 410 core"));
+            assertEquals("jar", loader.getResource(UI_VERTEX.toClasspathPath()).getProtocol());
+            assertEquals("jar", loader.getResource(UI_FRAGMENT.toClasspathPath()).getProtocol());
         }
     }
 

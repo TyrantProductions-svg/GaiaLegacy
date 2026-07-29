@@ -1,0 +1,93 @@
+plugins {
+    id 'java'
+}
+
+group = 'com.gaia'
+version = '0.1.0'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+dependencies {
+    implementation project(':engine')
+    implementation project(':game')
+    testImplementation 'com.google.code.gson:gson:2.10.1'
+    testImplementation 'org.junit.jupiter:junit-jupiter:6.1.1'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+tasks.register('generateUiAssets', JavaExec) {
+    group = 'asset generation'
+    description = 'Regenerates the Quiet Rune bitmap font and project-owned block icons.'
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.gaia.tools.ui.UiAssetGenerator'
+    workingDir = rootProject.projectDir
+    args 'game/src/main/resources/assets/gaia/ui/ui_font.png',
+        'game/src/main/resources/assets/gaia/ui/ui_font.json',
+        'game/src/main/resources/assets/gaia/ui/ui_icons.png',
+        'game/src/main/resources/assets/gaia/ui/ui_icons.json'
+}
+
+def generatedUiVerificationDir = layout.buildDirectory.dir(
+    'generated-ui-verification')
+
+tasks.register('generateUiAssetsForVerification', JavaExec) {
+    group = 'verification'
+    description = 'Generates deterministic UI assets into build/ for comparison.'
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.gaia.tools.ui.UiAssetGenerator'
+    workingDir = project.projectDir
+    outputs.dir generatedUiVerificationDir
+    doFirst {
+        delete generatedUiVerificationDir
+    }
+    args 'build/generated-ui-verification/ui_font.png',
+        'build/generated-ui-verification/ui_font.json',
+        'build/generated-ui-verification/ui_icons.png',
+        'build/generated-ui-verification/ui_icons.json'
+}
+
+tasks.register('verifyGeneratedUiAssets') {
+    group = 'verification'
+    description = 'Byte-compares build-only regeneration with checked-in UI assets.'
+    dependsOn tasks.named('generateUiAssetsForVerification')
+    def sourceDirectory = rootProject.file(
+        'game/src/main/resources/assets/gaia/ui')
+    def names = [
+        'ui_font.png',
+        'ui_font.json',
+        'ui_icons.png',
+        'ui_icons.json'
+    ]
+    inputs.files names.collect { sourceDirectory.toPath().resolve(it).toFile() }
+    doLast {
+        def generatedDirectory = generatedUiVerificationDir.get().asFile.toPath()
+        names.each { name ->
+            def expected = sourceDirectory.toPath().resolve(name)
+            def actual = generatedDirectory.resolve(name)
+            if (!java.nio.file.Files.isRegularFile(actual)) {
+                throw new GradleException(
+                    "Generated UI verification output is missing ${actual}")
+            }
+            long mismatch = java.nio.file.Files.mismatch(expected, actual)
+            if (mismatch != -1L) {
+                throw new GradleException(
+                    "Generated UI asset ${name} differs from checked-in bytes "
+                        + "at byte ${mismatch}; run :tools:generateUiAssets "
+                        + "only after an intentional asset change")
+            }
+        }
+    }
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('verifyGeneratedUiAssets')
+}

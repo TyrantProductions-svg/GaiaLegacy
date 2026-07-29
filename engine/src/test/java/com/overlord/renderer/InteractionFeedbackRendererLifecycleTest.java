@@ -9,8 +9,6 @@ import com.overlord.assets.ResourceLocation;
 import com.overlord.core.thread.MainThreadGuard;
 import com.overlord.renderer.feedback.InteractionFeedbackAssets;
 import com.overlord.renderer.feedback.ParticleRenderBatch;
-import com.overlord.renderer.feedback.ScreenQuad;
-import com.overlord.renderer.feedback.ScreenQuadBatch;
 import com.overlord.renderer.feedback.StreamingTexturedCubeBatch;
 import com.overlord.renderer.feedback.UnitCubeMesh;
 import com.overlord.renderer.pass.RenderContext;
@@ -34,11 +32,9 @@ class InteractionFeedbackRendererLifecycleTest {
             "shader:block-damage",
             "shader:world-items",
             "shader:particles",
-            "shader:crosshair",
             "texture:damage-atlas",
             "mesh:unit-cube",
-            "batch:particles",
-            "batch:crosshair");
+            "batch:particles");
 
     @Test
     void productionPipelineUsesTheExactSevenPassOrder() {
@@ -49,7 +45,7 @@ class InteractionFeedbackRendererLifecycleTest {
                 pass("world-items"),
                 pass("particles"),
                 pass("debug"),
-                pass("crosshair"));
+                pass("ui"));
 
         assertEquals(
                 List.of(
@@ -59,7 +55,7 @@ class InteractionFeedbackRendererLifecycleTest {
                         "world-items",
                         "particles",
                         "debug",
-                        "crosshair"),
+                        "ui"),
                 pipeline.passIds());
     }
 
@@ -191,7 +187,7 @@ class InteractionFeedbackRendererLifecycleTest {
                 recordingPass("world-items", trace),
                 recordingPass("particles", trace),
                 recordingPass("debug", trace),
-                recordingPass("crosshair", trace));
+                recordingPass("ui", trace));
         RenderContext context = new RenderContext(new Matrix4f(), new Matrix4f());
         RenderQueue queue = new RenderQueue();
 
@@ -212,7 +208,7 @@ class InteractionFeedbackRendererLifecycleTest {
         assertEquals(
                 List.of(
                         "sky", "world", "block-damage", "world-items",
-                        "particles", "debug", "crosshair"),
+                        "particles", "debug", "ui"),
                 trace);
     }
 
@@ -300,17 +296,6 @@ class InteractionFeedbackRendererLifecycleTest {
             beforeCreate(id);
             return new StreamingTexturedCubeBatch() {
                 @Override public void upload(ParticleRenderBatch particles) {}
-                @Override public void draw() {}
-                @Override public void cleanup() { trace.add("cleanup:" + id); }
-            };
-        }
-
-        @Override
-        public ScreenQuadBatch createCrosshairBatch() {
-            String id = "batch:crosshair";
-            beforeCreate(id);
-            return new ScreenQuadBatch() {
-                @Override public void upload(List<ScreenQuad> quads) {}
                 @Override public void draw() {}
                 @Override public void cleanup() { trace.add("cleanup:" + id); }
             };
