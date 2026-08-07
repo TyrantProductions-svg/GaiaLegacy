@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -28,10 +29,100 @@ class OpenGlUnitCubeMeshTest {
 
         assertEquals(1, backend.createVertexArrayCalls);
         assertEquals(1, backend.createBufferCalls);
-        assertEquals(36 * 5, backend.uploadedVertices.length);
+        assertEquals(36 * 6, backend.uploadedVertices.length);
+        for (int face = 0; face < 6; face++) {
+            for (int vertex = 0; vertex < 6; vertex++) {
+                assertEquals(
+                        (float) face,
+                        backend.uploadedVertices[(face * 6 + vertex) * 6 + 5]);
+            }
+        }
         assertEquals(1, backend.configureCalls);
         assertEquals(List.of(36), backend.drawCounts);
         assertEquals(List.of("buffer:202", "vertex-array:101"), backend.deletions);
+    }
+
+    @Test
+    void allSixFacesMatchCanonicalChunkMeshUvOrientation() {
+        RecordingBackend backend = new RecordingBackend();
+        OpenGlUnitCubeMesh mesh =
+                new OpenGlUnitCubeMesh(MainThreadGuard.captureCurrentThread(), backend);
+
+        assertFace(backend.uploadedVertices, 0, new float[] {
+                0, 1, 0, 0, 0,  1, 1, 0, 1, 0,  1, 0, 0, 1, 1,
+                0, 1, 0, 0, 0,  1, 0, 0, 1, 1,  0, 0, 0, 0, 1});
+        assertFace(backend.uploadedVertices, 1, new float[] {
+                0, 0, 1, 0, 1,  1, 0, 1, 1, 1,  1, 1, 1, 1, 0,
+                0, 0, 1, 0, 1,  1, 1, 1, 1, 0,  0, 1, 1, 0, 0});
+        assertFace(backend.uploadedVertices, 2, new float[] {
+                0, 1, 1, 0, 0,  1, 1, 1, 1, 0,  1, 1, 0, 1, 1,
+                0, 1, 1, 0, 0,  1, 1, 0, 1, 1,  0, 1, 0, 0, 1});
+        assertFace(backend.uploadedVertices, 3, new float[] {
+                0, 0, 0, 0, 1,  1, 0, 0, 1, 1,  1, 0, 1, 1, 0,
+                0, 0, 0, 0, 1,  1, 0, 1, 1, 0,  0, 0, 1, 0, 0});
+        assertFace(backend.uploadedVertices, 4, new float[] {
+                0, 0, 0, 0, 1,  0, 0, 1, 1, 1,  0, 1, 1, 1, 0,
+                0, 0, 0, 0, 1,  0, 1, 1, 1, 0,  0, 1, 0, 0, 0});
+        assertFace(backend.uploadedVertices, 5, new float[] {
+                1, 0, 1, 0, 1,  1, 0, 0, 1, 1,  1, 1, 0, 1, 0,
+                1, 0, 1, 0, 1,  1, 1, 0, 1, 0,  1, 1, 1, 0, 0});
+
+        mesh.cleanup();
+    }
+
+    @Test
+    void allTwelveTrianglesUseOutwardCounterClockwiseWinding() {
+        RecordingBackend backend = new RecordingBackend();
+        OpenGlUnitCubeMesh mesh =
+                new OpenGlUnitCubeMesh(MainThreadGuard.captureCurrentThread(), backend);
+        Vector3f[] outward = {
+            new Vector3f(0, 0, -1),
+            new Vector3f(0, 0, 1),
+            new Vector3f(0, 1, 0),
+            new Vector3f(0, -1, 0),
+            new Vector3f(-1, 0, 0),
+            new Vector3f(1, 0, 0)
+        };
+
+        for (int face = 0; face < 6; face++) {
+            for (int triangle = 0; triangle < 2; triangle++) {
+                int firstVertex = face * 6 + triangle * 3;
+                Vector3f a = position(backend.uploadedVertices, firstVertex);
+                Vector3f b = position(backend.uploadedVertices, firstVertex + 1);
+                Vector3f c = position(backend.uploadedVertices, firstVertex + 2);
+                Vector3f normal = b.sub(a, new Vector3f())
+                        .cross(c.sub(a, new Vector3f()))
+                        .normalize();
+
+                assertEquals(
+                        1.0f,
+                        normal.dot(outward[face]),
+                        1.0e-6f,
+                        "face=" + face + " triangle=" + triangle);
+            }
+        }
+
+        mesh.cleanup();
+    }
+
+    private static Vector3f position(float[] vertices, int vertex) {
+        int offset = vertex * 6;
+        return new Vector3f(vertices[offset], vertices[offset + 1], vertices[offset + 2]);
+    }
+
+    private static void assertFace(float[] actual, int face, float[] expected) {
+        assertEquals(30, expected.length);
+        for (int vertex = 0; vertex < 6; vertex++) {
+            int actualOffset = (face * 6 + vertex) * 6;
+            int expectedOffset = vertex * 5;
+            for (int component = 0; component < 5; component++) {
+                assertEquals(
+                        expected[expectedOffset + component],
+                        actual[actualOffset + component],
+                        "face=" + face + " vertex=" + vertex + " component=" + component);
+            }
+            assertEquals((float) face, actual[actualOffset + 5]);
+        }
     }
 
     @ParameterizedTest(name = "failure at {0}")

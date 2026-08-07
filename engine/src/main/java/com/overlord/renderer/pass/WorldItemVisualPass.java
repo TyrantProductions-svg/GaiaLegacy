@@ -1,6 +1,7 @@
 package com.overlord.renderer.pass;
 
 import com.overlord.renderer.TextureBinding;
+import com.overlord.config.GameConfig;
 import com.overlord.renderer.feedback.UnitCubeMesh;
 import com.overlord.renderer.feedback.WorldItemVisual;
 import com.overlord.renderer.queue.RenderQueue;
@@ -11,13 +12,14 @@ import com.overlord.renderer.state.RenderStateBackend;
 import com.overlord.renderer.state.RenderStateScope;
 import com.overlord.renderer.state.RenderStateSpec;
 import com.overlord.renderer.texture.TextureRegion;
+import com.overlord.voxel.BlockFace;
 import java.util.List;
 import java.util.Objects;
 import org.joml.Matrix4f;
 
 /** Renders immutable logical-world-item presentation values as shared small cubes. */
 public final class WorldItemVisualPass implements RenderPass {
-    private static final float EDGE_LENGTH = 0.25f;
+    private static final float EDGE_LENGTH = GameConfig.Interaction.WORLD_ITEM_EDGE_LENGTH;
     private static final RenderStateSpec WORLD_ITEM_STATE =
             new RenderStateSpec(
                     true,
@@ -65,18 +67,25 @@ public final class WorldItemVisualPass implements RenderPass {
             shader.setMatrix4("projection", context.projection());
             shader.setMatrix4("view", context.view());
             shader.setInt("blockAtlas", 0);
+            shader.setFloat("visualAlpha", 1.0f);
             blockAtlas.bind(0);
             for (WorldItemVisual item : worldItems) {
-                TextureRegion region = item.region();
                 shader.setMatrix4(
                         "model",
                         new Matrix4f()
-                                .translation((float) item.x(), (float) item.y(), (float) item.z())
+                                .translation(
+                                        (float) item.x() - EDGE_LENGTH * 0.5f,
+                                        (float) item.y() - EDGE_LENGTH * 0.5f,
+                                        (float) item.z() - EDGE_LENGTH * 0.5f)
                                 .scale(EDGE_LENGTH));
-                shader.setFloat("uMin", region.uMin());
-                shader.setFloat("uMax", region.uMax());
-                shader.setFloat("vMin", region.vMin());
-                shader.setFloat("vMax", region.vMax());
+                for (BlockFace face : BlockFace.values()) {
+                    int index = face.ordinal();
+                    TextureRegion region = item.faces().region(face);
+                    shader.setFloat("uMin[" + index + "]", region.uMin());
+                    shader.setFloat("uMax[" + index + "]", region.uMax());
+                    shader.setFloat("vMin[" + index + "]", region.vMin());
+                    shader.setFloat("vMax[" + index + "]", region.vMax());
+                }
                 cube.draw();
                 context.metricsRecorder().recordDraw(12L);
             }

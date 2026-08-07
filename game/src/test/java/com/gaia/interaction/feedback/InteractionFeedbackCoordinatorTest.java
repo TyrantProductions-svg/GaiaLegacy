@@ -232,12 +232,92 @@ class InteractionFeedbackCoordinatorTest {
         assertFalse(InteractionBlockState.unblocked().blocked());
     }
 
+    @Test
+    void movementPresentationAndActionImpulseRemainSeparateFrameLayers() {
+        Fixture fixture = fixture();
+        FirstPersonMovementState moving =
+                new FirstPersonMovementState(2.0f, 4.0f, 0.0f, true, false);
+        for (int step = 0; step < 8; step++) {
+            fixture.coordinator.fixedMovementUpdate(
+                    FirstPersonMovementPresentation.FIXED_STEP_SECONDS, moving);
+        }
+        BlockHitResult target = breaking(1, 2, 3, STONE, 0.5, 4)
+                .target().orElseThrow();
+        fixture.coordinator.onPlacementCommitted(target, STONE, 41L);
+        fixture.coordinator.renderUpdate(1.0 / 120.0);
+
+        InteractionFeedbackFrame frame = fixture.coordinator.snapshotPhysical(
+                idleWithItem(STONE), List.of(), 0.5f, VISIBLE);
+
+        assertNotEquals(
+                com.overlord.renderer.feedback.FirstPersonMovementVisual.identity(),
+                frame.movementVisual());
+        assertNotEquals(
+                com.overlord.renderer.feedback.CameraImpulseVisual.identity(),
+                frame.cameraImpulse());
+    }
+
+    @Test
+    void committedReceiptCreatesAllBoundedPresentationAndCloseIsIdempotent() {
+        Fixture fixture = fixture();
+        BlockHitResult target = breaking(1, 2, 3, STONE, 0.5, 4)
+                .target().orElseThrow();
+
+        fixture.coordinator.onPlacementCommitted(target, STONE, 41L);
+        fixture.coordinator.renderUpdate(1.0 / 120.0);
+        InteractionFeedbackFrame frame = fixture.coordinator.snapshot(
+                idleWithItem(STONE), List.of(), VISIBLE);
+
+        assertEquals(1, frame.transientBlocks().size());
+        assertEquals(1, frame.excludedBlockCells().size());
+        assertTrue(frame.firstPersonItem().isPresent());
+        assertNotEquals(
+                com.overlord.renderer.feedback.VisualTransform.identity(),
+                frame.firstPersonItem().orElseThrow().transform());
+        assertNotEquals(
+                com.overlord.renderer.feedback.CameraImpulseVisual.identity(),
+                frame.cameraImpulse());
+        assertEquals(6, frame.particles().particles().stream()
+                .filter(particle -> particle.category()
+                        == ParticleCategory.PLACEMENT_DEBRIS)
+                .count());
+        assertEquals(2, frame.particles().particles().stream()
+                .filter(particle -> particle.category()
+                        == ParticleCategory.PLACEMENT_ASTRAL)
+                .count());
+
+        fixture.coordinator.close();
+        fixture.coordinator.close();
+        fixture.coordinator.fixedMovementUpdate(
+                FirstPersonMovementPresentation.FIXED_STEP_SECONDS,
+                new FirstPersonMovementState(2.0f, 4.0f, 0.0f, true, false));
+        fixture.coordinator.onPlacementCommitted(target, STONE, 42L);
+        fixture.coordinator.onBreakCommitted(target, STONE, 43L);
+        fixture.coordinator.onDropCommitted(STONE, 44L);
+        InteractionFeedbackFrame closed = fixture.coordinator.snapshot(
+                idleWithItem(STONE), List.of(worldItem(9, STONE, 1, 2, 3, 0)), VISIBLE);
+        assertTrue(closed.transientBlocks().isEmpty());
+        assertTrue(closed.excludedBlockCells().isEmpty());
+        assertTrue(closed.firstPersonItem().isEmpty());
+        assertEquals(
+                com.overlord.renderer.feedback.FirstPersonMovementVisual.identity(),
+                closed.movementVisual());
+        assertEquals(
+                com.overlord.renderer.feedback.CameraImpulseVisual.identity(),
+                closed.cameraImpulse());
+        assertTrue(closed.worldItems().isEmpty());
+        assertTrue(closed.particles().particles().isEmpty());
+        assertTrue(fixture.particles.snapshot().particles().isEmpty());
+    }
+
     private static Fixture fixture() {
         ParticleSystem particles = new ParticleSystem();
         GaiaVisualRegionResolverStub resolver = new GaiaVisualRegionResolverStub();
         CommittedBreakVisualAdapter committed = new CommittedBreakVisualAdapter(
                 AIR, resolver::resolve, particles, (event, failure) -> {});
-        WorldItemVisualTracker tracker = new WorldItemVisualTracker(resolver::resolve);
+        WorldItemVisualTracker tracker = new WorldItemVisualTracker(
+                item -> com.overlord.renderer.feedback.WorldItemFaceRegions.uniform(
+                        resolver.resolve(item)));
         InteractionFeedbackCoordinator coordinator = new InteractionFeedbackCoordinator(
                 committed, particles, tracker, resolver::resolve);
         return new Fixture(coordinator, particles);
@@ -295,6 +375,15 @@ class InteractionFeedbackCoordinatorTest {
         return new BlockInteractionSnapshot(
                 Optional.empty(), Optional.empty(), 0,
                 InteractionMode.NONE, Optional.empty(), Optional.empty(),
+                0, GameMode.SURVIVAL);
+    }
+
+    private static BlockInteractionViewModel idleWithItem(ResourceLocation item) {
+        return new BlockInteractionSnapshot(
+                Optional.empty(), Optional.empty(), 0,
+                InteractionMode.NONE,
+                Optional.of(new ItemStack(item, 1)),
+                Optional.empty(),
                 0, GameMode.SURVIVAL);
     }
 

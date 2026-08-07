@@ -1,11 +1,13 @@
 #version 410 core
 in vec2 localUv;
+flat in int faceIndex;
 out vec4 fragmentColor;
 uniform sampler2D blockAtlas;
-uniform float uMin;
-uniform float uMax;
-uniform float vMin;
-uniform float vMax;
+uniform float uMin[6];
+uniform float uMax[6];
+uniform float vMin[6];
+uniform float vMax[6];
+uniform float visualAlpha;
 
 vec3 srgbToLinear(vec3 srgb) {
     bvec3 useLinearSegment = lessThanEqual(srgb, vec3(0.04045));
@@ -24,12 +26,15 @@ vec3 linearToSrgb(vec3 linear) {
 }
 
 void main() {
-    vec2 atlasUv = mix(vec2(uMin, vMin), vec2(uMax, vMax), localUv);
+    vec2 atlasUv = mix(
+        vec2(uMin[faceIndex], vMin[faceIndex]),
+        vec2(uMax[faceIndex], vMax[faceIndex]),
+        localUv);
     vec4 sampled = texture(blockAtlas, atlasUv);
     if (sampled.a < 0.1) {
         discard;
     }
     vec3 linearColor = srgbToLinear(sampled.rgb);
     vec3 encodedColor = linearToSrgb(linearColor);
-    fragmentColor = vec4(encodedColor, sampled.a);
+    fragmentColor = vec4(encodedColor, sampled.a * visualAlpha);
 }

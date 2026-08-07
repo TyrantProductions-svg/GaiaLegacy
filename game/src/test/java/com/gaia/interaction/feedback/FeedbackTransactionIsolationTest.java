@@ -47,6 +47,7 @@ import com.overlord.voxel.DirtyChunkRevision;
 import com.overlord.worlditem.LogicalWorldItemService;
 import com.overlord.worlditem.api.WorldItemService;
 import com.overlord.worlditem.api.WorldItemSpawnReservations;
+import com.overlord.worlditem.api.WorldItemSpawnReservationAudit;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
@@ -106,15 +107,15 @@ class FeedbackTransactionIsolationTest {
         assertEquals(List.of(), emissions);
         assertEquals(
                 List.of(
-                        "inventory.reserve:LEFT_HAND",
+                        "world.reserve",
                         "mutation.call",
                         "before",
-                        "inventory.rollback"),
+                        "world.rollback"),
                 trace);
         assertEquals(0, inventory.commits);
-        assertEquals(1, inventory.rollbacks);
+        assertEquals(0, inventory.rollbacks);
         assertEquals(0, worldItems.commits);
-        assertEquals(0, worldItems.rollbacks);
+        assertEquals(1, worldItems.rollbacks);
     }
 
     @Test
@@ -137,14 +138,14 @@ class FeedbackTransactionIsolationTest {
         assertEquals(List.of(), emissions);
         assertEquals(
                 List.of(
-                        "inventory.reserve:LEFT_HAND",
+                        "world.reserve",
                         "mutation.call",
-                        "inventory.rollback"),
+                        "world.rollback"),
                 trace);
         assertEquals(0, inventory.commits);
-        assertEquals(1, inventory.rollbacks);
+        assertEquals(0, inventory.rollbacks);
         assertEquals(0, worldItems.commits);
-        assertEquals(0, worldItems.rollbacks);
+        assertEquals(1, worldItems.rollbacks);
     }
 
     @Test
@@ -175,11 +176,7 @@ class FeedbackTransactionIsolationTest {
         assertEquals(BlockBreakResult.Status.RESERVATION_REJECTED, result.status());
         assertEquals(List.of(), emissions);
         assertEquals(
-                List.of(
-                        "inventory.reserve:LEFT_HAND",
-                        "inventory.reserve:RIGHT_HAND",
-                        "inventory.reserve:MOUTH",
-                        "world.reserve"),
+                List.of("world.reserve"),
                 trace);
         assertEquals(0, inventory.commits);
         assertEquals(0, inventory.rollbacks);
@@ -283,16 +280,16 @@ class FeedbackTransactionIsolationTest {
         assertEquals(BlockBreakResult.Status.APPLIED_WITH_NOTIFICATION_FAILURE, result.status());
         assertEquals(AIR, world.block);
         assertEquals(1, emissionCalls[0]);
-        assertEquals(1, inventory.totalCount(OWNER, STONE));
-        assertEquals(1, result.inventoryCommitted());
-        assertEquals(0, result.worldItemCommitted());
-        assertEquals(1, inventory.commits);
+        assertEquals(0, inventory.totalCount(OWNER, STONE));
+        assertEquals(0, result.inventoryCommitted());
+        assertEquals(1, result.worldItemCommitted());
+        assertEquals(0, inventory.commits);
         assertEquals(0, inventory.rollbacks);
-        assertEquals(0, worldItems.commits);
+        assertEquals(1, worldItems.commits);
         assertEquals(0, worldItems.rollbacks);
         assertEquals(
                 List.of(
-                        "inventory.reserve:LEFT_HAND",
+                        "world.reserve",
                         "mutation.call",
                         "before",
                         "mutation.apply",
@@ -300,7 +297,7 @@ class FeedbackTransactionIsolationTest {
                         "emission",
                         "diagnostic:fatal",
                         "dirty",
-                        "inventory.commit"),
+                        "world.commit"),
                 trace);
         assertTrue(result.failure().isPresent());
         BlockChangeDispatchException dispatch = assertInstanceOf(
@@ -348,16 +345,16 @@ class FeedbackTransactionIsolationTest {
         assertEquals(AIR, world.block);
         assertEquals(1, emissionCalls[0]);
         assertEquals(1, diagnosticCalls[0]);
-        assertEquals(1, inventory.totalCount(OWNER, STONE));
-        assertEquals(1, result.inventoryCommitted());
-        assertEquals(0, result.worldItemCommitted());
-        assertEquals(1, inventory.commits);
+        assertEquals(0, inventory.totalCount(OWNER, STONE));
+        assertEquals(0, result.inventoryCommitted());
+        assertEquals(1, result.worldItemCommitted());
+        assertEquals(0, inventory.commits);
         assertEquals(0, inventory.rollbacks);
-        assertEquals(0, worldItems.commits);
+        assertEquals(1, worldItems.commits);
         assertEquals(0, worldItems.rollbacks);
         assertEquals(
                 List.of(
-                        "inventory.reserve:LEFT_HAND",
+                        "world.reserve",
                         "mutation.call",
                         "before",
                         "mutation.apply",
@@ -365,7 +362,7 @@ class FeedbackTransactionIsolationTest {
                         "emission",
                         "diagnostic:recoverable visual",
                         "dirty",
-                        "inventory.commit"),
+                        "world.commit"),
                 trace);
         BlockChangeDispatchException dispatch = assertInstanceOf(
                 BlockChangeDispatchException.class, result.failure().orElseThrow());
@@ -589,7 +586,9 @@ class FeedbackTransactionIsolationTest {
     }
 
     private static final class RecordingWorldItems
-            implements WorldItemService, WorldItemSpawnReservations {
+            implements WorldItemService,
+                    WorldItemSpawnReservations,
+                    WorldItemSpawnReservationAudit {
         private final LogicalWorldItemService delegate;
         private final List<String> trace;
         private int commits;
@@ -652,6 +651,13 @@ class FeedbackTransactionIsolationTest {
             trace.add("world.rollback");
             rollbacks++;
             return delegate.rollbackSpawn(reservationId);
+        }
+
+        @Override
+        public Optional<com.overlord.worlditem.api.WorldItemSpawnReservationAuditSnapshot>
+                spawnReservationAudit(
+                        com.overlord.worlditem.api.WorldItemSpawnReservationId reservationId) {
+            return delegate.spawnReservationAudit(reservationId);
         }
     }
 }

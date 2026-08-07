@@ -4,11 +4,15 @@ import com.gaia.inventory.InventoryDropLocation;
 import com.gaia.interaction.MouseInteractionLifecycle;
 import com.gaia.interaction.BlockInteractionViewModel;
 import com.gaia.interaction.feedback.InteractionFeedbackCoordinator;
+import com.gaia.interaction.feedback.FirstPersonMovementState;
 import com.gaia.ui.HudDebugSnapshot;
 import com.gaia.ui.HudFrameCoordinator;
 import com.gaia.ui.HudVisibility;
 import com.gaia.world.WorldLoadResult;
 import com.gaia.world.WorldLoadState;
+import com.gaia.worlditem.WorldItemPresentationSnapshot;
+import com.gaia.worlditem.WorldItemDropKinematics;
+import com.gaia.worlditem.RoutedWorldInteractionInput;
 import com.overlord.config.GameConfig;
 import com.overlord.core.ModuleManager;
 import com.overlord.core.Window;
@@ -41,6 +45,8 @@ public final class GameLoop {
     private long inventoryTick;
     private final FrameDebugInputCapture hudDebugInputs;
     private final Vector3f interpolationScratch = new Vector3f();
+    private final Vector3f movementPositionScratch = new Vector3f();
+    private final Vector3f movementVelocityScratch = new Vector3f();
     private final Vector3f dropPositionScratch = new Vector3f();
     private final Vector3f dropVelocityScratch = new Vector3f();
 
@@ -116,18 +122,25 @@ public final class GameLoop {
             FrameDebugInputCapture.CapturedInput hudDebugInput = hudDebugInputs.capture();
             List<WorldItemSnapshot> worldItemSnapshots =
                     List.copyOf(context.worldItems().snapshots());
+            List<WorldItemPresentationSnapshot> physicalWorldItemSnapshots =
+                    List.copyOf(context.physicalWorldItems().presentationSnapshots());
+            float worldItemInterpolationAlpha =
+                    (float) context.fixedStepClock().interpolationAlpha();
             dispatchFeedbackFrame(
-                    () -> handleFeedbackLifecycle(
-                            context.interactionFeedback(),
-                            feedbackLifecycleBoundaryForRender,
-                            state == State.RUNNING,
-                            cursorCaptured,
-                            focused,
-                            feedbackBlocked),
-                    () -> feedbackSnapshot(
+                    () -> {
+                        handleFeedbackLifecycle(
+                                context.interactionFeedback(),
+                                feedbackLifecycleBoundaryForRender,
+                                state == State.RUNNING,
+                                cursorCaptured,
+                                focused,
+                                feedbackBlocked);
+                    },
+                    () -> feedbackSnapshotPhysical(
                             context.interactionFeedback(),
                             context.blockInteraction().viewModel(),
-                            worldItemSnapshots,
+                            physicalWorldItemSnapshots,
+                            worldItemInterpolationAlpha,
                             state == State.RUNNING,
                             cursorCaptured,
                             focused,
@@ -156,6 +169,7 @@ public final class GameLoop {
                                                 feedback,
                                                 hud.frame())));
                     });
+            context.interactionFeedback().renderUpdate(frameDeltaSeconds);
             hudDebugInputs.recordCompletedRender();
             context.renderMetricsReporter().report(context.engine().getRenderer().metrics().snapshot());
             window.swapBuffers();
@@ -274,26 +288,61 @@ public final class GameLoop {
                             float fixedDelta = context.fixedStepClock().fixedStepSeconds();
                             runFixedSystemStep(
                                     () -> {
-                                        context.inventoryInput().handle(
-                                                stepInput,
-                                                inventoryTick,
-                                                Optional.of(dropLocation()));
+                                        context.inventoryInput().handleSelection(stepInput);
                                         runInventoryDebugShortcut(stepInput);
                                         context.playerManager().fixedUpdate(fixedDelta, stepInput);
-                                        context.physicsWorld().step(fixedDelta);
+                                        context.interactionFeedback().fixedMovementUpdate(
+                                                fixedDelta,
+                                                movementState(
+                                                        context.playerController(),
+                                                        movementPositionScratch,
+                                                        movementVelocityScratch));
+                                        context.physicalWorldItems().prepareStep(inventoryTick);
+                                        try {
+                                            context.physicsWorld().step(fixedDelta);
+                                        } catch (RuntimeException | Error failure) {
+                                            context.physicalWorldItems().abortStep();
+                                            throw failure;
+                                        }
+                                        context.physicalWorldItems().finishStep();
                                     },
                                     () -> interactionEnabled(
                                             state == State.RUNNING,
                                             cursorCaptured,
                                             context.inputManager().isWindowFocused(),
                                             context.interactionBlockState().blocked()),
-                                    fixedInteractionEnabled ->
+                                    fixedInteractionEnabled -> {
+                                        var dropInput = context.inventoryInput().handleDrop(
+                                                stepInput,
+                                                inventoryTick,
+                                                Optional.of(dropLocation(inventoryTick)),
+                                                fixedInteractionEnabled);
+                                        dropInput.drop().ifPresent(result -> {
+                                            if (result.status()
+                                                            == com.gaia.inventory.InventoryDropResult.Status.DROPPED
+                                                    || result.status()
+                                                            == com.gaia.inventory.InventoryDropResult.Status.DROPPED_WITH_NOTIFICATION_FAILURE) {
+                                                var spawned = result.worldItem().orElseThrow();
+                                                context.interactionFeedback().onDropCommitted(
+                                                        spawned.stack().itemId(),
+                                                        spawned.id().value());
+                                            }
+                                        });
+                                        RoutedWorldInteractionInput routed =
+                                                context.worldInteractionInput().route(
+                                                        stepInput,
+                                                        context.gameModes().mode(),
+                                                        context.playerController().isNoclip(),
+                                                        fixedInteractionEnabled);
+                                        context.worldItemPickup().fixedUpdate(
+                                                routed.pickupPressed(), inventoryTick);
                                             context.blockInteraction().fixedUpdate(
-                                                    stepInput,
+                                                    routed.blockInput(),
                                                     fixedDelta,
                                                     inventoryTick,
                                                     Math.max(0L, System.nanoTime()),
-                                                    fixedInteractionEnabled),
+                                                    fixedInteractionEnabled);
+                                    },
                                     fixedInteractionEnabled ->
                                             context.interactionFeedback().fixedUpdate(
                                                     context.blockInteraction().viewModel(),
@@ -341,18 +390,13 @@ public final class GameLoop {
                 surface));
     }
 
-    private InventoryDropLocation dropLocation() {
+    private InventoryDropLocation dropLocation(long eventIdentity) {
         context.playerController().body().position(dropPositionScratch);
         dropPositionScratch.y += GameConfig.Player.EYE_HEIGHT;
-        context.engine().getCamera().getForward(dropVelocityScratch)
-                .mul(GameConfig.Interaction.DROP_SPEED);
-        return new InventoryDropLocation(
-                dropPositionScratch.x,
-                dropPositionScratch.y,
-                dropPositionScratch.z,
-                dropVelocityScratch.x,
-                dropVelocityScratch.y,
-                dropVelocityScratch.z);
+        context.engine().getCamera().getForward(dropVelocityScratch);
+        Vector3f right = context.engine().getCamera().getRight(new Vector3f());
+        return WorldItemDropKinematics.qDrop(
+                dropPositionScratch, dropVelocityScratch, right, eventIdentity);
     }
 
     private void runInventoryDebugShortcut(InputSnapshot input) {
@@ -465,10 +509,54 @@ public final class GameLoop {
                 ? snapshots
                 : List.of();
         return Objects.requireNonNull(coordinator, "coordinator")
-                .snapshot(
+                  .snapshot(
                         Objects.requireNonNull(view, "view"),
                         presentedWorldItems,
+                          visibility);
+      }
+
+    static InteractionFeedbackFrame feedbackSnapshotPhysical(
+            InteractionFeedbackCoordinator coordinator,
+            BlockInteractionViewModel view,
+            List<WorldItemPresentationSnapshot> worldItems,
+            float interpolationAlpha,
+            boolean running,
+            boolean cursorCaptured,
+            boolean focused,
+            boolean blocked) {
+        FeedbackVisibility visibility =
+                new FeedbackVisibility(running, cursorCaptured, focused, blocked);
+        List<WorldItemPresentationSnapshot> snapshots =
+                List.copyOf(Objects.requireNonNull(worldItems, "worldItems"));
+        List<WorldItemPresentationSnapshot> presentedWorldItems = running
+                ? snapshots
+                : List.of();
+        return Objects.requireNonNull(coordinator, "coordinator")
+                .snapshotPhysical(
+                        Objects.requireNonNull(view, "view"),
+                        presentedWorldItems,
+                        interpolationAlpha,
                         visibility);
+    }
+
+    static FirstPersonMovementState movementState(
+            PlayerController playerController,
+            Vector3f positionScratch,
+            Vector3f velocityScratch) {
+        Objects.requireNonNull(playerController, "playerController");
+        Objects.requireNonNull(positionScratch, "positionScratch");
+        Objects.requireNonNull(velocityScratch, "velocityScratch");
+        playerController.body().position(positionScratch);
+        playerController.body().linearVelocity(velocityScratch);
+        float horizontalSpeed = (float) Math.sqrt(
+                velocityScratch.x * velocityScratch.x
+                        + velocityScratch.z * velocityScratch.z);
+        return new FirstPersonMovementState(
+                positionScratch.y,
+                horizontalSpeed,
+                velocityScratch.y,
+                playerController.isGrounded(),
+                playerController.isNoclip());
     }
 
     private enum State {

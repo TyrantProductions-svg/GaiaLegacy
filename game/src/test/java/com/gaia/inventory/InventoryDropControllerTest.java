@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.gaia.blocks.ItemFormDefinition;
 import com.overlord.assets.ResourceLocation;
+import com.overlord.core.transaction.ReservationTerminalState;
+import com.overlord.core.thread.MainThreadGuard;
 import com.overlord.interaction.api.EntityRef;
 import com.overlord.inventory.api.BodySlot;
 import com.overlord.inventory.api.InventoryReservationOperation;
@@ -17,18 +19,16 @@ import com.overlord.inventory.api.InventoryChangeRequest;
 import com.overlord.inventory.api.InventoryChangeResult;
 import com.overlord.inventory.api.InventoryEventDispatchException;
 import com.overlord.inventory.api.InventoryReservationId;
+import com.overlord.inventory.api.InventoryReservationAudit;
+import com.overlord.inventory.api.InventoryReservationAuditSnapshot;
 import com.overlord.inventory.api.InventoryReservationResult;
 import com.overlord.inventory.api.InventoryReserveResult;
 import com.overlord.inventory.api.InventoryService;
 import com.overlord.inventory.api.InventoryView;
 import com.overlord.worlditem.api.WorldItemId;
-import com.overlord.worlditem.api.WorldItemReservationId;
-import com.overlord.worlditem.api.WorldItemReservationResult;
-import com.overlord.worlditem.api.WorldItemService;
 import com.overlord.worlditem.api.WorldItemSnapshot;
-import com.overlord.worlditem.api.WorldItemSpawnRequest;
-import com.overlord.worlditem.api.WorldItemSpawnResult;
 import com.overlord.worlditem.testing.FakeWorldItemService;
+import com.overlord.worlditem.LogicalWorldItemService;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -39,10 +39,36 @@ class InventoryDropControllerTest {
     private static final ResourceLocation DIRT = ResourceLocation.parse("gaia:dirt");
 
     @Test
+    void qPressDropsExactlyOneFromMultiCountActiveSlot() {
+        BodyInventoryService inventory = inventory();
+        inventory.insert(OWNER, new ItemStack(DIRT, 4));
+        LogicalWorldItemService worldItems = new LogicalWorldItemService(
+                MainThreadGuard.captureCurrentThread(), 8, 20);
+        InventoryDropController controller = new InventoryDropController(inventory, worldItems);
+
+        InventoryDropResult result = controller.drop(
+                OWNER,
+                BodySlot.LEFT_HAND,
+                InventoryDropAmount.ONE,
+                1.0, 2.0, 3.0,
+                4.5, 1.25, 0.0,
+                12);
+
+        assertEquals(InventoryDropResult.Status.DROPPED, result.status());
+        assertEquals(3, inventory.totalCount(OWNER, DIRT));
+        assertEquals(1, worldItems.snapshots().size());
+        assertEquals(new ItemStack(DIRT, 1), worldItems.snapshots().get(0).stack());
+        assertEquals(0L, worldItems.snapshots().get(0).id().value());
+        assertEquals(32L, worldItems.physicalSnapshots().get(0)
+                .runtime().pickupAvailableTick());
+    }
+
+    @Test
     void dropCommitsOnlyAfterTheWorldItemWasSpawned() {
         BodyInventoryService inventory = inventory();
         inventory.insert(OWNER, new ItemStack(DIRT, 4));
-        FakeWorldItemService worldItems = new FakeWorldItemService();
+        LogicalWorldItemService worldItems = new LogicalWorldItemService(
+                MainThreadGuard.captureCurrentThread(), 8, 20);
         InventoryDropController controller = new InventoryDropController(inventory, worldItems);
 
         InventoryDropResult result = controller.drop(
@@ -58,8 +84,11 @@ class InventoryDropControllerTest {
     void rejectedWorldSpawnRollsBackTheInventoryReservationWithoutCreatingAnItem() {
         BodyInventoryService inventory = inventory();
         inventory.insert(OWNER, new ItemStack(DIRT, 4));
-        FakeWorldItemService worldItems = new FakeWorldItemService();
-        worldItems.setSpawnRejectionEnabled(true);
+        LogicalWorldItemService worldItems = new LogicalWorldItemService(
+                MainThreadGuard.captureCurrentThread(), 1, 20);
+        worldItems.spawn(new com.overlord.worlditem.api.WorldItemSpawnRequest(
+                new ItemStack(DIRT, 1), 0, 0, 0, 0, 0, 0,
+                Optional.empty(), 0));
         InventoryDropController controller = new InventoryDropController(inventory, worldItems);
 
         InventoryDropResult result = controller.drop(
@@ -68,7 +97,8 @@ class InventoryDropControllerTest {
         assertEquals(InventoryDropResult.Status.WORLD_ITEM_REJECTED, result.status());
         assertEquals(new ItemStack(DIRT, 4), result.remainder().orElseThrow());
         assertEquals(4, inventory.totalCount(OWNER, DIRT));
-        assertFalse(worldItems.snapshot(new WorldItemId(0)).isPresent());
+        assertEquals(1, worldItems.snapshots().size());
+        assertFalse(worldItems.snapshot(new WorldItemId(1)).isPresent());
     }
 
     @Test
@@ -78,7 +108,8 @@ class InventoryDropControllerTest {
         inventory.reserve(new InventoryReservationRequest(
                 OWNER, BodySlot.LEFT_HAND, InventoryReservationOperation.EXTRACT,
                 new ItemStack(DIRT, 1)));
-        FakeWorldItemService worldItems = new FakeWorldItemService();
+        LogicalWorldItemService worldItems = new LogicalWorldItemService(
+                MainThreadGuard.captureCurrentThread(), 8, 20);
         InventoryDropController controller = new InventoryDropController(inventory, worldItems);
 
         InventoryDropResult result = controller.drop(
@@ -92,7 +123,8 @@ class InventoryDropControllerTest {
     @Test
     void dropConvertsAReadOnlyStackProjectionToTheCanonicalCommandValue() {
         InventoryService projectedInventory = new ProjectedInventoryService();
-        FakeWorldItemService worldItems = new FakeWorldItemService();
+        LogicalWorldItemService worldItems = new LogicalWorldItemService(
+                MainThreadGuard.captureCurrentThread(), 8, 20);
         InventoryDropController controller = new InventoryDropController(projectedInventory, worldItems);
 
         InventoryDropResult result = controller.drop(
@@ -106,7 +138,8 @@ class InventoryDropControllerTest {
     @Test
     void partialInventoryReservationReturnsItsExactCanonicalRemainder() {
         ProjectedInventoryService inventory = new ProjectedInventoryService(1);
-        FakeWorldItemService worldItems = new FakeWorldItemService();
+        LogicalWorldItemService worldItems = new LogicalWorldItemService(
+                MainThreadGuard.captureCurrentThread(), 8, 20);
         InventoryDropController controller = new InventoryDropController(inventory, worldItems);
 
         InventoryDropResult result = controller.drop(
@@ -137,53 +170,6 @@ class InventoryDropControllerTest {
     }
 
     @Test
-    void throwingSpawnExposesTheLiveReservationForExplicitReconciliation() {
-        BodyInventoryService inventory = inventory();
-        inventory.insert(OWNER, new ItemStack(DIRT, 4));
-        ThrowingWorldItemService worldItems = new ThrowingWorldItemService(true);
-        InventoryDropController controller = new InventoryDropController(inventory, worldItems);
-
-        WorldItemSpawnIndeterminateException failure = assertThrows(
-                WorldItemSpawnIndeterminateException.class,
-                () -> controller.drop(
-                        OWNER, BodySlot.LEFT_HAND,
-                        1.0, 2.0, 3.0,
-                        0.0, 0.0, 0.0, 12));
-
-        assertEquals(new ItemStack(DIRT, 4), failure.reservation().reserved());
-        assertTrue(failure.spawnMayHaveApplied());
-        assertEquals(4, inventory.totalCount(OWNER, DIRT));
-        assertEquals(InventoryExtractResult.Status.RESERVED,
-                inventory.extract(OWNER, BodySlot.LEFT_HAND, 1).status());
-        assertTrue(worldItems.snapshot(new WorldItemId(0)).isPresent());
-        assertEquals(InventoryReservationResult.Status.COMMITTED,
-                inventory.commit(failure.reservation().id()).status());
-        assertEquals(0, inventory.totalCount(OWNER, DIRT));
-    }
-
-    @Test
-    void throwingSpawnBeforeSideEffectCanBeExplicitlyRolledBack() {
-        BodyInventoryService inventory = inventory();
-        inventory.insert(OWNER, new ItemStack(DIRT, 4));
-        ThrowingWorldItemService worldItems = new ThrowingWorldItemService(false);
-        InventoryDropController controller = new InventoryDropController(inventory, worldItems);
-
-        WorldItemSpawnIndeterminateException failure = assertThrows(
-                WorldItemSpawnIndeterminateException.class,
-                () -> controller.drop(
-                        OWNER, BodySlot.LEFT_HAND,
-                        1.0, 2.0, 3.0,
-                        0.0, 0.0, 0.0, 12));
-
-        assertEquals(InventoryReservationResult.Status.ROLLED_BACK,
-                inventory.rollback(failure.reservation().id()).status());
-        assertEquals(4, inventory.totalCount(OWNER, DIRT));
-        assertTrue(worldItems.snapshot(new WorldItemId(0)).isEmpty());
-        assertEquals(InventoryExtractResult.Status.EXTRACTED,
-                inventory.extract(OWNER, BodySlot.LEFT_HAND, 1).status());
-    }
-
-    @Test
     void commitNotificationFailureLeavesOneAppliedDropAndCannotBeBlindlyRetried() {
         AtomicBoolean failPublication = new AtomicBoolean();
         ItemFormDefinition dirt = new ItemFormDefinition(DIRT, 64, false, false);
@@ -196,18 +182,27 @@ class InventoryDropControllerTest {
                     }
                 });
         inventory.insert(OWNER, new ItemStack(DIRT, 4));
-        FakeWorldItemService worldItems = new FakeWorldItemService();
+        LogicalWorldItemService worldItems = new LogicalWorldItemService(
+                MainThreadGuard.captureCurrentThread(), 8, 20);
         InventoryDropController controller = new InventoryDropController(inventory, worldItems);
         failPublication.set(true);
 
-        InventoryEventDispatchException failure = assertThrows(
-                InventoryEventDispatchException.class,
-                () -> controller.drop(
-                        OWNER, BodySlot.LEFT_HAND,
-                        1.0, 2.0, 3.0,
-                        0.0, 0.0, 0.0, 12));
+        InventoryDropResult result = controller.drop(
+                OWNER,
+                BodySlot.LEFT_HAND,
+                InventoryDropAmount.COMPLETE_STACK,
+                1.0, 2.0, 3.0,
+                0.0, 0.0, 0.0,
+                12);
 
-        assertTrue(failure.stateChangeApplied());
+        assertEquals(
+                InventoryDropResult.Status.DROPPED_WITH_NOTIFICATION_FAILURE,
+                result.status());
+        assertTrue(result.failure().orElseThrow()
+                instanceof InventoryEventDispatchException);
+        assertTrue(((InventoryEventDispatchException) result.failure().orElseThrow())
+                .stateChangeApplied());
+        assertEquals(new ItemStack(DIRT, 4), result.worldItem().orElseThrow().stack());
         assertEquals(0, inventory.totalCount(OWNER, DIRT));
         assertEquals(new ItemStack(DIRT, 4),
                 worldItems.snapshot(new WorldItemId(0)).orElseThrow().stack());
@@ -225,10 +220,12 @@ class InventoryDropControllerTest {
                 OWNER, id -> Optional.ofNullable(Map.of(DIRT, dirt).get(id)), event -> {});
     }
 
-    private static final class ProjectedInventoryService implements InventoryService {
+    private static final class ProjectedInventoryService
+            implements InventoryService, InventoryReservationAudit {
         private final int reservationLimit;
         private boolean committed;
         private boolean rolledBack;
+        private com.overlord.inventory.api.InventoryReservation reservation;
 
         private ProjectedInventoryService() {
             this(2);
@@ -278,7 +275,7 @@ class InventoryDropControllerTest {
         @Override
         public InventoryReserveResult reserve(InventoryReservationRequest request) {
             int protectedCount = Math.min(reservationLimit, request.requested().count());
-            com.overlord.inventory.api.InventoryReservation reservation =
+            reservation =
                     new com.overlord.inventory.api.InventoryReservation(
                             new InventoryReservationId(0), request,
                             new ItemStack(request.requested().itemId(), protectedCount));
@@ -312,42 +309,20 @@ class InventoryDropControllerTest {
         private boolean rolledBack() {
             return rolledBack;
         }
-    }
-
-    private static final class ThrowingWorldItemService implements WorldItemService {
-        private final FakeWorldItemService delegate = new FakeWorldItemService();
-        private final boolean applyBeforeThrow;
-
-        private ThrowingWorldItemService(boolean applyBeforeThrow) {
-            this.applyBeforeThrow = applyBeforeThrow;
-        }
 
         @Override
-        public WorldItemSpawnResult spawn(WorldItemSpawnRequest request) {
-            if (applyBeforeThrow) {
-                delegate.spawn(request);
+        public Optional<InventoryReservationAuditSnapshot> reservationAudit(
+                InventoryReservationId reservationId) {
+            if (reservation == null || !reservation.id().equals(reservationId)) {
+                return Optional.empty();
             }
-            throw new IllegalStateException("simulated indeterminate spawn");
-        }
-
-        @Override
-        public Optional<WorldItemSnapshot> snapshot(WorldItemId itemId) {
-            return delegate.snapshot(itemId);
-        }
-
-        @Override
-        public WorldItemReservationResult reserve(WorldItemId itemId, int count) {
-            return delegate.reserve(itemId, count);
-        }
-
-        @Override
-        public WorldItemReservationResult commit(WorldItemReservationId reservationId) {
-            return delegate.commit(reservationId);
-        }
-
-        @Override
-        public WorldItemReservationResult rollback(WorldItemReservationId reservationId) {
-            return delegate.rollback(reservationId);
+            return Optional.of(new InventoryReservationAuditSnapshot(
+                    reservation,
+                    committed
+                            ? ReservationTerminalState.COMMITTED
+                            : rolledBack
+                                    ? ReservationTerminalState.ROLLED_BACK
+                                    : ReservationTerminalState.PENDING));
         }
     }
 }

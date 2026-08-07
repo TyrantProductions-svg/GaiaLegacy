@@ -33,6 +33,21 @@ class PhysicsWorldTest {
     }
 
     @Test
+    void terminalFallSpeedIsClampedAfterGravityBeforeDisplacement() {
+        PhysicsBody body = dynamicBodyAt(0, 10, 0, 1.0f);
+        body.setLinearVelocity(new Vector3f(0, -100, 0));
+        body.setMaximumFallSpeed(-30.0f);
+        PhysicsWorld physics =
+                new PhysicsWorld(emptyCollisions(), new Vector3f(0, -25, 0));
+        physics.addBody(body);
+
+        physics.step(1.0f / 60.0f);
+
+        assertVector(body.linearVelocity(new Vector3f()), 0, -30, 0);
+        assertVector(body.position(new Vector3f()), 0, 9.5f, 0);
+    }
+
+    @Test
     void fallingBodyStopsOnVoxelGround() {
         PhysicsBody body = dynamicBodyAt(0.5f, 5, 0.5f, 1);
         PhysicsWorld physics =
@@ -157,6 +172,20 @@ class PhysicsWorldTest {
 
         assertVector(body.position(new Vector3f()), 1, 0, 0);
         assertEquals(List.of(body), physics.bodies());
+    }
+
+    @Test
+    void bodyRegistrationQueryUsesObjectIdentity() {
+        PhysicsBody registered = dynamicBodyAt(0, 0, 0, 1);
+        PhysicsBody neverRegistered = dynamicBodyAt(0, 0, 0, 1);
+        PhysicsWorld physics = new PhysicsWorld(emptyCollisions(), new Vector3f());
+
+        physics.addBody(registered);
+
+        assertTrue(physics.containsBody(registered));
+        assertFalse(physics.containsBody(neverRegistered));
+        physics.removeBody(registered);
+        assertFalse(physics.containsBody(registered));
     }
 
     @Test

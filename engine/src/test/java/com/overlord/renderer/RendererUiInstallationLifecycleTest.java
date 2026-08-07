@@ -45,13 +45,13 @@ class RendererUiInstallationLifecycleTest {
 
         assertEquals(
                 List.of(
-                        "create", "sky", "world", "block-damage", "world-items",
-                        "particles", "debug", "ui"),
+                        "create", "sky", "world", "block-damage", "transient-blocks",
+                        "world-items", "particles", "first-person-item", "debug", "ui"),
                 trace);
         assertEquals(
                 List.of(
-                        "sky", "world", "block-damage", "world-items",
-                        "particles", "debug", "ui"),
+                        "sky", "world", "block-damage", "transient-blocks", "world-items",
+                        "particles", "first-person-item", "debug", "ui"),
                 pipeline(renderer).passIds());
 
         assertThrows(IllegalStateException.class, () -> renderer.installUiAssets(assets()));
@@ -110,8 +110,8 @@ class RendererUiInstallationLifecycleTest {
         assertEquals(2, allocations.get());
         assertEquals(
                 List.of(
-                        "sky", "world", "block-damage", "world-items",
-                        "particles", "debug", "ui"),
+                        "sky", "world", "block-damage", "transient-blocks", "world-items",
+                        "particles", "first-person-item", "debug", "ui"),
                 pipeline(renderer).passIds());
 
         renderer.cleanup();
@@ -164,8 +164,10 @@ class RendererUiInstallationLifecycleTest {
                 pass("sky", trace),
                 pass("world", trace),
                 pass("block-damage", trace),
+                pass("transient-blocks", trace),
                 pass("world-items", trace),
                 pass("particles", trace),
+                pass("first-person-item", trace),
                 pass("debug", trace));
         setField(renderer, "baseRenderPasses", passes);
         setField(renderer, "renderPipeline", new RenderPipeline(passes));

@@ -260,6 +260,12 @@ public final class OpenGlRenderStateBackend implements RenderStateBackend {
     }
 
     @Override
+    public void clearDepth() {
+        mainThreadGuard.assertMainThread("clear OpenGL depth buffer");
+        gl.glClear(GL_DEPTH_BUFFER_BIT);
+    }
+
+    @Override
     public void setViewport(Viewport viewport) {
         mainThreadGuard.assertMainThread("set OpenGL viewport");
         gl.glViewport(

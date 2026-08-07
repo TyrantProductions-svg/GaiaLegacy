@@ -17,7 +17,8 @@ public record WorldItemSpawnReserveResult(
         if (status == Status.RESERVED) {
             WorldItemSpawnReservation value = reservation.orElseThrow(
                     () -> new IllegalArgumentException("RESERVED requires a reservation"));
-            if (!value.request().equals(request) || remainder.isPresent()) {
+            WorldItemSpawnIdentity.requireReservationMatchesRequest(request, value);
+            if (remainder.isPresent()) {
                 throw new IllegalArgumentException(
                         "RESERVED must protect the complete spawn request");
             }

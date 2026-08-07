@@ -104,14 +104,17 @@ class PhysicsBodyTest {
         PhysicsBody body = new PhysicsBody(COLLIDER, MASS);
 
         assertEquals(1.0f, body.gravityScale());
+        assertEquals(Float.NEGATIVE_INFINITY, body.maximumFallSpeed());
         assertEquals(0.0f, body.restitution());
         assertEquals(0.0f, body.friction());
 
         body.setGravityScale(-2.5f);
+        body.setMaximumFallSpeed(-30.0f);
         body.setRestitution(1.0f);
         body.setFriction(0.75f);
 
         assertEquals(-2.5f, body.gravityScale());
+        assertEquals(-30.0f, body.maximumFallSpeed());
         assertEquals(1.0f, body.restitution());
         assertEquals(0.75f, body.friction());
         body.setRestitution(0.0f);
@@ -188,6 +191,12 @@ class PhysicsBodyTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> body.setGravityScale(Float.POSITIVE_INFINITY));
+        assertThrows(IllegalArgumentException.class, () -> body.setMaximumFallSpeed(Float.NaN));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> body.setMaximumFallSpeed(Float.NEGATIVE_INFINITY));
+        assertThrows(IllegalArgumentException.class, () -> body.setMaximumFallSpeed(0.0f));
+        assertThrows(IllegalArgumentException.class, () -> body.setMaximumFallSpeed(1.0f));
         assertThrows(IllegalArgumentException.class, () -> body.setRestitution(Float.NaN));
         assertThrows(IllegalArgumentException.class, () -> body.setRestitution(-0.001f));
         assertThrows(IllegalArgumentException.class, () -> body.setRestitution(1.001f));

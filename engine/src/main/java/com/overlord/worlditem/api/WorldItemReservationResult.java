@@ -23,6 +23,8 @@ public record WorldItemReservationResult(
                     validateRollback(reservation, item, remainder);
             case UNAVAILABLE, INVALID_COUNT ->
                     validateKnownItemFailure(reservation, item, remainder);
+            case REVISION_EXHAUSTED ->
+                    validatePendingFailure(reservation, item, remainder);
             case UNKNOWN_ITEM, UNKNOWN_RESERVATION ->
                     validateUnknown(reservation, item, remainder);
         }
@@ -103,6 +105,37 @@ public record WorldItemReservationResult(
         }
     }
 
+    private static void validatePendingFailure(
+            Optional<WorldItemReservation> reservation,
+            Optional<WorldItemSnapshot> item,
+            Optional<ItemStack> remainder) {
+        WorldItemReservation pending = reservation.orElseThrow(
+                () -> new IllegalArgumentException(
+                        "pending failure requires a reservation"));
+        WorldItemSnapshot snapshot = item.orElseThrow(
+                () -> new IllegalArgumentException(
+                        "pending failure requires the current item"));
+        ItemStack remaining = remainder.orElseThrow(
+                () -> new IllegalArgumentException(
+                        "pending failure requires the positive remaining count"));
+        if (!remaining.itemId().equals(snapshot.stack().itemId())
+                || remaining.count()
+                        != snapshot.stack().count() - pending.reserved().count()) {
+            throw new IllegalArgumentException(
+                    "pending failure remainder must equal the positive remaining count");
+        }
+        if (pending.reserved().count() <= 0
+                || pending.reserved().count() >= snapshot.stack().count()) {
+            throw new IllegalArgumentException(
+                    "revision exhaustion requires a strictly partial reservation");
+        }
+        if (snapshot.revision() != Long.MAX_VALUE) {
+            throw new IllegalArgumentException(
+                    "revision exhaustion requires the maximum current revision");
+        }
+        validateReservationItem(pending, snapshot);
+    }
+
     private static void validateUnknown(
             Optional<WorldItemReservation> reservation,
             Optional<WorldItemSnapshot> item,
@@ -132,6 +165,7 @@ public record WorldItemReservationResult(
         UNAVAILABLE,
         UNKNOWN_ITEM,
         UNKNOWN_RESERVATION,
-        INVALID_COUNT
+        INVALID_COUNT,
+        REVISION_EXHAUSTED
     }
 }

@@ -175,7 +175,7 @@ class GameBootstrapStructureTest {
     }
 
     @Test
-    void composesOneFeedbackAuthorityAndPostWriteSubscriber() throws IOException {
+    void composesOneCommittedFeedbackAuthorityAfterGameplayTransactions() throws IOException {
         String source = Files.readString(Path.of("src/main/java/com/gaia/GameBootstrap.java"));
         String compact = source.replaceAll("\\s+", "");
 
@@ -186,8 +186,24 @@ class GameBootstrapStructureTest {
         assertEquals(1, occurrences(compact, "newSynchronousBlockChangeEventPublisher("));
         assertFalse(compact.contains("SynchronousBlockChangeEventPublisher.noSubscribers()"));
         assertTrue(compact.contains("ignored->BlockChangeDecision.ALLOW"));
-        assertTrue(compact.contains("feedback::onBlockChanged"));
-        assertTrue(compact.contains("ignored->{}"));
+        assertFalse(compact.contains("feedback::onBlockChanged"));
+        assertTrue(occurrences(compact, "ignored->{}") >= 2);
+        assertTrue(compact.contains("GameConfig.Interaction.BASE_BREAK_SPEED,feedback"));
+        assertTrue(compact.contains("worldItemPickupTransaction,feedback"));
+    }
+
+    @Test
+    void registersQAndBlockSpawnBarriersForIdempotentShutdownResolution()
+            throws IOException {
+        String source = Files.readString(Path.of("src/main/java/com/gaia/GameBootstrap.java"));
+        String compact = source.replaceAll("\\s+", "");
+
+        assertEquals(1, occurrences(compact, "newInventoryDropController("));
+        assertEquals(1, occurrences(compact, "newBlockBreakTransaction("));
+        assertTrue(compact.contains(
+                "shutdownCoordinator.register(\"inventory-drop\",inventoryDrop::close)"));
+        assertTrue(compact.contains(
+                "shutdownCoordinator.register(\"block-break\",blockBreak::close)"));
     }
 
     @Test

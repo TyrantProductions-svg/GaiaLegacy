@@ -1,32 +1,45 @@
 package com.overlord.worlditem;
 
 import com.overlord.core.thread.MainThreadGuard;
+import com.overlord.core.transaction.ReservationTerminalState;
 import com.overlord.inventory.api.ItemStack;
 import com.overlord.worlditem.api.WorldItemId;
+import com.overlord.worlditem.api.WorldItemMotionUpdate;
+import com.overlord.worlditem.api.WorldItemMotionUpdateResult;
+import com.overlord.worlditem.api.WorldItemPhysicalSnapshot;
+import com.overlord.worlditem.api.WorldItemPhysicalState;
 import com.overlord.worlditem.api.WorldItemReservation;
+import com.overlord.worlditem.api.WorldItemReservationAudit;
+import com.overlord.worlditem.api.WorldItemReservationAuditSnapshot;
 import com.overlord.worlditem.api.WorldItemReservationId;
 import com.overlord.worlditem.api.WorldItemReservationResult;
 import com.overlord.worlditem.api.WorldItemRuntimeSnapshot;
+import com.overlord.worlditem.api.WorldItemRuntimeAccess;
 import com.overlord.worlditem.api.WorldItemService;
 import com.overlord.worlditem.api.WorldItemSnapshot;
 import com.overlord.worlditem.api.WorldItemSpawnCommitResult;
 import com.overlord.worlditem.api.WorldItemSpawnRequest;
 import com.overlord.worlditem.api.WorldItemSpawnReservation;
+import com.overlord.worlditem.api.WorldItemSpawnReservationAudit;
+import com.overlord.worlditem.api.WorldItemSpawnReservationAuditSnapshot;
 import com.overlord.worlditem.api.WorldItemSpawnReservationId;
 import com.overlord.worlditem.api.WorldItemSpawnReservations;
 import com.overlord.worlditem.api.WorldItemSpawnReserveResult;
 import com.overlord.worlditem.api.WorldItemSpawnResult;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 /** Main-thread logical backend; Phase 11 may attach PhysicsBody presentation later. */
 public final class LogicalWorldItemService
-        implements WorldItemService, WorldItemSpawnReservations {
+        implements WorldItemService, WorldItemSpawnReservations, WorldItemRuntimeAccess,
+                WorldItemReservationAudit, WorldItemSpawnReservationAudit {
     private final MainThreadGuard mainThreadGuard;
     private final int capacity;
     private final long pickupDelayTicks;
@@ -94,6 +107,80 @@ public final class LogicalWorldItemService
         return state == null ? Optional.empty() : Optional.of(state.runtimeSnapshot());
     }
 
+    @Override
+    public List<WorldItemPhysicalSnapshot> physicalSnapshots() {
+        assertMainThread("world item physical snapshots");
+        return items.values().stream()
+                .map(state -> state.physicalSnapshot(
+                        activeExtractions.containsKey(state.item.id())))
+                .sorted(Comparator.comparingLong(snapshot -> snapshot.id().value()))
+                .toList();
+    }
+
+    @Override
+    public Optional<WorldItemPhysicalSnapshot> physicalSnapshot(WorldItemId itemId) {
+        assertMainThread("world item physical snapshot");
+        Objects.requireNonNull(itemId, "itemId");
+        ItemState state = items.get(itemId);
+        return state == null
+                ? Optional.empty()
+                : Optional.of(state.physicalSnapshot(
+                        activeExtractions.containsKey(itemId)));
+    }
+
+    @Override
+    public WorldItemMotionUpdateResult updateMotion(WorldItemMotionUpdate update) {
+        assertMainThread("world item motion update");
+        Objects.requireNonNull(update, "update");
+        ItemState state = items.get(update.itemId());
+        if (state == null) {
+            return new WorldItemMotionUpdateResult(
+                    WorldItemMotionUpdateResult.Status.UNKNOWN_ITEM,
+                    Optional.empty());
+        }
+
+        WorldItemPhysicalSnapshot current = state.physicalSnapshot(
+                activeExtractions.containsKey(update.itemId()));
+        if (update.expectedRevision() != state.item.revision()) {
+            return new WorldItemMotionUpdateResult(
+                    WorldItemMotionUpdateResult.Status.STALE_REVISION,
+                    Optional.of(current));
+        }
+        if (!finite(update.positionX())
+                || !finite(update.positionY())
+                || !finite(update.positionZ())
+                || !finite(update.velocityX())
+                || !finite(update.velocityY())
+                || !finite(update.velocityZ())) {
+            return new WorldItemMotionUpdateResult(
+                    WorldItemMotionUpdateResult.Status.INVALID_MOTION,
+                    Optional.of(current));
+        }
+        OptionalLong advancedRevision = nextRevision(state.item.revision());
+        if (advancedRevision.isEmpty()) {
+            return new WorldItemMotionUpdateResult(
+                    WorldItemMotionUpdateResult.Status.REVISION_EXHAUSTED,
+                    Optional.of(current));
+        }
+
+        WorldItemSnapshot next = new WorldItemSnapshot(
+                state.item.id(),
+                state.item.stack(),
+                update.positionX(),
+                update.positionY(),
+                update.positionZ(),
+                update.velocityX(),
+                update.velocityY(),
+                update.velocityZ(),
+                advancedRevision.getAsLong());
+        state.item = next;
+        state.physicalState = update.state();
+        return new WorldItemMotionUpdateResult(
+                WorldItemMotionUpdateResult.Status.APPLIED,
+                Optional.of(state.physicalSnapshot(
+                        activeExtractions.containsKey(update.itemId()))));
+    }
+
     public List<WorldItemSnapshot> snapshots() {
         assertMainThread("world item snapshots");
         List<WorldItemSnapshot> snapshots = new ArrayList<>();
@@ -115,13 +202,15 @@ public final class LogicalWorldItemService
                     Optional.of(request.stack()));
         }
         WorldItemSpawnReservation reservation = new WorldItemSpawnReservation(
-                nextSpawnReservationId(), nextItemId(), request);
-        spawnReservations.put(reservation.id(), new SpawnState(reservation));
-        return new WorldItemSpawnReserveResult(
+                nextSpawnReservationId(), nextItemId(), request,
+                saturatedPickupTick(request.tick()));
+        WorldItemSpawnReserveResult result = new WorldItemSpawnReserveResult(
                 request,
                 WorldItemSpawnReserveResult.Status.RESERVED,
                 Optional.of(reservation),
                 Optional.empty());
+        spawnReservations.put(reservation.id(), new SpawnState(reservation));
+        return result;
     }
 
     @Override
@@ -136,6 +225,28 @@ public final class LogicalWorldItemService
             WorldItemSpawnReservationId reservationId) {
         assertMainThread("world item spawn reservation rollback");
         return completeSpawn(reservationId, SpawnTerminal.ROLLED_BACK);
+    }
+
+    @Override
+    public Optional<WorldItemSpawnReservationAuditSnapshot> spawnReservationAudit(
+            WorldItemSpawnReservationId reservationId) {
+        assertMainThread("world item spawn reservation audit");
+        Objects.requireNonNull(reservationId, "reservationId");
+        SpawnState state = spawnReservations.get(reservationId);
+        if (state == null) {
+            return Optional.empty();
+        }
+        ReservationTerminalState terminalState = state.terminal == null
+                ? ReservationTerminalState.PENDING
+                : state.terminal == SpawnTerminal.COMMITTED
+                        ? ReservationTerminalState.COMMITTED
+                        : ReservationTerminalState.ROLLED_BACK;
+        return Optional.of(new WorldItemSpawnReservationAuditSnapshot(
+                state.reservation,
+                terminalState,
+                terminalState == ReservationTerminalState.COMMITTED
+                        ? Optional.of(state.committedRuntime)
+                        : Optional.empty()));
     }
 
     private WorldItemSpawnCommitResult completeSpawn(
@@ -153,13 +264,17 @@ public final class LogicalWorldItemService
                             ? WorldItemSpawnCommitResult.Status.ALREADY_COMMITTED
                             : WorldItemSpawnCommitResult.Status.ALREADY_ROLLED_BACK,
                     Optional.of(state.reservation),
-                    itemSnapshot(state.reservation.itemId()));
+                    requested == SpawnTerminal.COMMITTED
+                            ? Optional.of(state.committedRuntime)
+                            : Optional.empty());
         }
         if (state.terminal != null) {
             return spawnResult(
                     WorldItemSpawnCommitResult.Status.TERMINAL_CONFLICT,
                     Optional.of(state.reservation),
-                    itemSnapshot(state.reservation.itemId()));
+                    state.terminal == SpawnTerminal.COMMITTED
+                            ? Optional.of(state.committedRuntime)
+                            : Optional.empty());
         }
         state.terminal = requested;
         if (requested == SpawnTerminal.ROLLED_BACK) {
@@ -168,18 +283,24 @@ public final class LogicalWorldItemService
                     Optional.of(state.reservation), Optional.empty());
         }
         WorldItemSpawnRequest request = state.reservation.request();
-        long pickupAvailableTick = saturatedPickupTick(request.tick());
         WorldItemSnapshot item = new WorldItemSnapshot(
                 state.reservation.itemId(),
                 request.stack(),
                 request.positionX(), request.positionY(), request.positionZ(),
                 request.velocityX(), request.velocityY(), request.velocityZ(),
                 0);
+        WorldItemRuntimeSnapshot committedRuntime = new WorldItemRuntimeSnapshot(
+                item,
+                request.source(),
+                request.tick(),
+                state.reservation.pickupAvailableTick());
+        state.committedRuntime = committedRuntime;
         items.put(item.id(), new ItemState(
-                item, request.source(), request.tick(), pickupAvailableTick));
+                item, request.source(), request.tick(),
+                state.reservation.pickupAvailableTick()));
         return spawnResult(
                 WorldItemSpawnCommitResult.Status.COMMITTED,
-                Optional.of(state.reservation), Optional.of(item));
+                Optional.of(state.reservation), Optional.of(committedRuntime));
     }
 
     @Override
@@ -234,6 +355,24 @@ public final class LogicalWorldItemService
         return completeExtraction(reservationId, ExtractionTerminal.ROLLED_BACK);
     }
 
+    @Override
+    public Optional<WorldItemReservationAuditSnapshot> reservationAudit(
+            WorldItemReservationId reservationId) {
+        assertMainThread("world item extraction reservation audit");
+        Objects.requireNonNull(reservationId, "reservationId");
+        ExtractionState reservation = extractionReservations.get(reservationId);
+        if (reservation == null) {
+            return Optional.empty();
+        }
+        ReservationTerminalState state = reservation.terminal == null
+                ? ReservationTerminalState.PENDING
+                : reservation.terminal == ExtractionTerminal.COMMITTED
+                        ? ReservationTerminalState.COMMITTED
+                        : ReservationTerminalState.ROLLED_BACK;
+        return Optional.of(new WorldItemReservationAuditSnapshot(
+                reservation.reservation, state));
+    }
+
     private WorldItemReservationResult completeExtraction(
             WorldItemReservationId reservationId, ExtractionTerminal requested) {
         Objects.requireNonNull(reservationId, "reservationId");
@@ -254,27 +393,49 @@ public final class LogicalWorldItemService
             return extractionTerminal(
                     state, WorldItemReservationResult.Status.TERMINAL_CONFLICT);
         }
+
+        ItemState current = null;
+        int remainder = 0;
+        long advancedRevision = -1;
+        if (requested == ExtractionTerminal.COMMITTED) {
+            current = items.get(state.reservation.itemId());
+            if (current == null
+                    || current.item.stack().count()
+                            < state.reservation.reserved().count()) {
+                throw new IllegalStateException(
+                        "world item extraction reservation guarantee broken");
+            }
+            remainder = current.item.stack().count()
+                    - state.reservation.reserved().count();
+            if (remainder > 0) {
+                OptionalLong next = nextRevision(current.item.revision());
+                if (next.isEmpty()) {
+                    return extractionResult(
+                            WorldItemReservationResult.Status.REVISION_EXHAUSTED,
+                            Optional.of(state.reservation),
+                            Optional.of(current.item),
+                            Optional.of(new ItemStack(
+                                    current.item.stack().itemId(), remainder)));
+                }
+                advancedRevision = next.getAsLong();
+            }
+        }
+
         state.terminal = requested;
         activeExtractions.remove(state.reservation.itemId());
         if (requested == ExtractionTerminal.ROLLED_BACK) {
             return extractionTerminal(
                     state, WorldItemReservationResult.Status.ROLLED_BACK);
         }
-        applyExtraction(state.reservation);
+        applyExtraction(current, remainder, advancedRevision);
         return extractionTerminal(
                 state, WorldItemReservationResult.Status.COMMITTED);
     }
 
-    private void applyExtraction(WorldItemReservation reservation) {
-        ItemState current = items.get(reservation.itemId());
-        if (current == null
-                || current.item.stack().count() < reservation.reserved().count()) {
-            throw new IllegalStateException(
-                    "world item extraction reservation guarantee broken");
-        }
-        int remainder = current.item.stack().count() - reservation.reserved().count();
+    private void applyExtraction(
+            ItemState current, int remainder, long advancedRevision) {
         if (remainder == 0) {
-            items.remove(reservation.itemId());
+            items.remove(current.item.id());
             return;
         }
         current.item = new WorldItemSnapshot(
@@ -282,7 +443,7 @@ public final class LogicalWorldItemService
                 new ItemStack(current.item.stack().itemId(), remainder),
                 current.item.positionX(), current.item.positionY(), current.item.positionZ(),
                 current.item.velocityX(), current.item.velocityY(), current.item.velocityZ(),
-                current.item.revision() + 1);
+                advancedRevision);
     }
 
     private WorldItemReservationResult extractionTerminal(
@@ -361,8 +522,8 @@ public final class LogicalWorldItemService
     private static WorldItemSpawnCommitResult spawnResult(
             WorldItemSpawnCommitResult.Status status,
             Optional<WorldItemSpawnReservation> reservation,
-            Optional<WorldItemSnapshot> item) {
-        return new WorldItemSpawnCommitResult(status, reservation, item);
+            Optional<WorldItemRuntimeSnapshot> runtime) {
+        return new WorldItemSpawnCommitResult(status, reservation, runtime);
     }
 
     private static WorldItemReservationResult extractionResult(
@@ -377,8 +538,19 @@ public final class LogicalWorldItemService
         mainThreadGuard.assertMainThread(operation);
     }
 
+    private static boolean finite(double value) {
+        return Double.isFinite(value);
+    }
+
+    private static OptionalLong nextRevision(long revision) {
+        return revision == Long.MAX_VALUE
+                ? OptionalLong.empty()
+                : OptionalLong.of(revision + 1);
+    }
+
     private static final class ItemState {
         private WorldItemSnapshot item;
+        private WorldItemPhysicalState physicalState = WorldItemPhysicalState.ACTIVE;
         private final Optional<com.overlord.interaction.api.EntityRef> source;
         private final long spawnTick;
         private final long pickupAvailableTick;
@@ -398,11 +570,18 @@ public final class LogicalWorldItemService
             return new WorldItemRuntimeSnapshot(
                     item, source, spawnTick, pickupAvailableTick);
         }
+
+        private WorldItemPhysicalSnapshot physicalSnapshot(
+                boolean extractionReserved) {
+            return new WorldItemPhysicalSnapshot(
+                    runtimeSnapshot(), physicalState, extractionReserved);
+        }
     }
 
     private static final class SpawnState {
         private final WorldItemSpawnReservation reservation;
         private SpawnTerminal terminal;
+        private WorldItemRuntimeSnapshot committedRuntime;
 
         private SpawnState(WorldItemSpawnReservation reservation) {
             this.reservation = reservation;

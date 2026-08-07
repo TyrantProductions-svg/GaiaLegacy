@@ -9,6 +9,7 @@ import com.gaia.blocks.BlockDefinition;
 import com.gaia.blocks.BlockRegistry;
 import com.gaia.blocks.ItemFormDefinition;
 import com.gaia.inventory.BodyInventoryService;
+import com.gaia.interaction.feedback.CommittedGameplayFeedback;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.config.GameConfig;
 import com.overlord.core.input.InputManager;
@@ -158,7 +159,8 @@ class BlockInteractionControllerTest {
         }
 
         assertEquals(1, fixture.mutations.get());
-        assertEquals(1, fixture.inventory.totalCount(OWNER, STONE));
+        assertEquals(0, fixture.inventory.totalCount(OWNER, STONE));
+        assertEquals(1, fixture.worldItems.snapshots().size());
         assertEquals(0.0, fixture.controller.viewModel().progress());
     }
 
@@ -174,7 +176,8 @@ class BlockInteractionControllerTest {
         }
 
         assertEquals(1, completes.mutations.get());
-        assertEquals(1, completes.inventory.totalCount(OWNER, STONE));
+        assertEquals(0, completes.inventory.totalCount(OWNER, STONE));
+        assertEquals(1, completes.worldItems.snapshots().size());
 
         Fixture cancelled = fixture();
         cancelled.controller.fixedUpdate(pressed, 1.0 / 60.0, 1, 1, true);
@@ -182,6 +185,46 @@ class BlockInteractionControllerTest {
 
         assertEquals(0, cancelled.mutations.get());
         assertEquals(0.0, cancelled.controller.viewModel().progress());
+    }
+
+    @Test
+    void committedFeedbackTriggersOnlyAfterAppliedBreakAndPlacement() {
+        AtomicInteger breaks = new AtomicInteger();
+        AtomicInteger placements = new AtomicInteger();
+        CommittedGameplayFeedback feedback = new CommittedGameplayFeedback() {
+            @Override
+            public void onBreakCommitted(
+                    BlockHitResult target,
+                    ResourceLocation item,
+                    long eventIdentity) {
+                breaks.incrementAndGet();
+            }
+
+            @Override
+            public void onPlacementCommitted(
+                    BlockHitResult target,
+                    ResourceLocation item,
+                    long eventIdentity) {
+                placements.incrementAndGet();
+            }
+        };
+        Fixture fixture = fixture(() -> Optional.of(hit(1)), feedback);
+
+        fixture.controller.fixedUpdate(
+                mousePressed(GLFW_MOUSE_BUTTON_RIGHT), 1.0 / 60.0, 1, 1, true);
+        assertEquals(0, placements.get(), "rejected no-item placement has no feedback");
+
+        InputSnapshot held = mouseHeld(GLFW_MOUSE_BUTTON_LEFT);
+        for (int step = 0; step < 60; step++) {
+            fixture.controller.fixedUpdate(held, 1.0 / 60.0, step + 2, step + 2, true);
+        }
+        assertEquals(1, breaks.get());
+
+        fixture.inventory.insert(OWNER, new ItemStack(STONE, 1));
+        fixture.controller.fixedUpdate(mouseReleased(), 1.0 / 60.0, 70, 70, true);
+        fixture.controller.fixedUpdate(
+                mousePressed(GLFW_MOUSE_BUTTON_RIGHT), 1.0 / 60.0, 71, 71, true);
+        assertEquals(1, placements.get());
     }
 
     @Test
@@ -388,6 +431,12 @@ class BlockInteractionControllerTest {
     }
 
     private static Fixture fixture(BlockTargetProvider targeting) {
+        return fixture(targeting, CommittedGameplayFeedback.NONE);
+    }
+
+    private static Fixture fixture(
+            BlockTargetProvider targeting,
+            CommittedGameplayFeedback feedback) {
         BlockRegistry blocks = blocks();
         ChunkRepository chunks = new ChunkRepository();
         chunks.generate(new ChunkKey(0, 0), ignored -> {});
@@ -433,7 +482,8 @@ class BlockInteractionControllerTest {
                 new BlockPlacementTransaction(
                         mutationService, inventory, OWNER, blocks,
                         placementWorld, body, AIR),
-                1);
+                1,
+                feedback);
         return new Fixture(controller, modes, inventory, worldItems, mutations);
     }
 

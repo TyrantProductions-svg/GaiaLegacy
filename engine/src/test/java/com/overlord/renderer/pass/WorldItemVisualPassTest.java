@@ -14,6 +14,7 @@ import com.overlord.renderer.feedback.FeedbackVisibility;
 import com.overlord.renderer.feedback.InteractionFeedbackFrame;
 import com.overlord.renderer.feedback.ParticleRenderBatch;
 import com.overlord.renderer.feedback.UnitCubeMesh;
+import com.overlord.renderer.feedback.WorldItemFaceRegions;
 import com.overlord.renderer.feedback.WorldItemVisual;
 import com.overlord.renderer.queue.RenderQueue;
 import com.overlord.renderer.shader.ShaderBinding;
@@ -26,9 +27,11 @@ import com.overlord.renderer.state.Viewport;
 import com.overlord.renderer.texture.TextureRegion;
 import com.overlord.renderer.visual.RenderVisualSettings;
 import com.overlord.worlditem.api.WorldItemId;
+import com.overlord.voxel.BlockFace;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Optional;
 import org.joml.Matrix4f;
@@ -69,7 +72,7 @@ class WorldItemVisualPassTest {
                     new Viewport(7, 8, 900, 700));
 
     @Test
-    void drawsOneSharedQuarterScaleCubeAtEachExactLogicalPositionAndUv() {
+    void drawsOneSharedHalfScaleCenteredCubeWithSixFaceUvs() {
         Fixture fixture = new Fixture();
         List<WorldItemVisual> visuals =
                 List.of(
@@ -84,15 +87,16 @@ class WorldItemVisualPassTest {
         assertEquals(List.of(new Matrix4f()), fixture.shader.projections);
         assertEquals(List.of(new Matrix4f()), fixture.shader.views);
         assertEquals(List.of(0), fixture.shader.samplerUnits);
+        assertEquals(List.of(1.0f), fixture.shader.visualAlphas);
         assertEquals(
                 List.of(
-                        new Matrix4f().translation(1.25f, 2.5f, 3.75f).scale(0.25f),
-                        new Matrix4f().translation(-6.0f, 5.0f, -4.0f).scale(0.25f)),
+                        new Matrix4f().translation(1.0f, 2.25f, 3.5f).scale(0.50f),
+                        new Matrix4f().translation(-6.25f, 4.75f, -4.25f).scale(0.50f)),
                 fixture.shader.models);
-        assertEquals(List.of(STONE.uMin(), MISSING.uMin()), fixture.shader.uMins);
-        assertEquals(List.of(STONE.uMax(), MISSING.uMax()), fixture.shader.uMaxs);
-        assertEquals(List.of(STONE.vMin(), MISSING.vMin()), fixture.shader.vMins);
-        assertEquals(List.of(STONE.vMax(), MISSING.vMax()), fixture.shader.vMaxs);
+        assertEquals(repeated(STONE.uMin(), MISSING.uMin()), fixture.shader.uMins);
+        assertEquals(repeated(STONE.uMax(), MISSING.uMax()), fixture.shader.uMaxs);
+        assertEquals(repeated(STONE.vMin(), MISSING.vMin()), fixture.shader.vMins);
+        assertEquals(repeated(STONE.vMax(), MISSING.vMax()), fixture.shader.vMaxs);
         assertEquals(List.of(0), fixture.texture.units);
         assertEquals(2, fixture.cube.drawCalls);
         assertEquals(List.of(12L, 12L), fixture.drawMetrics);
@@ -235,15 +239,22 @@ class WorldItemVisualPassTest {
         assertTrue(fragment.startsWith("#version 410 core"));
         assertTrue(vertex.contains("layout (location = 0) in vec3 aPosition"));
         assertTrue(vertex.contains("layout (location = 1) in vec2 aUv"));
+        assertTrue(vertex.contains("layout (location = 2) in float aFaceIndex"));
+        assertTrue(vertex.contains("flat out int faceIndex"));
         assertTrue(vertex.contains("uniform mat4 model"));
         assertTrue(fragment.contains("uniform sampler2D blockAtlas"));
+        assertTrue(fragment.contains("flat in int faceIndex"));
+        assertTrue(fragment.contains("uniform float uMin[6]"));
+        assertTrue(fragment.contains("uMin[faceIndex]"));
         assertTrue(fragment.contains("sampled.a < 0.1"));
         assertTrue(fragment.contains("discard"));
         assertTrue(fragment.contains("vec3 srgbToLinear(vec3 srgb)"));
         assertTrue(fragment.contains("vec3 linearToSrgb(vec3 linear)"));
         assertTrue(fragment.contains("vec3 linearColor = srgbToLinear(sampled.rgb)"));
         assertTrue(fragment.contains("vec3 encodedColor = linearToSrgb(linearColor)"));
-        assertTrue(fragment.contains("fragmentColor = vec4(encodedColor, sampled.a)"));
+        assertTrue(fragment.contains("uniform float visualAlpha"));
+        assertTrue(fragment.contains(
+                "fragmentColor = vec4(encodedColor, sampled.a * visualAlpha)"));
         assertEquals(2, occurrences(fragment, "srgbToLinear("));
         assertEquals(2, occurrences(fragment, "linearToSrgb("));
         assertFalse(fragment.contains("GL_FRAMEBUFFER_SRGB"));
@@ -267,6 +278,37 @@ class WorldItemVisualPassTest {
         return (source.length() - source.replace(token, "").length()) / token.length();
     }
 
+    @Test
+    void asymmetricSixFaceRegionsReachDroppedItemShaderInCanonicalOrdinalOrder() {
+        Fixture fixture = new Fixture();
+        WorldItemFaceRegions faces = distinctFaces("dropped");
+
+        fixture.pass.render(
+                context(List.of(visual(3, 1, 0, 0, 0, faces))),
+                new RenderQueue());
+
+        for (BlockFace face : BlockFace.values()) {
+            TextureRegion region = faces.region(face);
+            int ordinal = face.ordinal();
+            assertEquals(region.uMin(), fixture.shader.uMins.get(ordinal));
+            assertEquals(region.uMax(), fixture.shader.uMaxs.get(ordinal));
+            assertEquals(region.vMin(), fixture.shader.vMins.get(ordinal));
+            assertEquals(region.vMax(), fixture.shader.vMaxs.get(ordinal));
+        }
+        assertEquals(1, fixture.cube.drawCalls);
+    }
+
+    private static List<Float> repeated(float first, float second) {
+        List<Float> values = new ArrayList<>();
+        for (int index = 0; index < 6; index++) {
+            values.add(first);
+        }
+        for (int index = 0; index < 6; index++) {
+            values.add(second);
+        }
+        return values;
+    }
+
     private static WorldItemVisual visual(
             long id,
             long revision,
@@ -274,7 +316,36 @@ class WorldItemVisualPassTest {
             double y,
             double z,
             TextureRegion region) {
-        return new WorldItemVisual(new WorldItemId(id), revision, x, y, z, region);
+        EnumMap<BlockFace, TextureRegion> regions = new EnumMap<>(BlockFace.class);
+        for (BlockFace face : BlockFace.values()) {
+            regions.put(face, region);
+        }
+        return new WorldItemVisual(
+                new WorldItemId(id), revision, x, y, z,
+                new WorldItemFaceRegions(regions));
+    }
+
+    private static WorldItemVisual visual(
+            long id,
+            long revision,
+            double x,
+            double y,
+            double z,
+            WorldItemFaceRegions faces) {
+        return new WorldItemVisual(new WorldItemId(id), revision, x, y, z, faces);
+    }
+
+    private static WorldItemFaceRegions distinctFaces(String label) {
+        EnumMap<BlockFace, TextureRegion> regions = new EnumMap<>(BlockFace.class);
+        for (BlockFace face : BlockFace.values()) {
+            int x = face.ordinal() * 7;
+            int y = face.ordinal() * 5;
+            regions.put(face, new TextureRegion(
+                    ResourceLocation.parse(
+                            "test:" + label + "_" + face.name().toLowerCase()),
+                    x, y, 3, 4, 64, 64));
+        }
+        return new WorldItemFaceRegions(regions);
     }
 
     private static RenderContext context(List<WorldItemVisual> visuals) {
@@ -335,6 +406,7 @@ class WorldItemVisualPassTest {
         private final List<Float> uMaxs = new ArrayList<>();
         private final List<Float> vMins = new ArrayList<>();
         private final List<Float> vMaxs = new ArrayList<>();
+        private final List<Float> visualAlphas = new ArrayList<>();
 
         private RecordingShader(RecordingState state) {
             this.state = state;
@@ -372,12 +444,18 @@ class WorldItemVisualPassTest {
 
         @Override
         public void setFloat(String uniform, float value) {
-            switch (uniform) {
-                case "uMin" -> uMins.add(value);
-                case "uMax" -> uMaxs.add(value);
-                case "vMin" -> vMins.add(value);
-                case "vMax" -> vMaxs.add(value);
-                default -> throw new AssertionError(uniform);
+            if (uniform.startsWith("uMin[")) {
+                uMins.add(value);
+            } else if (uniform.startsWith("uMax[")) {
+                uMaxs.add(value);
+            } else if (uniform.startsWith("vMin[")) {
+                vMins.add(value);
+            } else if (uniform.startsWith("vMax[")) {
+                vMaxs.add(value);
+            } else if (uniform.equals("visualAlpha")) {
+                visualAlphas.add(value);
+            } else {
+                throw new AssertionError(uniform);
             }
         }
 

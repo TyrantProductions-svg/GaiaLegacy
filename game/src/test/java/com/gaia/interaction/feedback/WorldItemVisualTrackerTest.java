@@ -10,9 +10,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.inventory.api.ItemStack;
 import com.overlord.renderer.feedback.WorldItemVisual;
+import com.overlord.renderer.feedback.WorldItemFaceRegions;
 import com.overlord.renderer.texture.TextureRegion;
 import com.overlord.worlditem.api.WorldItemId;
+import com.overlord.worlditem.api.WorldItemPhysicalSnapshot;
+import com.overlord.worlditem.api.WorldItemPhysicalState;
+import com.overlord.worlditem.api.WorldItemRuntimeSnapshot;
 import com.overlord.worlditem.api.WorldItemSnapshot;
+import com.gaia.worlditem.WorldItemPresentationSnapshot;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
@@ -102,7 +107,7 @@ class WorldItemVisualTrackerTest {
                             if (itemId.equals(FAILING_ITEM)) {
                                 throw failure;
                             }
-                            return REGION;
+                            return WorldItemFaceRegions.uniform(REGION);
                         });
         WorldItemSnapshot existing = snapshot(new WorldItemId(3), 0, 1, 2, 3);
         WorldItemVisual before = tracker.reconcile(List.of(existing)).get(0);
@@ -131,7 +136,7 @@ class WorldItemVisualTrackerTest {
         List<ResourceLocation> diagnosedItems = new ArrayList<>();
         WorldItemVisualTracker tracker = new WorldItemVisualTracker(itemId -> {
             diagnosedItems.add(itemId);
-            return REGION;
+            return WorldItemFaceRegions.uniform(REGION);
         });
         WorldItemId stableId = new WorldItemId(9);
 
@@ -160,7 +165,7 @@ class WorldItemVisualTrackerTest {
         List<ResourceLocation> resolvedItems = new ArrayList<>();
         WorldItemVisualTracker tracker = new WorldItemVisualTracker(itemId -> {
             resolvedItems.add(itemId);
-            return REGION;
+            return WorldItemFaceRegions.uniform(REGION);
         });
         WorldItemId stableId = new WorldItemId(11);
 
@@ -169,6 +174,35 @@ class WorldItemVisualTrackerTest {
         tracker.reconcile(List.of(snapshot(stableId, 0, 1, 2, 3, FAILING_ITEM)));
 
         assertEquals(List.of(ITEM, FAILING_ITEM), resolvedItems);
+    }
+
+    @Test
+    void physicalPresentationInterpolatesOnceFromAcceptedProjectionCoordinates() {
+        WorldItemVisualTracker tracker = tracker();
+        WorldItemSnapshot canonical = snapshot(new WorldItemId(12), 4, 99, 99, 99);
+        WorldItemPhysicalSnapshot physical = new WorldItemPhysicalSnapshot(
+                new WorldItemRuntimeSnapshot(canonical, java.util.Optional.empty(), 0, 0),
+                WorldItemPhysicalState.ACTIVE,
+                false);
+        WorldItemPresentationSnapshot presentation = new WorldItemPresentationSnapshot(
+                physical,
+                1.0,
+                2.0,
+                3.0,
+                5.0,
+                10.0,
+                15.0);
+
+        WorldItemVisual visual = tracker.reconcilePhysical(
+                List.of(presentation), 0.25f).get(0);
+
+        assertEquals(canonical.id(), visual.id());
+        assertEquals(4L, visual.sourceRevision());
+        assertEquals(2.0, visual.x());
+        assertEquals(4.0, visual.y());
+        assertEquals(6.0, visual.z());
+        assertEquals(REGION, visual.region());
+        assertEquals(99.0, canonical.positionX());
     }
 
     @Test
@@ -220,7 +254,8 @@ class WorldItemVisualTrackerTest {
     }
 
     private static WorldItemVisualTracker tracker() {
-        return new WorldItemVisualTracker(itemId -> REGION);
+        return new WorldItemVisualTracker(
+                itemId -> WorldItemFaceRegions.uniform(REGION));
     }
 
     private static WorldItemSnapshot snapshot(

@@ -4,6 +4,7 @@ in vec3 surfaceNormal;
 in float faceLight;
 in float ambientOcclusion;
 in float viewDistance;
+in vec3 fragmentWorldPosition;
 out vec4 fragmentColor;
 uniform sampler2D textureAtlas;
 uniform vec3 sunDirection;
@@ -12,6 +13,8 @@ uniform float directionalStrength;
 uniform vec3 fogColor;
 uniform float fogStart;
 uniform float fogEnd;
+uniform int excludedBlockCount;
+uniform vec3 excludedBlockCells[256];
 
 vec3 srgbToLinear(vec3 srgb) {
     bvec3 useLinearSegment = lessThanEqual(srgb, vec3(0.04045));
@@ -30,6 +33,13 @@ vec3 linearToSrgb(vec3 linear) {
 }
 
 void main() {
+    vec3 insideBlock = fragmentWorldPosition - normalize(surfaceNormal) * 0.001;
+    ivec3 fragmentCell = ivec3(floor(insideBlock));
+    for (int index = 0; index < excludedBlockCount; index++) {
+        if (all(equal(fragmentCell, ivec3(excludedBlockCells[index])))) {
+            discard;
+        }
+    }
     vec4 sampledColor = texture(textureAtlas, texCoord);
     vec3 linearColor = srgbToLinear(sampledColor.rgb);
     float combinedLight = clamp(

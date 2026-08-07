@@ -39,15 +39,14 @@ public final class BodyInventoryInputController {
         if (tick < 0) {
             throw new IllegalArgumentException("tick must be non-negative");
         }
-        Optional<ActiveSlotChangeResult> selection = select(input);
-        Optional<InventoryDropResult> drop = Optional.empty();
-        if (input.isKeyPressed(GameConfig.Input.KEY_DROP)) {
-            drop = Optional.of(drop(dropLocation, tick));
-        }
+        Optional<ActiveSlotChangeResult> selection = handleSelection(input);
+        Optional<InventoryDropResult> drop = handleDrop(
+                input, tick, dropLocation, true).drop();
         return new InventoryInputResult(selection, drop);
     }
 
-    private Optional<ActiveSlotChangeResult> select(InputSnapshot input) {
+    public Optional<ActiveSlotChangeResult> handleSelection(InputSnapshot input) {
+        Objects.requireNonNull(input, "input");
         if (input.isKeyPressed(GameConfig.Input.KEY_SELECT_LEFT)) {
             return Optional.of(inventory.selectActiveSlot(owner, BodySlot.LEFT_HAND));
         }
@@ -69,8 +68,31 @@ public final class BodyInventoryInputController {
         return Optional.ofNullable(last);
     }
 
+    public InventoryInputResult handleDrop(
+            InputSnapshot input,
+            long tick,
+            Optional<InventoryDropLocation> dropLocation,
+            boolean gameplayActionsEnabled) {
+        Objects.requireNonNull(input, "input");
+        Objects.requireNonNull(dropLocation, "dropLocation");
+        if (tick < 0) {
+            throw new IllegalArgumentException("tick must be non-negative");
+        }
+        if (!gameplayActionsEnabled || !input.isKeyPressed(GameConfig.Input.KEY_DROP)) {
+            return new InventoryInputResult(Optional.empty(), Optional.empty());
+        }
+        InventoryDropAmount amount = input.isKeyDown(GameConfig.Input.KEY_DROP_ALL_LEFT)
+                        || input.isKeyDown(GameConfig.Input.KEY_DROP_ALL_RIGHT)
+                ? InventoryDropAmount.COMPLETE_STACK
+                : InventoryDropAmount.ONE;
+        return new InventoryInputResult(
+                Optional.empty(), Optional.of(drop(dropLocation, amount, tick)));
+    }
+
     private InventoryDropResult drop(
-            Optional<InventoryDropLocation> location, long tick) {
+            Optional<InventoryDropLocation> location,
+            InventoryDropAmount amount,
+            long tick) {
         if (dropController.isEmpty() || location.isEmpty()) {
             return new InventoryDropResult(
                     InventoryDropResult.Status.WORLD_ITEM_UNAVAILABLE,
@@ -80,7 +102,7 @@ public final class BodyInventoryInputController {
         InventoryDropLocation transform = location.orElseThrow();
         BodySlot activeSlot = inventory.viewModel(owner).orElseThrow().activeSlot();
         return dropController.orElseThrow().drop(
-                owner, activeSlot,
+                owner, activeSlot, amount,
                 transform.positionX(), transform.positionY(), transform.positionZ(),
                 transform.velocityX(), transform.velocityY(), transform.velocityZ(), tick);
     }

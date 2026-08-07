@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.gaia.world.WorldLoadResult;
 import com.gaia.world.WorldLoadState;
+import com.gaia.interaction.feedback.FirstPersonMovementState;
 import com.overlord.config.GameConfig;
 import com.overlord.physics.Aabb;
 import com.overlord.physics.BlockCollisionShapeResolver;
@@ -24,6 +25,27 @@ import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
 class GameLoopStructureTest {
+    @Test
+    void movementPresentationCaptureReadsButNeverMutatesAuthoritativeBody() {
+        World world = new World();
+        PlayerController player = playerController(world);
+        Vector3f expectedPosition = new Vector3f(3.0f, 4.0f, 5.0f);
+        Vector3f expectedVelocity = new Vector3f(3.0f, -2.0f, 4.0f);
+        player.body().teleport(expectedPosition);
+        player.body().setLinearVelocity(expectedVelocity);
+
+        FirstPersonMovementState state = GameLoop.movementState(
+                player, new Vector3f(), new Vector3f());
+
+        assertEquals(4.0f, state.feetY());
+        assertEquals(5.0f, state.horizontalSpeed());
+        assertEquals(-2.0f, state.verticalSpeed());
+        assertFalse(state.grounded());
+        assertFalse(state.noclip());
+        assertEquals(expectedPosition, player.body().position(new Vector3f()));
+        assertEquals(expectedVelocity, player.body().linearVelocity(new Vector3f()));
+    }
+
     @Test
     void pumpsChunkLifecycleBeforeRenderingOnlyCompleteInitialTerrain()
             throws IOException {
@@ -146,8 +168,16 @@ class GameLoopStructureTest {
         assertTrue(compact.contains(
                 "GameLoopFrameOrchestrator.runFixedBatch("));
         assertTrue(compact.contains(
-                "inventoryInput().handle(stepInput,inventoryTick,Optional.of(dropLocation()))"));
+                "inventoryInput().handleSelection(stepInput)"));
+        assertTrue(compact.contains(
+                "inventoryInput().handleDrop(stepInput,inventoryTick,"
+                        + "Optional.of(dropLocation(inventoryTick)),fixedInteractionEnabled)"));
+        assertTrue(compact.contains(
+                "physicalWorldItems().prepareStep(inventoryTick)"));
         assertTrue(compact.contains("physicsWorld().step(fixedDelta)"));
+        assertTrue(compact.contains("physicalWorldItems().finishStep()"));
+        assertTrue(compact.contains("worldInteractionInput().route("));
+        assertTrue(compact.contains("worldItemPickup().fixedUpdate("));
         assertTrue(compact.contains(
                 "blockInteraction().fixedUpdate("));
         assertTrue(
@@ -160,9 +190,13 @@ class GameLoopStructureTest {
 
         int playerUpdate =
                 compact.indexOf("playerManager().fixedUpdate(");
-        int inventoryInput = compact.indexOf("inventoryInput().handle(");
+        int inventoryInput = compact.indexOf("inventoryInput().handleSelection(");
+        int worldItemPrepare = compact.indexOf(
+                "physicalWorldItems().prepareStep(inventoryTick)");
         int physicsStep =
                 compact.indexOf("physicsWorld().step(fixedDelta)");
+        int worldItemFinish = compact.indexOf(
+                "physicalWorldItems().finishStep()");
         int moduleUpdate =
                 compact.indexOf(
                         "ModuleManager.getInstance()"
@@ -179,11 +213,17 @@ class GameLoopStructureTest {
         int render = compact.indexOf("renderFrame(");
         int interactionUpdate =
                 compact.indexOf("blockInteraction().fixedUpdate(");
+        int pickupUpdate =
+                compact.indexOf("worldItemPickup().fixedUpdate(");
         int feedbackUpdate =
                 compact.indexOf("interactionFeedback().fixedUpdate(");
         assertTrue(inventoryInput < playerUpdate);
-        assertTrue(playerUpdate < physicsStep);
-        assertTrue(physicsStep < interactionUpdate);
+        assertTrue(playerUpdate < worldItemPrepare);
+        assertTrue(worldItemPrepare < physicsStep);
+        assertTrue(physicsStep < worldItemFinish);
+        assertTrue(worldItemFinish < pickupUpdate);
+        assertTrue(pickupUpdate < interactionUpdate);
+        assertTrue(worldItemFinish < interactionUpdate);
         assertTrue(interactionUpdate < feedbackUpdate);
         assertTrue(feedbackUpdate < moduleUpdate);
         assertTrue(interactionUpdate < moduleUpdate);
@@ -191,13 +231,15 @@ class GameLoopStructureTest {
         assertTrue(interpolation < cameraPosition);
         assertTrue(renderCameraUpdate < render);
         assertFalse(source.contains("PhysicsManager"));
-        assertTrue(compact.contains("handleFeedbackLifecycle("
+        int lifecycleFeedback = compact.indexOf("handleFeedbackLifecycle("
                 + "context.interactionFeedback(),"
-                + "feedbackLifecycleBoundaryForRender,"
-                + "state==State.RUNNING,"
-                + "cursorCaptured,"
-                + "focused,"
-                + "feedbackBlocked),()->feedbackSnapshot("));
+                + "feedbackLifecycleBoundaryForRender,");
+        int renderFeedbackUpdate = compact.indexOf(
+                "interactionFeedback().renderUpdate(frameDeltaSeconds)");
+        int feedbackSnapshot = compact.indexOf("feedbackSnapshotPhysical(");
+        assertTrue(lifecycleFeedback >= 0);
+        assertTrue(lifecycleFeedback < feedbackSnapshot);
+        assertTrue(feedbackSnapshot < renderFeedbackUpdate);
     }
 
     @Test

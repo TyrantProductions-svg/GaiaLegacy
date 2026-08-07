@@ -5,11 +5,15 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.assets.ResourceLocation;
+import com.overlord.core.transaction.ReservationTerminalState;
 import com.overlord.core.thread.MainThreadGuard;
 import com.overlord.interaction.api.EntityRef;
 import com.overlord.inventory.api.ItemStack;
+import com.overlord.worlditem.api.WorldItemPhysicalState;
+import com.overlord.worlditem.api.WorldItemRuntimeSnapshot;
 import com.overlord.worlditem.api.WorldItemSpawnCommitResult;
 import com.overlord.worlditem.api.WorldItemSpawnRequest;
+import com.overlord.worlditem.api.WorldItemSpawnReservationAuditSnapshot;
 import com.overlord.worlditem.api.WorldItemSpawnReserveResult;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -126,6 +130,136 @@ class LogicalWorldItemServiceTest {
         var second = service.reserve(item.id(), 1).reservation().orElseThrow();
         service.rollback(second.id());
         assertEquals(1, service.snapshot(item.id()).orElseThrow().stack().count());
+    }
+
+    @Test
+    void spawnReservationAuditReportsExactIdentityAndTerminalState() {
+        LogicalWorldItemService service = service(4, 20);
+        WorldItemSpawnRequest request = request(DIRT, 7);
+        WorldItemSpawnReserveResult held = service.reserveSpawn(request);
+        var reservation = held.reservation().orElseThrow();
+
+        WorldItemSpawnReservationAuditSnapshot pending =
+                service.spawnReservationAudit(reservation.id()).orElseThrow();
+        assertEquals(reservation, pending.reservation());
+        assertEquals(ReservationTerminalState.PENDING, pending.state());
+        assertEquals(reservation.itemId(), pending.reservation().itemId());
+        assertEquals(request, pending.reservation().request());
+
+        service.commitSpawn(reservation.id());
+        WorldItemSpawnReservationAuditSnapshot committed =
+                service.spawnReservationAudit(reservation.id()).orElseThrow();
+        assertEquals(reservation, committed.reservation());
+        assertEquals(ReservationTerminalState.COMMITTED, committed.state());
+        assertEquals(
+                reservation.itemId(),
+                service.snapshot(reservation.itemId()).orElseThrow().id());
+
+        assertTrue(service.spawnReservationAudit(
+                new com.overlord.worlditem.api.WorldItemSpawnReservationId(99_999L))
+                .isEmpty());
+    }
+
+    @Test
+    void committedSpawnAuditRetainsInitialIdentityAfterMotionAndRemoval() {
+        LogicalWorldItemService service = service(4, 20);
+        WorldItemSpawnRequest request = request(new ItemStack(DIRT.itemId(), 1), 7);
+        var reservation = service.reserveSpawn(request).reservation().orElseThrow();
+        var committed = service.commitSpawn(reservation.id());
+        WorldItemRuntimeSnapshot initial = committed.runtime().orElseThrow();
+        service.updateMotion(new com.overlord.worlditem.api.WorldItemMotionUpdate(
+                reservation.itemId(),
+                0,
+                9, 8, 7,
+                6, 5, 4,
+                WorldItemPhysicalState.ACTIVE));
+        var extraction = service.reserve(reservation.itemId(), 1)
+                .reservation().orElseThrow();
+        service.commit(extraction.id());
+
+        WorldItemSpawnReservationAuditSnapshot audited =
+                service.spawnReservationAudit(reservation.id()).orElseThrow();
+        var repeated = service.commitSpawn(reservation.id());
+        var conflict = service.rollbackSpawn(reservation.id());
+
+        assertEquals(initial, audited.runtime().orElseThrow());
+        assertEquals(initial, repeated.runtime().orElseThrow());
+        assertEquals(initial, conflict.runtime().orElseThrow());
+        assertEquals(0, audited.runtime().orElseThrow().item().revision());
+        assertEquals(request.positionX(),
+                audited.runtime().orElseThrow().item().positionX());
+        assertTrue(service.snapshot(reservation.itemId()).isEmpty());
+    }
+
+    @Test
+    void rolledBackSpawnReservationAuditNeverCreatesOrReissuesItsStableId() {
+        LogicalWorldItemService service = service(4, 20);
+        var reservation = service.reserveSpawn(
+                        request(new ItemStack(DIRT.itemId(), 1), 7))
+                .reservation().orElseThrow();
+
+        service.rollbackSpawn(reservation.id());
+
+        WorldItemSpawnReservationAuditSnapshot rolledBack =
+                service.spawnReservationAudit(reservation.id()).orElseThrow();
+        assertEquals(ReservationTerminalState.ROLLED_BACK, rolledBack.state());
+        assertTrue(service.snapshot(reservation.itemId()).isEmpty());
+        var replacement = service.reserveSpawn(
+                        request(new ItemStack(DIRT.itemId(), 1), 8))
+                .reservation().orElseThrow();
+        assertTrue(replacement.itemId().value() > reservation.itemId().value());
+    }
+
+    @Test
+    void partialExtractionRevisionExhaustionKeepsReservationPendingAndStateUnchanged() {
+        LogicalWorldItemService service = service(2, 0);
+        var item = service.spawn(request(DIRT, 1)).item().orElseThrow();
+        LogicalWorldItemTestAccess.forceRevision(service, item.id(), Long.MAX_VALUE);
+        var before = service.physicalSnapshot(item.id()).orElseThrow();
+        var reservation = service.reserve(item.id(), 2).reservation().orElseThrow();
+
+        var first = service.commit(reservation.id());
+        var repeated = service.commit(reservation.id());
+
+        assertEquals(
+                com.overlord.worlditem.api.WorldItemReservationResult.Status.REVISION_EXHAUSTED,
+                first.status());
+        assertEquals(first, repeated);
+        assertEquals(Optional.of(reservation), first.reservation());
+        assertEquals(Optional.of(before.runtime().item()), first.item());
+        assertEquals(
+                Optional.of(new com.overlord.inventory.api.ItemStack(DIRT.itemId(), 1)),
+                first.remainder());
+        assertEquals(before.runtime().item(), service.snapshot(item.id()).orElseThrow());
+        assertTrue(service.physicalSnapshot(item.id()).orElseThrow().extractionReserved());
+        assertEquals(
+                com.overlord.worlditem.api.WorldItemReservationResult.Status.UNAVAILABLE,
+                service.reserve(item.id(), 1).status());
+
+        assertEquals(
+                com.overlord.worlditem.api.WorldItemReservationResult.Status.ROLLED_BACK,
+                service.rollback(reservation.id()).status());
+        assertEquals(
+                com.overlord.worlditem.api.WorldItemReservationResult.Status.TERMINAL_CONFLICT,
+                service.commit(reservation.id()).status());
+        assertFalse(service.physicalSnapshot(item.id()).orElseThrow().extractionReserved());
+        assertEquals(before.runtime().item(), service.snapshot(item.id()).orElseThrow());
+    }
+
+    @Test
+    void fullExtractionAtRevisionExhaustionRemainsAFullTerminalCommit() {
+        LogicalWorldItemService service = service(2, 0);
+        var item = service.spawn(request(DIRT, 1)).item().orElseThrow();
+        LogicalWorldItemTestAccess.forceRevision(service, item.id(), Long.MAX_VALUE);
+        var reservation = service.reserve(item.id(), 3).reservation().orElseThrow();
+
+        var committed = service.commit(reservation.id());
+
+        assertEquals(
+                com.overlord.worlditem.api.WorldItemReservationResult.Status.COMMITTED,
+                committed.status());
+        assertTrue(service.snapshot(item.id()).isEmpty());
+        assertTrue(service.physicalSnapshot(item.id()).isEmpty());
     }
 
     @Test
