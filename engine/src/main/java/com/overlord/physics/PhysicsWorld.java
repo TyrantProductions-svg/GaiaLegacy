@@ -31,8 +31,24 @@ public final class PhysicsWorld {
         return bodies.remove(Objects.requireNonNull(body, "body"));
     }
 
+    /** Returns whether this exact body instance is currently registered. */
+    public boolean containsBody(PhysicsBody body) {
+        Objects.requireNonNull(body, "body");
+        for (PhysicsBody registered : bodies) {
+            if (registered == body) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public List<PhysicsBody> bodies() {
         return List.copyOf(bodies);
+    }
+
+    /** Returns the static collision world used by this physics world. */
+    public CollisionWorld collisionWorld() {
+        return collisionWorld;
     }
 
     public void step(float fixedDeltaSeconds) {
@@ -67,6 +83,9 @@ public final class PhysicsWorld {
         velocity.fma(inverseMass * fixedDeltaSeconds, force);
         velocity.fma(body.gravityScale() * fixedDeltaSeconds, gravity);
         velocity.fma(inverseMass, impulse);
+        if (velocity.y < body.maximumFallSpeed()) {
+            velocity.y = body.maximumFallSpeed();
+        }
         requireFinite(velocity, "integrated velocity");
 
         Vector3f position = body.position(new Vector3f());

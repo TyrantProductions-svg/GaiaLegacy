@@ -1,5 +1,6 @@
 #version 410 core
 in vec2 texCoord;
+in vec4 particleTint;
 out vec4 fragmentColor;
 uniform sampler2D blockAtlas;
 void main() {
@@ -7,5 +8,5 @@ void main() {
     if (sampled.a < 0.1) {
         discard;
     }
-    fragmentColor = sampled;
+    fragmentColor = sampled * particleTint;
 }

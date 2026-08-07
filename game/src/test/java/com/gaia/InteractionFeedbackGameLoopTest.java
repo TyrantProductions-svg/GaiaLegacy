@@ -11,6 +11,7 @@ import com.gaia.interaction.GameMode;
 import com.gaia.interaction.feedback.CommittedBreakVisualAdapter;
 import com.gaia.interaction.feedback.InteractionFeedbackCoordinator;
 import com.gaia.interaction.feedback.WorldItemVisualTracker;
+import com.gaia.worlditem.WorldItemPresentationSnapshot;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.interaction.api.BlockFace;
 import com.overlord.interaction.api.BlockHitResult;
@@ -22,6 +23,9 @@ import com.overlord.renderer.particle.ParticleEmission;
 import com.overlord.renderer.particle.ParticleSystem;
 import com.overlord.renderer.texture.TextureRegion;
 import com.overlord.worlditem.api.WorldItemId;
+import com.overlord.worlditem.api.WorldItemPhysicalSnapshot;
+import com.overlord.worlditem.api.WorldItemPhysicalState;
+import com.overlord.worlditem.api.WorldItemRuntimeSnapshot;
 import com.overlord.worlditem.api.WorldItemSnapshot;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,6 +57,35 @@ class InteractionFeedbackGameLoopTest {
         assertEquals(List.of(7L), frame.worldItems().stream()
                 .map(item -> item.id().value()).toList());
         assertThrows(UnsupportedOperationException.class, () -> frame.worldItems().clear());
+    }
+
+    @Test
+    void productionFeedbackUsesInterpolatedPhysicalPresentationNotLogicalPosition() {
+        Fixture fixture = fixture();
+        WorldItemSnapshot canonical = worldItem(8);
+        WorldItemPresentationSnapshot physical = new WorldItemPresentationSnapshot(
+                new WorldItemPhysicalSnapshot(
+                        new WorldItemRuntimeSnapshot(
+                                canonical, Optional.empty(), 0, 0),
+                        WorldItemPhysicalState.ACTIVE,
+                        false),
+                0, 1, 2,
+                4, 5, 6);
+
+        InteractionFeedbackFrame frame = GameLoop.feedbackSnapshotPhysical(
+                fixture.coordinator,
+                idle(),
+                List.of(physical),
+                0.25f,
+                true,
+                true,
+                true,
+                false);
+
+        assertEquals(1.0, frame.worldItems().get(0).x());
+        assertEquals(2.0, frame.worldItems().get(0).y());
+        assertEquals(3.0, frame.worldItems().get(0).z());
+        assertEquals(4.0, canonical.positionX());
     }
 
     @Test
@@ -315,7 +348,8 @@ class InteractionFeedbackGameLoopTest {
         InteractionFeedbackCoordinator coordinator = new InteractionFeedbackCoordinator(
                 adapter,
                 particles,
-                new WorldItemVisualTracker(ignored -> REGION),
+                new WorldItemVisualTracker(
+                        ignored -> com.overlord.renderer.feedback.WorldItemFaceRegions.uniform(REGION)),
                 ignored -> REGION);
         return new Fixture(coordinator, particles);
     }

@@ -43,6 +43,16 @@ class OpenGlRenderStateBackendTest {
                     false);
 
     @Test
+    void clearDepthClearsOnlyTheDepthAttachment() {
+        RecordingGl gl = new RecordingGl(incoming(DepthFunction.LESS));
+        OpenGlRenderStateBackend backend = backend(gl);
+
+        backend.clearDepth();
+
+        assertEquals(List.of("clear:" + GL_DEPTH_BUFFER_BIT), gl.calls);
+    }
+
+    @Test
     void captureReadsEveryFieldAndPreservesTheIncomingActiveTextureUnit() {
         RenderStateSnapshot incoming = incoming(DepthFunction.EQUAL);
         RecordingGl gl = new RecordingGl(incoming);

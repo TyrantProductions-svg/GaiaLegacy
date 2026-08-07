@@ -14,6 +14,7 @@ public final class PhysicsBody {
     private final Vector3f angularVelocity = new Vector3f();
 
     private float gravityScale = 1.0f;
+    private float maximumFallSpeed = Float.NEGATIVE_INFINITY;
     private float restitution;
     private float friction;
     private boolean active = true;
@@ -96,6 +97,20 @@ public final class PhysicsBody {
     public void setGravityScale(float gravityScale) {
         requireFinite(gravityScale, "gravity scale");
         this.gravityScale = gravityScale;
+    }
+
+    /** Returns the per-body downward speed floor used during integration. */
+    public float maximumFallSpeed() {
+        return maximumFallSpeed;
+    }
+
+    /** Sets a finite negative terminal fall speed for this body. */
+    public void setMaximumFallSpeed(float maximumFallSpeed) {
+        if (!Float.isFinite(maximumFallSpeed) || maximumFallSpeed >= 0.0f) {
+            throw new IllegalArgumentException(
+                    "maximum fall speed must be finite and negative");
+        }
+        this.maximumFallSpeed = maximumFallSpeed;
     }
 
     public float restitution() {

@@ -19,7 +19,7 @@ import com.overlord.core.thread.MainThreadGuard;
 import java.util.Objects;
 
 public final class OpenGlUnitCubeMesh implements UnitCubeMesh {
-    private static final int FLOATS_PER_VERTEX = 5;
+    private static final int FLOATS_PER_VERTEX = 6;
     private static final int VERTEX_COUNT = 36;
     private static final float[] VERTICES = createVertices();
 
@@ -117,12 +117,12 @@ public final class OpenGlUnitCubeMesh implements UnitCubeMesh {
     private static float[] createVertices() {
         float[] output = new float[VERTEX_COUNT * FLOATS_PER_VERTEX];
         int offset = 0;
-        offset = quad(output, offset, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1);
-        offset = quad(output, offset, 1, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0);
-        offset = quad(output, offset, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0);
-        offset = quad(output, offset, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1);
-        offset = quad(output, offset, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1);
-        quad(output, offset, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 1);
+        offset = quad(output, offset, 0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, false);
+        offset = quad(output, offset, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, true);
+        offset = quad(output, offset, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 2, false);
+        offset = quad(output, offset, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 3, true);
+        offset = quad(output, offset, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, 4, true);
+        quad(output, offset, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 5, true);
         return output;
     }
 
@@ -140,22 +140,34 @@ public final class OpenGlUnitCubeMesh implements UnitCubeMesh {
             float cz,
             float dx,
             float dy,
-            float dz) {
-        offset = vertex(output, offset, ax, ay, az, 0, 0);
-        offset = vertex(output, offset, bx, by, bz, 1, 0);
-        offset = vertex(output, offset, cx, cy, cz, 1, 1);
-        offset = vertex(output, offset, ax, ay, az, 0, 0);
-        offset = vertex(output, offset, cx, cy, cz, 1, 1);
-        return vertex(output, offset, dx, dy, dz, 0, 1);
+            float dz,
+            float faceIndex,
+            boolean flipV) {
+        float v0 = flipV ? 1.0f : 0.0f;
+        float v1 = flipV ? 0.0f : 1.0f;
+        offset = vertex(output, offset, ax, ay, az, 0, v0, faceIndex);
+        offset = vertex(output, offset, bx, by, bz, 1, v0, faceIndex);
+        offset = vertex(output, offset, cx, cy, cz, 1, v1, faceIndex);
+        offset = vertex(output, offset, ax, ay, az, 0, v0, faceIndex);
+        offset = vertex(output, offset, cx, cy, cz, 1, v1, faceIndex);
+        return vertex(output, offset, dx, dy, dz, 0, v1, faceIndex);
     }
 
     private static int vertex(
-            float[] output, int offset, float x, float y, float z, float u, float v) {
+            float[] output,
+            int offset,
+            float x,
+            float y,
+            float z,
+            float u,
+            float v,
+            float faceIndex) {
         output[offset++] = x;
         output[offset++] = y;
         output[offset++] = z;
         output[offset++] = u;
         output[offset++] = v;
+        output[offset++] = faceIndex;
         return offset;
     }
 
@@ -198,7 +210,7 @@ interface UnitCubeMeshBackend {
 }
 
 final class OpenGlUnitCubeMeshBackend implements UnitCubeMeshBackend {
-    private static final int FLOATS_PER_VERTEX = 5;
+    private static final int FLOATS_PER_VERTEX = 6;
 
     @Override
     public int createVertexArray() {
@@ -232,6 +244,14 @@ final class OpenGlUnitCubeMeshBackend implements UnitCubeMeshBackend {
                 false,
                 FLOATS_PER_VERTEX * Float.BYTES,
                 3L * Float.BYTES);
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(
+                2,
+                1,
+                GL_FLOAT,
+                false,
+                FLOATS_PER_VERTEX * Float.BYTES,
+                5L * Float.BYTES);
     }
 
     @Override

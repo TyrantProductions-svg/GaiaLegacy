@@ -35,6 +35,15 @@ tasks.register('generateUiAssets', JavaExec) {
         'game/src/main/resources/assets/gaia/ui/ui_icons.json'
 }
 
+tasks.register('profileWorldItems', JavaExec) {
+    group = 'verification'
+    description = 'Runs the deterministic 10s warm-up and 60s Phase 11 allocation fixture.'
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.gaia.tools.WorldItemPerformanceFixture'
+    args '12345', '1024', '512', '600', '3600'
+}
+
 def generatedUiVerificationDir = layout.buildDirectory.dir(
     'generated-ui-verification')
 

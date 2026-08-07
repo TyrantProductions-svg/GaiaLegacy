@@ -3,6 +3,7 @@ package com.gaia.inventory;
 import com.gaia.blocks.BlockRegistry;
 import com.gaia.blocks.ItemFormDefinition;
 import com.overlord.core.thread.MainThreadGuard;
+import com.overlord.core.transaction.ReservationTerminalState;
 import com.overlord.event.Event;
 import com.overlord.interaction.api.EntityRef;
 import com.overlord.inventory.api.ActiveBodySlotChanged;
@@ -12,6 +13,8 @@ import com.overlord.inventory.api.InventoryChangeRequest;
 import com.overlord.inventory.api.InventoryChangeResult;
 import com.overlord.inventory.api.InventoryChanged;
 import com.overlord.inventory.api.InventoryEventDispatchException;
+import com.overlord.inventory.api.InventoryReservationAudit;
+import com.overlord.inventory.api.InventoryReservationAuditSnapshot;
 import com.overlord.inventory.api.InventoryReservation;
 import com.overlord.inventory.api.InventoryReservationId;
 import com.overlord.inventory.api.InventoryReservationOperation;
@@ -35,7 +38,7 @@ import java.util.function.Consumer;
  * Item rules are resolved from the data-driven {@link ItemFormDefinition}
  * source supplied at construction time.
  */
-public final class BodyInventoryService implements InventoryService {
+public final class BodyInventoryService implements InventoryService, InventoryReservationAudit {
     private final BodyInventory inventory;
     private final ItemFormLookup itemForms;
     private final MainThreadGuard mainThreadGuard;
@@ -462,6 +465,24 @@ public final class BodyInventoryService implements InventoryService {
                 reservationId,
                 InventoryReservationResult.Status.ROLLED_BACK,
                 Optional.of(inventory.snapshot()));
+    }
+
+    @Override
+    public Optional<InventoryReservationAuditSnapshot> reservationAudit(
+            InventoryReservationId reservationId) {
+        assertMainThread("body inventory reservation audit");
+        Objects.requireNonNull(reservationId, "reservationId");
+        ReservationState reservation = reservations.get(reservationId);
+        if (reservation == null) {
+            return Optional.empty();
+        }
+        ReservationTerminalState state = reservation.terminal == null
+                ? ReservationTerminalState.PENDING
+                : reservation.terminal == Terminal.COMMITTED
+                        ? ReservationTerminalState.COMMITTED
+                        : ReservationTerminalState.ROLLED_BACK;
+        return Optional.of(new InventoryReservationAuditSnapshot(
+                reservation.reservation, state));
     }
 
     private InventoryReserveResult reserveExtract(InventoryReservationRequest request) {

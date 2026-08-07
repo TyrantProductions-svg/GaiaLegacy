@@ -39,13 +39,48 @@ class OpenGlFeedbackResourceStructureTest {
 
         assertEquals(1, backend.uploads.size());
         assertEquals(List.of(GL_STREAM_DRAW), backend.uploadUsages);
-        assertEquals(2 * 36 * 5, backend.uploads.get(0).length);
+        assertEquals(2 * 36 * 9, backend.uploads.get(0).length);
         assertEquals(List.of(72), backend.drawVertexCounts);
         assertEquals(1.0f - 0.1f, backend.uploads.get(0)[0]);
         assertEquals(2.0f - 0.1f, backend.uploads.get(0)[1]);
         assertEquals(3.0f + 0.1f, backend.uploads.get(0)[2]);
         assertEquals(REGION.uMin(), backend.uploads.get(0)[3]);
         assertEquals(REGION.vMin(), backend.uploads.get(0)[4]);
+        assertEquals(1.0f, backend.uploads.get(0)[5]);
+        assertEquals(1.0f, backend.uploads.get(0)[6]);
+        assertEquals(1.0f, backend.uploads.get(0)[7]);
+        assertEquals(1.0f, backend.uploads.get(0)[8]);
+    }
+
+    @Test
+    void nonWhiteTintReachesEveryUploadedVertexRgba() {
+        RecordingBackend backend = new RecordingBackend();
+        OpenGlStreamingTexturedCubeBatch batch =
+                new OpenGlStreamingTexturedCubeBatch(
+                        MainThreadGuard.captureCurrentThread(), backend);
+        ParticleTint tint = new ParticleTint(0.2f, 0.4f, 0.7f, 0.6f);
+        ParticleVisual particle = new ParticleVisual(
+                1, 2, 3,
+                0, 0, 0,
+                0, 1,
+                0.2f,
+                REGION,
+                tint,
+                ParticleCategory.BREAK_COMMITTED,
+                com.overlord.renderer.particle.ParticlePriority.HIGH,
+                17L);
+
+        batch.upload(new ParticleRenderBatch(List.of(particle)));
+
+        float[] uploaded = backend.uploads.get(0);
+        assertEquals(36 * 9, uploaded.length);
+        for (int vertex = 0; vertex < 36; vertex++) {
+            int offset = vertex * 9;
+            assertEquals(tint.red(), uploaded[offset + 5], 1.0e-6f);
+            assertEquals(tint.green(), uploaded[offset + 6], 1.0e-6f);
+            assertEquals(tint.blue(), uploaded[offset + 7], 1.0e-6f);
+            assertEquals(tint.alpha(), uploaded[offset + 8], 1.0e-6f);
+        }
     }
 
     @Test
@@ -181,7 +216,10 @@ class OpenGlFeedbackResourceStructureTest {
         assertTrue(fragment.startsWith("#version 410 core"));
         assertTrue(vertex.contains("layout (location = 0) in vec3 aPosition"));
         assertTrue(vertex.contains("layout (location = 1) in vec2 aUv"));
+        assertTrue(vertex.contains("layout (location = 2) in vec4 aTint"));
+        assertTrue(fragment.contains("in vec4 particleTint"));
         assertTrue(fragment.contains("uniform sampler2D blockAtlas"));
+        assertTrue(fragment.contains("fragmentColor = sampled * particleTint"));
         for (String source : List.of(vertex, fragment)) {
             assertFalse(source.contains("#version 420"));
             assertFalse(source.contains("#version 430"));

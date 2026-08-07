@@ -11,6 +11,7 @@ import com.gaia.blocks.ItemFormDefinition;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.renderer.material.MaterialDefinition;
 import com.overlord.renderer.material.RenderType;
+import com.overlord.renderer.feedback.WorldItemFaceRegions;
 import com.overlord.renderer.texture.TextureAtlasMetadata;
 import com.overlord.renderer.texture.TextureRegion;
 import com.overlord.voxel.BlockFace;
@@ -48,6 +49,19 @@ class GaiaVisualRegionResolverTest {
         GaiaVisualRegionResolver resolver = resolver(STONE_TOP);
 
         assertEquals(TOP_REGION, resolver.resolve(STONE_ITEM));
+    }
+
+    @Test
+    void worldItemResolverUsesOwningRenderInfoForEveryCubeFace() {
+        GaiaWorldItemFaceResolver resolver = faceResolver(STONE_TOP);
+
+        WorldItemFaceRegions faces = resolver.resolve(STONE_ITEM);
+
+        for (BlockFace face : BlockFace.values()) {
+            assertEquals(
+                    face == BlockFace.UP ? TOP_REGION : SIDE_REGION,
+                    faces.region(face));
+        }
     }
 
     @Test
@@ -185,6 +199,23 @@ class GaiaVisualRegionResolverTest {
 
     private static GaiaVisualRegionResolver resolver(ResourceLocation stoneTop) {
         return resolver(stoneTop, (item, cause) -> {});
+    }
+
+    private static GaiaWorldItemFaceResolver faceResolver(ResourceLocation stoneTop) {
+        EnumMap<BlockFace, ResourceLocation> stoneTextures = textures(STONE_SIDE);
+        stoneTextures.put(BlockFace.UP, stoneTop);
+        BlockDefinition air = definition(0, "gaia:air", textures(MISSING), null);
+        BlockDefinition stone = definition(
+                1,
+                "gaia:stone",
+                stoneTextures,
+                new ItemFormDefinition(STONE_ITEM, 64, false, false));
+        BlockRegistry registry = BlockRegistry.create(
+                List.of(air, stone),
+                Map.of(
+                        0, BlockRenderInfo.nonRenderable(MATERIAL, MISSING_REGION),
+                        1, renderInfo(TOP_REGION)));
+        return new GaiaWorldItemFaceResolver(registry, MISSING_REGION, (item, cause) -> {});
     }
 
     private static GaiaVisualRegionResolver resolver(

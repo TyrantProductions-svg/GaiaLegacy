@@ -8,8 +8,10 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.overlord.assets.AssetManager;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.core.thread.MainThreadGuard;
+import com.overlord.renderer.RenderAssets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -24,6 +26,38 @@ import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
 class ShaderProgramTest {
+    @Test
+    void worldShaderAcceptsFirstExcludedBlockCellUniform() {
+        FakeShaderBackend backend = new FakeShaderBackend();
+        ShaderProgram program = new ShaderProgram(
+                MainThreadGuard.captureCurrentThread(),
+                worldShaderSources(),
+                WorldShaderUniforms.requiredUniforms(),
+                backend);
+
+        try {
+            program.setVector3("excludedBlockCells[0]", new Vector3f(2.0f, 3.0f, 4.0f));
+        } finally {
+            program.cleanup();
+        }
+
+        assertEquals(1, backend.uniformLocationCalls("excludedBlockCells[0]"));
+        assertEquals(
+                1,
+                backend.uniformLocationCalls(
+                        "excludedBlockCells["
+                                + (WorldShaderUniforms.MAX_EXCLUDED_BLOCK_CELLS - 1)
+                                + "]"));
+        assertEquals(0, backend.uniformLocationCalls("excludedBlockCells"));
+        assertEquals(
+                0,
+                backend.uniformLocationCalls(
+                        "excludedBlockCells["
+                                + WorldShaderUniforms.MAX_EXCLUDED_BLOCK_CELLS
+                                + "]"));
+        assertEquals(List.of(new Vector3f(2.0f, 3.0f, 4.0f)), backend.vector3Values());
+    }
+
     @Test
     void reportsVertexCompileDiagnosticsAndDeletesPartialShader() {
         FakeShaderBackend backend = new FakeShaderBackend();
@@ -313,6 +347,14 @@ class ShaderProgramTest {
                 "#version 410 core\nvoid main() {}",
                 ResourceLocation.of("overlord", "shaders/world.frag"),
                 "#version 410 core\nout vec4 color; void main() { color = vec4(1.0); }");
+    }
+
+    private static ShaderSourceSet worldShaderSources() {
+        return new ShaderResourceLoader(new AssetManager(ShaderProgramTest.class.getClassLoader()))
+                .load(
+                        "world",
+                        RenderAssets.DEFAULT_WORLD_VERTEX_SHADER,
+                        RenderAssets.DEFAULT_WORLD_FRAGMENT_SHADER);
     }
 
     private static final class FakeShaderBackend implements ShaderBackend {

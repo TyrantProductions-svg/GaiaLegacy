@@ -20,7 +20,7 @@ import com.overlord.renderer.texture.TextureRegion;
 import java.util.Objects;
 
 public final class OpenGlStreamingTexturedCubeBatch implements StreamingTexturedCubeBatch {
-    private static final int FLOATS_PER_VERTEX = 5;
+    private static final int FLOATS_PER_VERTEX = 9;
     private static final int VERTICES_PER_CUBE = 36;
 
     private final MainThreadGuard mainThreadGuard;
@@ -132,12 +132,13 @@ public final class OpenGlStreamingTexturedCubeBatch implements StreamingTextured
             float z0 = particle.z() - h;
             float z1 = particle.z() + h;
             TextureRegion region = particle.region();
-            offset = quad(output, offset, x0, y0, z1, x1, y0, z1, x1, y1, z1, x0, y1, z1, region);
-            offset = quad(output, offset, x1, y0, z0, x0, y0, z0, x0, y1, z0, x1, y1, z0, region);
-            offset = quad(output, offset, x0, y1, z1, x1, y1, z1, x1, y1, z0, x0, y1, z0, region);
-            offset = quad(output, offset, x0, y0, z0, x1, y0, z0, x1, y0, z1, x0, y0, z1, region);
-            offset = quad(output, offset, x1, y0, z1, x1, y0, z0, x1, y1, z0, x1, y1, z1, region);
-            offset = quad(output, offset, x0, y0, z0, x0, y0, z1, x0, y1, z1, x0, y1, z0, region);
+            ParticleTint tint = particle.tint();
+            offset = quad(output, offset, x0, y0, z1, x1, y0, z1, x1, y1, z1, x0, y1, z1, region, tint);
+            offset = quad(output, offset, x1, y0, z0, x0, y0, z0, x0, y1, z0, x1, y1, z0, region, tint);
+            offset = quad(output, offset, x0, y1, z1, x1, y1, z1, x1, y1, z0, x0, y1, z0, region, tint);
+            offset = quad(output, offset, x0, y0, z0, x1, y0, z0, x1, y0, z1, x0, y0, z1, region, tint);
+            offset = quad(output, offset, x1, y0, z1, x1, y0, z0, x1, y1, z0, x1, y1, z1, region, tint);
+            offset = quad(output, offset, x0, y0, z0, x0, y0, z1, x0, y1, z1, x0, y1, z0, region, tint);
         }
         return output;
     }
@@ -149,22 +150,34 @@ public final class OpenGlStreamingTexturedCubeBatch implements StreamingTextured
             float bx, float by, float bz,
             float cx, float cy, float cz,
             float dx, float dy, float dz,
-            TextureRegion region) {
-        offset = vertex(output, offset, ax, ay, az, region.uMin(), region.vMin());
-        offset = vertex(output, offset, bx, by, bz, region.uMax(), region.vMin());
-        offset = vertex(output, offset, cx, cy, cz, region.uMax(), region.vMax());
-        offset = vertex(output, offset, ax, ay, az, region.uMin(), region.vMin());
-        offset = vertex(output, offset, cx, cy, cz, region.uMax(), region.vMax());
-        return vertex(output, offset, dx, dy, dz, region.uMin(), region.vMax());
+            TextureRegion region,
+            ParticleTint tint) {
+        offset = vertex(output, offset, ax, ay, az, region.uMin(), region.vMin(), tint);
+        offset = vertex(output, offset, bx, by, bz, region.uMax(), region.vMin(), tint);
+        offset = vertex(output, offset, cx, cy, cz, region.uMax(), region.vMax(), tint);
+        offset = vertex(output, offset, ax, ay, az, region.uMin(), region.vMin(), tint);
+        offset = vertex(output, offset, cx, cy, cz, region.uMax(), region.vMax(), tint);
+        return vertex(output, offset, dx, dy, dz, region.uMin(), region.vMax(), tint);
     }
 
     private static int vertex(
-            float[] output, int offset, float x, float y, float z, float u, float v) {
+            float[] output,
+            int offset,
+            float x,
+            float y,
+            float z,
+            float u,
+            float v,
+            ParticleTint tint) {
         output[offset++] = x;
         output[offset++] = y;
         output[offset++] = z;
         output[offset++] = u;
         output[offset++] = v;
+        output[offset++] = tint.red();
+        output[offset++] = tint.green();
+        output[offset++] = tint.blue();
+        output[offset++] = tint.alpha();
         return offset;
     }
 
@@ -230,7 +243,7 @@ interface StreamingTexturedCubeBatchBackend {
 }
 
 final class OpenGlStreamingTexturedCubeBatchBackend implements StreamingTexturedCubeBatchBackend {
-    private static final int FLOATS_PER_VERTEX = 5;
+    private static final int FLOATS_PER_VERTEX = 9;
 
     @Override
     public int createVertexArray() {
@@ -259,6 +272,8 @@ final class OpenGlStreamingTexturedCubeBatchBackend implements StreamingTextured
         glVertexAttribPointer(0, 3, GL_FLOAT, false, stride, 0L);
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(1, 2, GL_FLOAT, false, stride, 3L * Float.BYTES);
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 4, GL_FLOAT, false, stride, 5L * Float.BYTES);
     }
 
     @Override

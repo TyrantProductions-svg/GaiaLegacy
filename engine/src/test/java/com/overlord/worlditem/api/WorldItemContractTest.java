@@ -146,6 +146,237 @@ class WorldItemContractTest {
     }
 
     @Test
+    void typedSpawnCommitFailureRetainsReservationIdentityAndAppliedState() {
+        WorldItemSpawnReservationId reservationId = new WorldItemSpawnReservationId(17L);
+        AssertionError cause = new AssertionError("after apply");
+
+        WorldItemSpawnCommitException failure = new WorldItemSpawnCommitException(
+                "spawn notification failed", cause, reservationId, true);
+
+        assertSame(cause, failure.getCause());
+        assertEquals(reservationId, failure.reservationId());
+        assertTrue(failure.stateChangeApplied());
+        assertFalse(new WorldItemSpawnCommitException(
+                "before apply", null, reservationId, false).stateChangeApplied());
+        assertThrows(NullPointerException.class, () -> new WorldItemSpawnCommitException(
+                "missing identity", null, null, false));
+    }
+
+    @Test
+    void spawnAuditSnapshotRejectsMissingIdentityOrState() {
+        WorldItemSpawnReservation reservation = new WorldItemSpawnReservation(
+                new WorldItemSpawnReservationId(3L),
+                new WorldItemId(5L),
+                request(new ItemStack(STONE.itemId(), 1)));
+
+        assertThrows(NullPointerException.class, () ->
+                new WorldItemSpawnReservationAuditSnapshot(null,
+                        com.overlord.core.transaction.ReservationTerminalState.PENDING));
+        assertThrows(NullPointerException.class, () ->
+                new WorldItemSpawnReservationAuditSnapshot(reservation, null));
+    }
+
+    @Test
+    void committedSpawnRejectsMismatchedPosition() {
+        WorldItemSpawnReservation reservation = spawnReservation();
+        WorldItemSnapshot changed = new WorldItemSnapshot(
+                reservation.itemId(), reservation.request().stack(),
+                99, 2, 3, 4, 5, 6, 0);
+
+        assertThrows(IllegalArgumentException.class, () -> new WorldItemSpawnCommitResult(
+                WorldItemSpawnCommitResult.Status.COMMITTED,
+                Optional.of(reservation), Optional.of(runtime(reservation, changed))));
+    }
+
+    @Test
+    void committedSpawnRejectsMismatchedVelocityX() {
+        WorldItemSpawnReservation reservation = spawnReservation();
+        WorldItemSnapshot changed = new WorldItemSnapshot(
+                reservation.itemId(), reservation.request().stack(),
+                1, 2, 3, 99, 5, 6, 0);
+
+        assertThrows(IllegalArgumentException.class, () -> new WorldItemSpawnCommitResult(
+                WorldItemSpawnCommitResult.Status.COMMITTED,
+                Optional.of(reservation), Optional.of(runtime(reservation, changed))));
+    }
+
+    @Test
+    void committedSpawnRejectsMismatchedVelocityY() {
+        WorldItemSpawnReservation reservation = spawnReservation();
+        WorldItemSnapshot changed = new WorldItemSnapshot(
+                reservation.itemId(), reservation.request().stack(),
+                1, 2, 3, 4, 99, 6, 0);
+
+        assertThrows(IllegalArgumentException.class, () -> new WorldItemSpawnCommitResult(
+                WorldItemSpawnCommitResult.Status.COMMITTED,
+                Optional.of(reservation), Optional.of(runtime(reservation, changed))));
+    }
+
+    @Test
+    void committedSpawnRejectsMismatchedCount() {
+        WorldItemSpawnReservation reservation = spawnReservation();
+        ItemStack changedCount = new ItemStack(
+                reservation.request().stack().itemId(),
+                reservation.request().stack().count() + 1);
+        WorldItemSnapshot changed = new WorldItemSnapshot(
+                reservation.itemId(), changedCount,
+                1, 2, 3, 4, 5, 6, 0);
+
+        assertThrows(IllegalArgumentException.class, () -> new WorldItemSpawnCommitResult(
+                WorldItemSpawnCommitResult.Status.COMMITTED,
+                Optional.of(reservation), Optional.of(runtime(reservation, changed))));
+    }
+
+    @Test
+    void committedSpawnRejectsMismatchedRevision() {
+        WorldItemSpawnReservation reservation = spawnReservation();
+        WorldItemSnapshot changed = snapshot(reservation.itemId(), reservation.request().stack(), 1);
+
+        assertThrows(IllegalArgumentException.class, () -> new WorldItemSpawnCommitResult(
+                WorldItemSpawnCommitResult.Status.COMMITTED,
+                Optional.of(reservation), Optional.of(runtime(reservation, changed))));
+    }
+
+    @Test
+    void committedSpawnRejectsMismatchedPickupTiming() {
+        WorldItemSpawnReservation reservation = spawnReservation();
+        WorldItemSnapshot item = snapshot(
+                reservation.itemId(), reservation.request().stack(), 0);
+        WorldItemRuntimeSnapshot changed = new WorldItemRuntimeSnapshot(
+                item,
+                reservation.request().source(),
+                reservation.request().tick(),
+                reservation.pickupAvailableTick() + 1);
+
+        assertThrows(IllegalArgumentException.class, () -> new WorldItemSpawnCommitResult(
+                WorldItemSpawnCommitResult.Status.COMMITTED,
+                Optional.of(reservation), Optional.of(changed)));
+    }
+
+    @Test
+    void committedSpawnRejectsMismatchedSourceIdentity() {
+        WorldItemSpawnReservation reservation = spawnReservation();
+        WorldItemSnapshot item = snapshot(
+                reservation.itemId(), reservation.request().stack(), 0);
+        WorldItemRuntimeSnapshot changed = new WorldItemRuntimeSnapshot(
+                item,
+                Optional.of(new EntityRef(999)),
+                reservation.request().tick(),
+                reservation.pickupAvailableTick());
+
+        assertThrows(IllegalArgumentException.class, () -> new WorldItemSpawnCommitResult(
+                WorldItemSpawnCommitResult.Status.COMMITTED,
+                Optional.of(reservation), Optional.of(changed)));
+    }
+
+    @Test
+    void auditRejectsMismatchedReservationIdentity() {
+        WorldItemSpawnReservation expected = spawnReservation();
+        WorldItemSpawnRequest unrelatedRequest = new WorldItemSpawnRequest(
+                expected.request().stack(), 10, 2, 3, 4, 5, 6,
+                expected.request().source(), expected.request().tick());
+        WorldItemSpawnReservation unrelated = new WorldItemSpawnReservation(
+                new WorldItemSpawnReservationId(99),
+                expected.itemId(),
+                unrelatedRequest,
+                expected.pickupAvailableTick());
+        WorldItemRuntimeSnapshot unrelatedRuntime = runtime(
+                unrelated,
+                new WorldItemSnapshot(
+                        unrelated.itemId(), unrelated.request().stack(),
+                        10, 2, 3, 4, 5, 6, 0));
+
+        assertThrows(IllegalArgumentException.class, () ->
+                new WorldItemSpawnReservationAuditSnapshot(
+                        expected,
+                        com.overlord.core.transaction.ReservationTerminalState.COMMITTED,
+                        Optional.of(unrelatedRuntime)));
+    }
+
+    @Test
+    void revisionExhaustedRequiresAStrictlyPartialReservation() {
+        WorldItemSnapshot item = snapshot(new WorldItemId(1), STONE, Long.MAX_VALUE);
+        WorldItemReservation full = new WorldItemReservation(
+                new WorldItemReservationId(1), item.id(), STONE);
+        WorldItemReservation tooLarge = new WorldItemReservation(
+                new WorldItemReservationId(2), item.id(),
+                new ItemStack(STONE.itemId(), 6));
+        ItemStack exactRemainder = new ItemStack(STONE.itemId(), 3);
+        ItemStack inconsistentRemainder = new ItemStack(STONE.itemId(), 1);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> new WorldItemReservationResult(
+                        WorldItemReservationResult.Status.REVISION_EXHAUSTED,
+                        Optional.of(full), Optional.of(item), Optional.empty()));
+        assertThrows(IllegalArgumentException.class,
+                () -> new WorldItemReservationResult(
+                        WorldItemReservationResult.Status.REVISION_EXHAUSTED,
+                        Optional.of(tooLarge), Optional.of(item), Optional.empty()));
+
+        WorldItemReservation partial = new WorldItemReservation(
+                new WorldItemReservationId(3), item.id(),
+                new ItemStack(STONE.itemId(), 2));
+        assertThrows(IllegalArgumentException.class,
+                () -> new WorldItemReservationResult(
+                        WorldItemReservationResult.Status.REVISION_EXHAUSTED,
+                        Optional.of(partial), Optional.of(item), Optional.empty()));
+        assertEquals(
+                WorldItemReservationResult.Status.REVISION_EXHAUSTED,
+                new WorldItemReservationResult(
+                        WorldItemReservationResult.Status.REVISION_EXHAUSTED,
+                        Optional.of(partial), Optional.of(item), Optional.of(exactRemainder)).status());
+        assertThrows(IllegalArgumentException.class,
+                () -> new WorldItemReservationResult(
+                        WorldItemReservationResult.Status.REVISION_EXHAUSTED,
+                        Optional.of(partial), Optional.of(item), Optional.of(inconsistentRemainder)));
+    }
+
+    @Test
+    void revisionExhaustedRejectsIdentityMismatchAndMissingPayloads() {
+        WorldItemSnapshot item = snapshot(new WorldItemId(1), STONE, Long.MAX_VALUE);
+        WorldItemReservation differentItem = new WorldItemReservation(
+                new WorldItemReservationId(1), new WorldItemId(2),
+                new ItemStack(STONE.itemId(), 2));
+        ItemStack other = new ItemStack(ResourceLocation.parse("gaia:dirt"), 2);
+        WorldItemReservation differentIdentity = new WorldItemReservation(
+                new WorldItemReservationId(2), item.id(), other);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> new WorldItemReservationResult(
+                        WorldItemReservationResult.Status.REVISION_EXHAUSTED,
+                        Optional.of(differentItem), Optional.of(item), Optional.empty()));
+        assertThrows(IllegalArgumentException.class,
+                () -> new WorldItemReservationResult(
+                        WorldItemReservationResult.Status.REVISION_EXHAUSTED,
+                        Optional.of(differentIdentity), Optional.of(item), Optional.empty()));
+        assertThrows(IllegalArgumentException.class,
+                () -> new WorldItemReservationResult(
+                        WorldItemReservationResult.Status.REVISION_EXHAUSTED,
+                        Optional.empty(), Optional.of(item), Optional.empty()));
+        assertThrows(IllegalArgumentException.class,
+                () -> new WorldItemReservationResult(
+                        WorldItemReservationResult.Status.REVISION_EXHAUSTED,
+                        Optional.of(differentIdentity), Optional.empty(), Optional.empty()));
+        assertThrows(IllegalArgumentException.class,
+                () -> new WorldItemReservation(
+                        new WorldItemReservationId(3), item.id(),
+                        new ItemStack(STONE.itemId(), 0)));
+    }
+
+    @Test
+    void revisionExhaustedRejectsARevisionThatCanStillAdvance() {
+        WorldItemSnapshot item = snapshot(new WorldItemId(1), STONE, Long.MAX_VALUE - 1);
+        WorldItemReservation partial = new WorldItemReservation(
+                new WorldItemReservationId(1), item.id(),
+                new ItemStack(STONE.itemId(), 2));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> new WorldItemReservationResult(
+                        WorldItemReservationResult.Status.REVISION_EXHAUSTED,
+                        Optional.of(partial), Optional.of(item), Optional.empty()));
+    }
+
+    @Test
     void fakeSpawnsStableIdWithTheCanonicalStack() {
         FakeWorldItemService service = new FakeWorldItemService();
 
@@ -320,7 +551,12 @@ class WorldItemContractTest {
                 WorldItemSpawnResult.class,
                 WorldItemReservation.class,
                 WorldItemReservationResult.class,
+                WorldItemRuntimeSnapshot.class,
                 WorldItemSnapshot.class,
+                WorldItemSpawnCommitResult.class,
+                WorldItemSpawnIdentity.class,
+                WorldItemSpawnReservation.class,
+                WorldItemSpawnReservationAuditSnapshot.class,
                 WorldItemService.class
         };
 
@@ -389,6 +625,22 @@ class WorldItemContractTest {
     private static WorldItemSpawnRequest request(ItemStack stack) {
         return new WorldItemSpawnRequest(stack, 1, 2, 3, 4, 5, 6,
                 Optional.of(new EntityRef(2)), 7);
+    }
+
+    private static WorldItemSpawnReservation spawnReservation() {
+        return new WorldItemSpawnReservation(
+                new WorldItemSpawnReservationId(3L),
+                new WorldItemId(5L),
+                request(new ItemStack(STONE.itemId(), 1)));
+    }
+
+    private static WorldItemRuntimeSnapshot runtime(
+            WorldItemSpawnReservation reservation, WorldItemSnapshot item) {
+        return new WorldItemRuntimeSnapshot(
+                item,
+                reservation.request().source(),
+                reservation.request().tick(),
+                reservation.pickupAvailableTick());
     }
 
     private static WorldItemSnapshot snapshot(

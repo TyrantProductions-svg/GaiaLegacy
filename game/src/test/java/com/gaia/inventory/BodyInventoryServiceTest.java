@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.gaia.blocks.ItemFormDefinition;
 import com.overlord.assets.ResourceLocation;
+import com.overlord.core.transaction.ReservationTerminalState;
 import com.overlord.event.Event;
 import com.overlord.interaction.api.EntityRef;
 import com.overlord.inventory.api.ActiveBodySlotChanged;
@@ -520,6 +521,34 @@ class BodyInventoryServiceTest {
                 service.commit(mouth.reservation().orElseThrow().id()).status());
         assertEquals(2, service.totalCount(OWNER, HEAVY));
         assertEquals(0, service.totalCount(OWNER, LEAVES));
+    }
+
+    @Test
+    void reservationAuditIsReadOnlyAcrossPendingCommitRollbackAndUnknown() {
+        BodyInventoryService service = service(defaultForms(), new ArrayList<>());
+        InventoryReserveResult pending = service.reserve(new InventoryReservationRequest(
+                OWNER, BodySlot.LEFT_HAND, InventoryReservationOperation.INSERT,
+                new ItemStack(DIRT, 2)));
+        var pendingReservation = pending.reservation().orElseThrow();
+
+        assertEquals(ReservationTerminalState.PENDING,
+                service.reservationAudit(pendingReservation.id()).orElseThrow().state());
+        assertEquals(0, service.totalCount(OWNER, DIRT));
+
+        service.commit(pendingReservation.id());
+        assertEquals(ReservationTerminalState.COMMITTED,
+                service.reservationAudit(pendingReservation.id()).orElseThrow().state());
+        assertEquals(2, service.totalCount(OWNER, DIRT));
+
+        InventoryReserveResult rolledBack = service.reserve(new InventoryReservationRequest(
+                OWNER, BodySlot.RIGHT_HAND, InventoryReservationOperation.INSERT,
+                new ItemStack(STONE, 1)));
+        service.rollback(rolledBack.reservation().orElseThrow().id());
+        assertEquals(ReservationTerminalState.ROLLED_BACK,
+                service.reservationAudit(rolledBack.reservation().orElseThrow().id())
+                        .orElseThrow().state());
+        assertEquals(0, service.totalCount(OWNER, STONE));
+        assertTrue(service.reservationAudit(new InventoryReservationId(999)).isEmpty());
     }
 
     private static BodyInventoryService service(

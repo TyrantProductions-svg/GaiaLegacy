@@ -19,11 +19,13 @@ import com.overlord.renderer.metrics.RenderMetrics;
 import com.overlord.renderer.material.Material;
 import com.overlord.renderer.pass.BlockDamageOverlayPass;
 import com.overlord.renderer.pass.DebugRenderPass;
+import com.overlord.renderer.pass.FirstPersonItemVisualPass;
 import com.overlord.renderer.pass.ParticleRenderPass;
 import com.overlord.renderer.pass.RenderContext;
 import com.overlord.renderer.pass.RenderPass;
 import com.overlord.renderer.pass.RenderPipeline;
 import com.overlord.renderer.pass.SkyRenderPass;
+import com.overlord.renderer.pass.TransientBlockVisualPass;
 import com.overlord.renderer.pass.WorldItemVisualPass;
 import com.overlord.renderer.pass.WorldRenderPass;
 import com.overlord.renderer.pass.UiRenderPass;
@@ -32,6 +34,7 @@ import com.overlord.renderer.shader.ShaderProgram;
 import com.overlord.renderer.shader.ShaderResourceLoader;
 import com.overlord.renderer.shader.ShaderSourceSet;
 import com.overlord.renderer.shader.ShaderBinding;
+import com.overlord.renderer.shader.WorldShaderUniforms;
 import com.overlord.renderer.state.OpenGlRenderStateBackend;
 import com.overlord.renderer.texture.TextureImage;
 import com.overlord.renderer.visual.RenderVisualSettings;
@@ -142,17 +145,7 @@ public final class Renderer implements ChunkRenderBackend {
                     new ShaderProgram(
                             mainThreadGuard,
                             worldShaderSources,
-                            List.of(
-                                    "projection",
-                                    "view",
-                                    "model",
-                                    "textureAtlas",
-                                    "sunDirection",
-                                    "ambientStrength",
-                                    "directionalStrength",
-                                    "fogColor",
-                                    "fogStart",
-                                    "fogEnd"));
+                            WorldShaderUniforms.requiredUniforms());
             ShaderSourceSet skyShaderSources =
                     new ShaderResourceLoader(assetManager)
                             .load(
@@ -201,19 +194,33 @@ public final class Renderer implements ChunkRenderBackend {
                             initializedFeedbackResources.worldItemShader(),
                             initializedTexture,
                             initializedFeedbackResources.unitCube());
+            TransientBlockVisualPass transientBlockPass =
+                    new TransientBlockVisualPass(
+                            stateBackend,
+                            initializedFeedbackResources.worldItemShader(),
+                            initializedTexture,
+                            initializedFeedbackResources.unitCube());
             ParticleRenderPass particlePass =
                     new ParticleRenderPass(
                             stateBackend,
                             initializedFeedbackResources.particleShader(),
                             initializedTexture,
                             initializedFeedbackResources.particleBatch());
+            FirstPersonItemVisualPass firstPersonItemPass =
+                    new FirstPersonItemVisualPass(
+                            stateBackend,
+                            initializedFeedbackResources.worldItemShader(),
+                            initializedTexture,
+                            initializedFeedbackResources.unitCube());
             DebugRenderPass debugPass = new DebugRenderPass();
             List<RenderPass> initializedBasePasses = List.of(
                     skyPass,
                     worldPass,
                     damagePass,
+                    transientBlockPass,
                     worldItemPass,
                     particlePass,
+                    firstPersonItemPass,
                     debugPass);
             RenderPipeline initializedPipeline = new RenderPipeline(initializedBasePasses);
             RenderQueue initializedQueue = new RenderQueue();
@@ -338,6 +345,8 @@ public final class Renderer implements ChunkRenderBackend {
                     initializedBasePasses.get(3),
                     initializedBasePasses.get(4),
                     initializedBasePasses.get(5),
+                    initializedBasePasses.get(6),
+                    initializedBasePasses.get(7),
                     created.pass());
             renderPipeline = pipeline;
             installedUi = created;
@@ -388,11 +397,15 @@ public final class Renderer implements ChunkRenderBackend {
                 requireInitialized(
                         projectionMatrix,
                         "projection matrix");
-        Matrix4f frameView =
+        Matrix4f canonicalView =
                 requireInitialized(camera, "camera")
                         .getViewMatrix();
+        Matrix4f frameView = applyFirstPersonPresentation(
+                canonicalView,
+                frameInput.feedback().movementVisual(),
+                frameInput.feedback().cameraImpulse());
         Frustum currentFrustum =
-                Frustum.from(frameProjection, frameView);
+                Frustum.from(frameProjection, canonicalView);
         int visibleChunks = 0;
         for (ChunkRenderObject chunk : frameInput.chunks()) {
             if (currentFrustum.intersects(chunk.worldBounds())) {
@@ -494,6 +507,60 @@ public final class Renderer implements ChunkRenderBackend {
                         Objects.requireNonNull(particles, "particles"),
                         Objects.requireNonNull(debug, "debug"),
                         Objects.requireNonNull(ui, "ui")));
+    }
+
+    static RenderPipeline createPipeline(
+            RenderPass sky,
+            RenderPass world,
+            RenderPass blockDamage,
+            RenderPass transientBlocks,
+            RenderPass worldItems,
+            RenderPass particles,
+            RenderPass firstPersonItem,
+            RenderPass debug,
+            RenderPass ui) {
+        return new RenderPipeline(
+                List.of(
+                        Objects.requireNonNull(sky, "sky"),
+                        Objects.requireNonNull(world, "world"),
+                        Objects.requireNonNull(blockDamage, "blockDamage"),
+                        Objects.requireNonNull(transientBlocks, "transientBlocks"),
+                        Objects.requireNonNull(worldItems, "worldItems"),
+                        Objects.requireNonNull(particles, "particles"),
+                        Objects.requireNonNull(firstPersonItem, "firstPersonItem"),
+                        Objects.requireNonNull(debug, "debug"),
+                        Objects.requireNonNull(ui, "ui")));
+    }
+
+    static Matrix4f applyVisualCameraImpulse(
+            org.joml.Matrix4fc canonicalView,
+            com.overlord.renderer.feedback.CameraImpulseVisual impulse) {
+        Objects.requireNonNull(canonicalView, "canonicalView");
+        Objects.requireNonNull(impulse, "impulse");
+        return new Matrix4f(canonicalView)
+                .rotateX((float) Math.toRadians(impulse.pitchDegrees()))
+                .rotateY((float) Math.toRadians(impulse.yawDegrees()))
+                .translate(0.0f, impulse.translationY(), 0.0f);
+    }
+
+    /**
+     * Composes view-only movement before action feedback without mutating the
+     * authoritative camera matrix used for culling and gameplay targeting.
+     */
+    static Matrix4f applyFirstPersonPresentation(
+            org.joml.Matrix4fc canonicalView,
+            com.overlord.renderer.feedback.FirstPersonMovementVisual movement,
+            com.overlord.renderer.feedback.CameraImpulseVisual actionImpulse) {
+        Objects.requireNonNull(canonicalView, "canonicalView");
+        Objects.requireNonNull(movement, "movement");
+        Objects.requireNonNull(actionImpulse, "actionImpulse");
+        Matrix4f movementView = new Matrix4f(canonicalView)
+                .translate(
+                        -movement.translationX(),
+                        -movement.translationY(),
+                        0.0f)
+                .rotateZ((float) Math.toRadians(-movement.rollDegrees()));
+        return applyVisualCameraImpulse(movementView, actionImpulse);
     }
 
     private static Matrix4f createProjection(int width, int height) {
@@ -770,9 +837,7 @@ public final class Renderer implements ChunkRenderBackend {
                         "world-items",
                         assets.worldItemVertexShader(),
                         assets.worldItemFragmentShader(),
-                        List.of(
-                                "projection", "view", "model", "blockAtlas",
-                                "uMin", "uMax", "vMin", "vMax"));
+                        worldItemUniforms());
                 particleShader = factory.createShader(
                         "particles",
                         assets.particleVertexShader(),
@@ -799,6 +864,18 @@ public final class Renderer implements ChunkRenderBackend {
                 suppress(damageShader, failure);
                 throw failure;
             }
+        }
+
+        private static List<String> worldItemUniforms() {
+            List<String> uniforms = new java.util.ArrayList<>(
+                    List.of(
+                            "projection", "view", "model", "blockAtlas", "visualAlpha"));
+            for (String component : List.of("uMin", "uMax", "vMin", "vMax")) {
+                for (int face = 0; face < 6; face++) {
+                    uniforms.add(component + "[" + face + "]");
+                }
+            }
+            return List.copyOf(uniforms);
         }
 
         ShaderBinding damageShader() {

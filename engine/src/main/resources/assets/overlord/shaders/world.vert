@@ -12,6 +12,7 @@ out vec3 surfaceNormal;
 out float faceLight;
 out float ambientOcclusion;
 out float viewDistance;
+out vec3 fragmentWorldPosition;
 void main() {
     vec4 worldPosition = model * vec4(aPosition, 1.0);
     vec4 viewPosition = view * worldPosition;
@@ -22,4 +23,5 @@ void main() {
     faceLight = vertexLight;
     ambientOcclusion = aAmbientOcclusion;
     viewDistance = length(viewPosition.xyz);
+    fragmentWorldPosition = worldPosition.xyz;
 }

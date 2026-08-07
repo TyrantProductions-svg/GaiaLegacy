@@ -8,46 +8,178 @@ import com.overlord.interaction.api.BlockFace;
 import com.overlord.interaction.api.BlockHitResult;
 import com.overlord.interaction.api.InteractionMode;
 import com.overlord.renderer.feedback.BlockDamageVisual;
+import com.overlord.renderer.feedback.BlockVisualCoordinate;
 import com.overlord.renderer.feedback.FeedbackVisibility;
+import com.overlord.renderer.feedback.FirstPersonItemVisual;
 import com.overlord.renderer.feedback.InteractionFeedbackFrame;
+import com.overlord.renderer.feedback.WorldItemFaceRegions;
 import com.overlord.renderer.particle.ParticleCategory;
 import com.overlord.renderer.particle.ParticleEmission;
 import com.overlord.renderer.particle.ParticleSystem;
 import com.overlord.renderer.texture.TextureRegion;
 import com.overlord.worlditem.api.WorldItemSnapshot;
+import com.gaia.worlditem.WorldItemPresentationSnapshot;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
 
 /** Owns CPU-only transient interaction presentation state. */
-public final class InteractionFeedbackCoordinator {
+public final class InteractionFeedbackCoordinator
+        implements CommittedGameplayFeedback, AutoCloseable {
     public static final int CONTINUOUS_EMISSION_INTERVAL_STEPS = 10;
 
     private final CommittedBreakVisualAdapter committedBreaks;
     private final ParticleSystem particles;
     private final WorldItemVisualTracker worldItems;
     private final Function<ResourceLocation, TextureRegion> regionResolver;
+    private final Function<ResourceLocation, WorldItemFaceRegions> faceResolver;
+    private final FirstPersonActionAnimator firstPersonActions;
+    private final FirstPersonMovementPresentation movementPresentation =
+            new FirstPersonMovementPresentation();
+    private final CameraImpulseController cameraImpulses;
+    private final TransientBlockVisualSystem transientBlocks;
+    private final GameplayParticleFeedback committedParticles;
 
     private TargetKey cadenceTarget;
     private int validBreakingSteps;
     private double cadenceProgress;
     private boolean interactionEnabled;
     private boolean transientSuppressed;
+    private boolean closed;
 
     public InteractionFeedbackCoordinator(
             CommittedBreakVisualAdapter committedBreaks,
             ParticleSystem particles,
             WorldItemVisualTracker worldItems,
             Function<ResourceLocation, TextureRegion> regionResolver) {
+        this(
+                committedBreaks,
+                particles,
+                worldItems,
+                regionResolver,
+                item -> WorldItemFaceRegions.uniform(regionResolver.apply(item)),
+                new FirstPersonActionAnimator(),
+                new CameraImpulseController(),
+                new TransientBlockVisualSystem());
+    }
+
+    public InteractionFeedbackCoordinator(
+            CommittedBreakVisualAdapter committedBreaks,
+            ParticleSystem particles,
+            WorldItemVisualTracker worldItems,
+            Function<ResourceLocation, TextureRegion> regionResolver,
+            Function<ResourceLocation, WorldItemFaceRegions> faceResolver,
+            FirstPersonActionAnimator firstPersonActions,
+            CameraImpulseController cameraImpulses,
+            TransientBlockVisualSystem transientBlocks) {
         this.committedBreaks = Objects.requireNonNull(committedBreaks, "committedBreaks");
         this.particles = Objects.requireNonNull(particles, "particles");
         this.worldItems = Objects.requireNonNull(worldItems, "worldItems");
         this.regionResolver = Objects.requireNonNull(regionResolver, "regionResolver");
+        this.faceResolver = Objects.requireNonNull(faceResolver, "faceResolver");
+        this.firstPersonActions = Objects.requireNonNull(
+                firstPersonActions, "firstPersonActions");
+        this.cameraImpulses = Objects.requireNonNull(cameraImpulses, "cameraImpulses");
+        this.transientBlocks = Objects.requireNonNull(transientBlocks, "transientBlocks");
+        committedParticles = new GameplayParticleFeedback(particles);
     }
 
     public void onBlockChanged(BlockChangedEvent event) {
+        if (closed) {
+            return;
+        }
         committedBreaks.onBlockChanged(Objects.requireNonNull(event, "event"));
+    }
+
+    @Override
+    public void onPlacementCommitted(
+            BlockHitResult target,
+            ResourceLocation placedItem,
+            long eventIdentity) {
+        Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(placedItem, "placedItem");
+        if (closed) {
+            return;
+        }
+        safely(() -> {
+            WorldItemFaceRegions faces = Objects.requireNonNull(
+                    faceResolver.apply(placedItem), "placed item faces");
+            transientBlocks.registerPlacement(
+                    new BlockVisualCoordinate(
+                            target.adjacentX(), target.adjacentY(), target.adjacentZ()),
+                    faces,
+                    eventIdentity);
+            firstPersonActions.triggerPlacement(eventIdentity);
+            cameraImpulses.triggerPlacement(eventIdentity);
+            committedParticles.onPlacement(target, faces, eventIdentity);
+        });
+    }
+
+    @Override
+    public void onBreakCommitted(
+            BlockHitResult target,
+            ResourceLocation brokenItem,
+            long eventIdentity) {
+        Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(brokenItem, "brokenItem");
+        if (closed) {
+            return;
+        }
+        safely(() -> {
+            WorldItemFaceRegions faces = Objects.requireNonNull(
+                    faceResolver.apply(brokenItem), "broken item faces");
+            transientBlocks.registerBreak(
+                    new BlockVisualCoordinate(
+                            target.blockX(), target.blockY(), target.blockZ()),
+                    faces,
+                    eventIdentity);
+            firstPersonActions.triggerBreak(eventIdentity);
+            cameraImpulses.triggerBreak(eventIdentity);
+            committedParticles.onBreak(target, faces, eventIdentity);
+        });
+    }
+
+    @Override
+    public void onDropCommitted(ResourceLocation item, long eventIdentity) {
+        Objects.requireNonNull(item, "item");
+        if (closed) {
+            return;
+        }
+        safely(() -> firstPersonActions.triggerDrop(eventIdentity));
+    }
+
+    @Override
+    public void onPickupCommitted(com.gaia.worlditem.WorldItemPickupReceipt receipt) {
+        Objects.requireNonNull(receipt, "receipt");
+        if (closed) {
+            return;
+        }
+        safely(() -> committedParticles.onPickup(
+                receipt,
+                Objects.requireNonNull(
+                        faceResolver.apply(receipt.picked().itemId()), "pickup item faces")));
+    }
+
+    public void renderUpdate(double frameDeltaSeconds) {
+        if (closed) {
+            return;
+        }
+        firstPersonActions.update(frameDeltaSeconds);
+        cameraImpulses.update(frameDeltaSeconds);
+        if (transientBlocks.isOpen()) {
+            transientBlocks.update(frameDeltaSeconds);
+        }
+    }
+
+    public void fixedMovementUpdate(
+            double fixedDeltaSeconds,
+            FirstPersonMovementState state) {
+        Objects.requireNonNull(state, "state");
+        if (closed) {
+            return;
+        }
+        movementPresentation.fixedUpdate(fixedDeltaSeconds, state);
     }
 
     public void fixedUpdate(
@@ -57,6 +189,9 @@ public final class InteractionFeedbackCoordinator {
         Objects.requireNonNull(view, "view");
         if (tick < 0) {
             throw new IllegalArgumentException("tick must be non-negative");
+        }
+        if (closed) {
+            return;
         }
         particles.fixedUpdate(ParticleSystem.FIXED_STEP_SECONDS);
         this.interactionEnabled = interactionEnabled;
@@ -105,7 +240,41 @@ public final class InteractionFeedbackCoordinator {
         Objects.requireNonNull(view, "view");
         Objects.requireNonNull(worldItemSnapshots, "worldItemSnapshots");
         Objects.requireNonNull(visibility, "visibility");
+        if (closed) {
+            return closedFrame(visibility);
+        }
 
+        return snapshotFrame(
+                view,
+                worldItems.reconcile(List.copyOf(worldItemSnapshots)),
+                1.0f,
+                visibility);
+    }
+
+    public InteractionFeedbackFrame snapshotPhysical(
+            BlockInteractionViewModel view,
+            List<WorldItemPresentationSnapshot> worldItemSnapshots,
+            float interpolationAlpha,
+            FeedbackVisibility visibility) {
+        Objects.requireNonNull(view, "view");
+        Objects.requireNonNull(worldItemSnapshots, "worldItemSnapshots");
+        Objects.requireNonNull(visibility, "visibility");
+        if (closed) {
+            return closedFrame(visibility);
+        }
+        return snapshotFrame(
+                view,
+                worldItems.reconcilePhysical(
+                        List.copyOf(worldItemSnapshots), interpolationAlpha),
+                interpolationAlpha,
+                visibility);
+    }
+
+    private InteractionFeedbackFrame snapshotFrame(
+            BlockInteractionViewModel view,
+            List<com.overlord.renderer.feedback.WorldItemVisual> worldItemVisuals,
+            float interpolationAlpha,
+            FeedbackVisibility visibility) {
         Optional<BlockDamageVisual> damage = Optional.empty();
         if (visibility.showGameplayFeedback()
                 && interactionEnabled
@@ -118,22 +287,96 @@ public final class InteractionFeedbackCoordinator {
         return new InteractionFeedbackFrame(
                 visibility,
                 damage,
-                worldItems.reconcile(List.copyOf(worldItemSnapshots)),
-                particles.snapshot());
+                worldItemVisuals,
+                particles.snapshot(),
+                heldItem(view, visibility),
+                visibility.showGameplayFeedback()
+                        ? movementPresentation.snapshot(interpolationAlpha)
+                        : com.overlord.renderer.feedback.FirstPersonMovementVisual.identity(),
+                visibility.showGameplayFeedback()
+                        ? cameraImpulses.snapshot()
+                        : com.overlord.renderer.feedback.CameraImpulseVisual.identity(),
+                visibility.showGameplayFeedback() && transientBlocks.isOpen()
+                        ? transientBlocks.snapshot()
+                        : List.of(),
+                visibility.showGameplayFeedback() && transientBlocks.isOpen()
+                        ? transientBlocks.excludedCells()
+                        : List.of());
+    }
+
+    private static InteractionFeedbackFrame closedFrame(FeedbackVisibility visibility) {
+        return new InteractionFeedbackFrame(
+                visibility,
+                Optional.empty(),
+                List.of(),
+                new com.overlord.renderer.feedback.ParticleRenderBatch(List.of()),
+                Optional.empty(),
+                com.overlord.renderer.feedback.FirstPersonMovementVisual.identity(),
+                com.overlord.renderer.feedback.CameraImpulseVisual.identity(),
+                List.of(),
+                List.of());
     }
 
     public void clearTransient() {
         resetCadence();
         interactionEnabled = false;
         transientSuppressed = true;
+        firstPersonActions.reset();
+        movementPresentation.reset();
+        cameraImpulses.reset();
+        if (transientBlocks.isOpen()) {
+            transientBlocks.clear();
+        }
     }
 
     public void clearAll() {
-        particles.clear();
         worldItems.clear();
+        particles.clear();
         resetCadence();
         interactionEnabled = false;
         transientSuppressed = false;
+        firstPersonActions.reset();
+        movementPresentation.reset();
+        cameraImpulses.reset();
+        if (transientBlocks.isOpen()) {
+            transientBlocks.clear();
+        }
+    }
+
+    @Override
+    public void close() {
+        if (closed) {
+            return;
+        }
+        clearAll();
+        firstPersonActions.close();
+        movementPresentation.close();
+        cameraImpulses.close();
+        transientBlocks.close();
+        closed = true;
+    }
+
+    private Optional<FirstPersonItemVisual> heldItem(
+            BlockInteractionViewModel view,
+            FeedbackVisibility visibility) {
+        if (!visibility.showGameplayFeedback()) {
+            return Optional.empty();
+        }
+        if (closed) {
+            return Optional.empty();
+        }
+        return view.activeItem().map(item -> new FirstPersonItemVisual(
+                Objects.requireNonNull(
+                        faceResolver.apply(item.itemId()), "held item faces"),
+                firstPersonActions.snapshot()));
+    }
+
+    private static void safely(Runnable feedback) {
+        try {
+            Objects.requireNonNull(feedback, "feedback").run();
+        } catch (RuntimeException failure) {
+            System.err.println("[InteractionFeedback] committed feedback failure=" + failure);
+        }
     }
 
     private static boolean isActiveSurvivalBreak(BlockInteractionViewModel view) {

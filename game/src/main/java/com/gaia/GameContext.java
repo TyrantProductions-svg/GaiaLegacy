@@ -4,11 +4,15 @@ import com.gaia.inventory.BodyInventoryInputController;
 import com.gaia.inventory.BodyInventoryService;
 import com.gaia.inventory.InventoryDebugCommands;
 import com.gaia.interaction.BlockInteractionController;
+import com.gaia.interaction.GameModeManager;
 import com.gaia.interaction.feedback.InteractionBlockState;
 import com.gaia.interaction.feedback.InteractionFeedbackCoordinator;
 import com.gaia.ui.HudFrameCoordinator;
 import com.gaia.world.WorldLoadResult;
 import com.gaia.world.WorldLoader;
+import com.gaia.worlditem.PhysicalWorldItemSystem;
+import com.gaia.worlditem.WorldInteractionInputRouter;
+import com.gaia.worlditem.WorldItemPickupController;
 import com.overlord.core.Engine;
 import com.overlord.core.PlayerManager;
 import com.overlord.core.input.InputManager;
@@ -43,8 +47,12 @@ public record GameContext(
         BodyInventoryInputController inventoryInput,
         InventoryDebugCommands inventoryDebugCommands,
         boolean inventoryDebugShortcuts,
+        GameModeManager gameModes,
+        WorldInteractionInputRouter worldInteractionInput,
+        WorldItemPickupController worldItemPickup,
         BlockInteractionController blockInteraction,
         LogicalWorldItemService worldItems,
+        PhysicalWorldItemSystem physicalWorldItems,
         InteractionFeedbackCoordinator interactionFeedback,
         InteractionBlockState interactionBlockState,
         HudFrameCoordinator hudFrames,
@@ -71,9 +79,15 @@ public record GameContext(
         inventoryInput = Objects.requireNonNull(inventoryInput, "inventoryInput");
         inventoryDebugCommands = Objects.requireNonNull(
                 inventoryDebugCommands, "inventoryDebugCommands");
+        gameModes = Objects.requireNonNull(gameModes, "gameModes");
+        worldInteractionInput = Objects.requireNonNull(
+                worldInteractionInput, "worldInteractionInput");
+        worldItemPickup = Objects.requireNonNull(worldItemPickup, "worldItemPickup");
         blockInteraction = Objects.requireNonNull(
                 blockInteraction, "blockInteraction");
         worldItems = Objects.requireNonNull(worldItems, "worldItems");
+        physicalWorldItems = Objects.requireNonNull(
+                physicalWorldItems, "physicalWorldItems");
         interactionFeedback = Objects.requireNonNull(interactionFeedback, "interactionFeedback");
         interactionBlockState = Objects.requireNonNull(interactionBlockState, "interactionBlockState");
         hudFrames = Objects.requireNonNull(hudFrames, "hudFrames");

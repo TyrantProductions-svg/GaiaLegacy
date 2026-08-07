@@ -58,6 +58,10 @@ public class GameConfig {
         public static final int KEY_RIGHT = org.lwjgl.glfw.GLFW.GLFW_KEY_D;
         public static final int KEY_JUMP = org.lwjgl.glfw.GLFW.GLFW_KEY_SPACE;
         public static final int KEY_DESCEND = org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT;
+        public static final int KEY_PICKUP_MODIFIER_LEFT =
+                org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT;
+        public static final int KEY_PICKUP_MODIFIER_RIGHT =
+                org.lwjgl.glfw.GLFW.GLFW_KEY_RIGHT_SHIFT;
         public static final int KEY_CLOSE = org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE;
         public static final int KEY_CURSOR_CAPTURE = org.lwjgl.glfw.GLFW.GLFW_KEY_F1;
         public static final int KEY_TOGGLE_HUD = org.lwjgl.glfw.GLFW.GLFW_KEY_F2;
@@ -66,6 +70,10 @@ public class GameConfig {
         public static final int KEY_SELECT_RIGHT = org.lwjgl.glfw.GLFW.GLFW_KEY_2;
         public static final int KEY_SELECT_MOUTH = org.lwjgl.glfw.GLFW.GLFW_KEY_3;
         public static final int KEY_DROP = org.lwjgl.glfw.GLFW.GLFW_KEY_Q;
+        public static final int KEY_DROP_ALL_LEFT =
+                org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_CONTROL;
+        public static final int KEY_DROP_ALL_RIGHT =
+                org.lwjgl.glfw.GLFW.GLFW_KEY_RIGHT_CONTROL;
         public static final int KEY_TOGGLE_GAME_MODE = org.lwjgl.glfw.GLFW.GLFW_KEY_F4;
         public static final int KEY_DEBUG_INVENTORY_SEED = org.lwjgl.glfw.GLFW.GLFW_KEY_F5;
         public static final int KEY_DEBUG_INVENTORY_CLEAR = org.lwjgl.glfw.GLFW.GLFW_KEY_F6;
@@ -77,9 +85,10 @@ public class GameConfig {
 
     public static final class Interaction {
         public static final float REACH = 6.0f;
+        public static final float WORLD_ITEM_PICKUP_REACH = 3.5f;
         public static final double BASE_BREAK_SPEED = 1.0;
         public static final int MAX_LOGICAL_WORLD_ITEMS = 1024;
-        public static final long WORLD_ITEM_PICKUP_DELAY_TICKS = 30;
-        public static final float DROP_SPEED = 3.0f;
+        public static final long WORLD_ITEM_PICKUP_DELAY_TICKS = 20;
+        public static final float WORLD_ITEM_EDGE_LENGTH = 0.50f;
     }
 }

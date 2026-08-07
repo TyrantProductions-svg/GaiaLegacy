@@ -3,6 +3,8 @@ package com.gaia.interaction;
 import com.gaia.blocks.BlockDefinition;
 import com.gaia.blocks.BlockRegistry;
 import com.gaia.inventory.BodyInventoryService;
+import com.gaia.interaction.feedback.CommittedGameplayFeedback;
+import com.overlord.assets.ResourceLocation;
 import com.overlord.core.input.InputSnapshot;
 import com.overlord.config.GameConfig;
 import com.overlord.interaction.api.BlockFace;
@@ -35,6 +37,7 @@ public final class BlockInteractionController {
     private final BlockBreakTransaction breakTransaction;
     private final BlockPlacementTransaction placementTransaction;
     private final double baseBreakSpeed;
+    private final CommittedGameplayFeedback committedFeedback;
     private Optional<InteractionFailureReason> failure = Optional.empty();
     private BlockInteractionSnapshot view;
     private boolean primarySuppressedUntilRelease;
@@ -51,6 +54,32 @@ public final class BlockInteractionController {
             BlockBreakTransaction breakTransaction,
             BlockPlacementTransaction placementTransaction,
             double baseBreakSpeed) {
+        this(
+                modes,
+                targeting,
+                chunks,
+                blocks,
+                inventory,
+                owner,
+                creativeSelection,
+                breakTransaction,
+                placementTransaction,
+                baseBreakSpeed,
+                CommittedGameplayFeedback.NONE);
+    }
+
+    public BlockInteractionController(
+            GameModeManager modes,
+            BlockTargetProvider targeting,
+            ChunkRepository chunks,
+            BlockRegistry blocks,
+            BodyInventoryService inventory,
+            EntityRef owner,
+            CreativeSelection creativeSelection,
+            BlockBreakTransaction breakTransaction,
+            BlockPlacementTransaction placementTransaction,
+            double baseBreakSpeed,
+            CommittedGameplayFeedback committedFeedback) {
         this.modes = Objects.requireNonNull(modes, "modes");
         modeInput = new GameModeInputController(modes);
         this.targeting = Objects.requireNonNull(targeting, "targeting");
@@ -65,6 +94,8 @@ public final class BlockInteractionController {
                 breakTransaction, "breakTransaction");
         this.placementTransaction = Objects.requireNonNull(
                 placementTransaction, "placementTransaction");
+        this.committedFeedback = Objects.requireNonNull(
+                committedFeedback, "committedFeedback");
         if (!Double.isFinite(baseBreakSpeed) || baseBreakSpeed <= 0) {
             throw new IllegalArgumentException(
                     "baseBreakSpeed must be finite and positive");
@@ -199,6 +230,14 @@ public final class BlockInteractionController {
                         : Optional.empty();
         BlockBreakResult result = breakTransaction.execute(
                 session.target(), drop, activeSlot, tick, timestampNanos);
+        if (isApplied(result.status())) {
+            ResourceLocation visualItem = block.item() == null
+                    ? block.name()
+                    : block.item().id();
+            committedFeedback.onBreakCommitted(
+                    session.target(), visualItem,
+                    eventIdentity(session.target(), tick, timestampNanos));
+        }
         failure = switch (result.status()) {
             case APPLIED -> Optional.empty();
             case APPLIED_WITH_NOTIFICATION_FAILURE ->
@@ -219,13 +258,20 @@ public final class BlockInteractionController {
             failure = Optional.of(BlockInteractionFailures.of("no_target"));
             return;
         }
+        Optional<ItemStack> selected = activeItem();
         BlockPlacementResult result = placementTransaction.execute(
                 target.orElseThrow(),
-                activeItem(),
+                selected,
                 modes.mode(),
                 activeSlot,
                 tick,
                 timestampNanos);
+        if (isApplied(result.status())) {
+            committedFeedback.onPlacementCommitted(
+                    target.orElseThrow(),
+                    selected.orElseThrow().itemId(),
+                    eventIdentity(target.orElseThrow(), tick, timestampNanos));
+        }
         failure = switch (result.status()) {
             case APPLIED -> Optional.empty();
             case APPLIED_WITH_NOTIFICATION_FAILURE ->
@@ -238,6 +284,24 @@ public final class BlockInteractionController {
             case INVENTORY_REJECTED -> Optional.of(BlockInteractionFailures.of("inventory_rejected"));
             case MUTATION_REJECTED -> Optional.of(BlockInteractionFailures.of("mutation_rejected"));
         };
+    }
+
+    private static boolean isApplied(BlockBreakResult.Status status) {
+        return status == BlockBreakResult.Status.APPLIED
+                || status == BlockBreakResult.Status.APPLIED_WITH_NOTIFICATION_FAILURE;
+    }
+
+    private static boolean isApplied(BlockPlacementResult.Status status) {
+        return status == BlockPlacementResult.Status.APPLIED
+                || status == BlockPlacementResult.Status.APPLIED_WITH_NOTIFICATION_FAILURE;
+    }
+
+    private static long eventIdentity(
+            BlockHitResult target, long tick, long timestampNanos) {
+        long coordinates = ((long) target.blockX() * 0x9E3779B97F4A7C15L)
+                ^ ((long) target.blockY() * 0xC2B2AE3D27D4EB4FL)
+                ^ ((long) target.blockZ() * 0x165667B19E3779F9L);
+        return coordinates ^ Long.rotateLeft(tick, 17) ^ timestampNanos;
     }
 
     private BodySlot activeSlot() {

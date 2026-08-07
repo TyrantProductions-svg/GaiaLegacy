@@ -9,6 +9,11 @@ public interface RenderStateBackend {
 
     void clearColorAndDepth();
 
+    default void clearDepth() {
+        throw new UnsupportedOperationException(
+                "depth-only clear operation is not supported");
+    }
+
     default void setViewport(Viewport viewport) {
         throw new UnsupportedOperationException(
                 "viewport operation is not supported");

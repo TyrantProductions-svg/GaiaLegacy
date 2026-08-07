@@ -21,6 +21,7 @@ import com.gaia.interaction.GameModeManager;
 import com.gaia.interaction.PlayerBlockTargeting;
 import com.gaia.interaction.feedback.CommittedBreakVisualAdapter;
 import com.gaia.interaction.feedback.GaiaVisualRegionResolver;
+import com.gaia.interaction.feedback.GaiaWorldItemFaceResolver;
 import com.gaia.interaction.feedback.InteractionBlockState;
 import com.gaia.interaction.feedback.InteractionFeedbackCoordinator;
 import com.gaia.interaction.feedback.VisualFeedbackDiagnostics;
@@ -38,6 +39,12 @@ import com.gaia.world.WorldLoadResult;
 import com.gaia.world.WorldLoader;
 import com.gaia.world.generation.WorldGenerationConfig;
 import com.gaia.world.generation.WorldGenerator;
+import com.gaia.worlditem.PhysicalWorldItemSystem;
+import com.gaia.worlditem.WorldInteractionInputRouter;
+import com.gaia.worlditem.WorldItemPickupController;
+import com.gaia.worlditem.WorldItemPickupTransaction;
+import com.gaia.worlditem.WorldItemTargetingService;
+import com.gaia.worlditem.WorldItemPhysicsConfig;
 import com.overlord.assets.AssetDiagnostic;
 import com.overlord.assets.AssetLoadReport;
 import com.overlord.assets.AssetManager;
@@ -190,6 +197,13 @@ public final class GameBootstrap {
                             mainThreadGuard,
                             GameConfig.Interaction.MAX_LOGICAL_WORLD_ITEMS,
                             GameConfig.Interaction.WORLD_ITEM_PICKUP_DELAY_TICKS);
+            PhysicalWorldItemSystem physicalWorldItems =
+                    new PhysicalWorldItemSystem(
+                            worldItems,
+                            physicsWorld,
+                            engine.getWorld().chunks(),
+                            mainThreadGuard,
+                            WorldItemPhysicsConfig.production());
             VisualRegionDiagnostics visualRegionDiagnostics =
                     VisualRegionDiagnostics.safe(
                             (item, failure) ->
@@ -203,9 +217,15 @@ public final class GameBootstrap {
                             blocks,
                             catalog.blockAtlas(),
                             visualRegionDiagnostics);
+            GaiaWorldItemFaceResolver worldItemFaces =
+                    new GaiaWorldItemFaceResolver(
+                            blocks,
+                            catalog.blockAtlas().requireRegion(
+                                    ResourceLocation.parse("gaia:missing")),
+                            visualRegionDiagnostics);
             ParticleSystem particles = new ParticleSystem();
             WorldItemVisualTracker worldItemVisuals =
-                    new WorldItemVisualTracker(visualRegions::resolve);
+                    new WorldItemVisualTracker(worldItemFaces::resolve);
             VisualFeedbackDiagnostics visualDiagnostics =
                     (event, failure) ->
                             System.err.println(
@@ -224,14 +244,22 @@ public final class GameBootstrap {
                             committedBreaks,
                             particles,
                             worldItemVisuals,
-                            visualRegions::resolve);
-            shutdownCoordinator.register("interaction-feedback", feedback::clearAll);
+                            visualRegions::resolve,
+                            worldItemFaces::resolve,
+                            new com.gaia.interaction.feedback.FirstPersonActionAnimator(),
+                            new com.gaia.interaction.feedback.CameraImpulseController(),
+                            new com.gaia.interaction.feedback.TransientBlockVisualSystem());
+            java.util.function.Consumer<Throwable> fatalSpawnBarrier = failure -> {
+                throw new IllegalStateException(
+                        "fatal canonical world-item spawn barrier", failure);
+            };
+            InventoryDropController inventoryDrop = new InventoryDropController(
+                    inventoryService, worldItems, fatalSpawnBarrier);
             BodyInventoryInputController inventoryInput =
                     new BodyInventoryInputController(
                             inventoryService,
                             inventoryOwner,
-                            Optional.of(new InventoryDropController(
-                                    inventoryService, worldItems)));
+                            Optional.of(inventoryDrop));
             GaiaBlockWorldAccess blockWorld =
                     new GaiaBlockWorldAccess(engine.getWorld(), blocks);
             DefaultWorldMutationService worldMutations =
@@ -240,11 +268,13 @@ public final class GameBootstrap {
                             blockWorld,
                             new SynchronousBlockChangeEventPublisher(
                                     ignored -> BlockChangeDecision.ALLOW,
-                                    feedback::onBlockChanged,
+                                    ignored -> {},
                                     ignored -> {}));
+            GaiaBlockRaycastService blockRaycasts =
+                    new GaiaBlockRaycastService(blockRaycast, blocks);
             PlayerBlockTargeting blockTargeting =
                     new PlayerBlockTargeting(
-                            new GaiaBlockRaycastService(blockRaycast, blocks),
+                            blockRaycasts,
                             playerBody,
                             engine.getCamera(),
                             engine.getWorld().chunks(),
@@ -254,10 +284,42 @@ public final class GameBootstrap {
                     new GameModeManager(
                             GameMode.SURVIVAL,
                             EventBus.getInstance()::publish);
+            WorldInteractionInputRouter worldInteractionInput =
+                    new WorldInteractionInputRouter();
+            WorldItemPickupTransaction worldItemPickupTransaction =
+                    new WorldItemPickupTransaction(
+                            inventoryService,
+                            worldItems,
+                            inventoryOwner,
+                            failure -> {
+                                throw new IllegalStateException(
+                                        "fatal world-item pickup invariant", failure);
+                            });
+            WorldItemPickupController worldItemPickup =
+                    new WorldItemPickupController(
+                            worldItems,
+                            playerBody,
+                            engine.getCamera(),
+                            () -> inventoryService.viewModel(inventoryOwner)
+                                    .orElseThrow()
+                                    .activeSlot(),
+                            new WorldItemTargetingService(blockRaycasts),
+                            worldItemPickupTransaction,
+                            feedback,
+                            GameConfig.Player.EYE_HEIGHT,
+                            GameConfig.Interaction.WORLD_ITEM_PICKUP_REACH);
             CreativeSelection creativeSelection =
                     new CreativeSelection(
                             blocks,
                             Optional.of(ResourceLocation.parse("gaia:dirt")));
+            BlockBreakTransaction blockBreak = new BlockBreakTransaction(
+                    worldMutations,
+                    inventoryService,
+                    inventoryOwner,
+                    worldItems,
+                    playerBody,
+                    ResourceLocation.parse("gaia:air"),
+                    fatalSpawnBarrier);
             BlockInteractionController blockInteraction =
                     new BlockInteractionController(
                             gameModes,
@@ -267,12 +329,7 @@ public final class GameBootstrap {
                             inventoryService,
                             inventoryOwner,
                             creativeSelection,
-                            new BlockBreakTransaction(
-                                    worldMutations,
-                                    inventoryService,
-                                    inventoryOwner,
-                                    worldItems,
-                                    ResourceLocation.parse("gaia:air")),
+                            blockBreak,
                             new BlockPlacementTransaction(
                                     worldMutations,
                                     inventoryService,
@@ -281,7 +338,8 @@ public final class GameBootstrap {
                                     blockWorld,
                                     playerBody,
                                     ResourceLocation.parse("gaia:air")),
-                            GameConfig.Interaction.BASE_BREAK_SPEED);
+                            GameConfig.Interaction.BASE_BREAK_SPEED,
+                            feedback);
             runConfiguredInventoryDebugCommand(inventoryDebugCommands);
             WorldGenerator generator =
                     GaiaWorldGenerator.createVisualRevisionCandidate();
@@ -328,6 +386,12 @@ public final class GameBootstrap {
                     worldLoader.loadAsync(engine.getWorld());
             shutdownCoordinator.register(
                     "world-load", () -> worldLoad.cancel(true));
+            shutdownCoordinator.register("interaction-feedback", feedback::close);
+            shutdownCoordinator.register(
+                    "physical-world-items", physicalWorldItems::close);
+            shutdownCoordinator.register("world-item-pickup", worldItemPickup::close);
+            shutdownCoordinator.register("inventory-drop", inventoryDrop::close);
+            shutdownCoordinator.register("block-break", blockBreak::close);
 
             GameContext context =
                     new GameContext(
@@ -348,8 +412,12 @@ public final class GameBootstrap {
                             inventoryInput,
                             inventoryDebugCommands,
                             Boolean.getBoolean("gaia.inventory.debugShortcuts"),
+                            gameModes,
+                            worldInteractionInput,
+                            worldItemPickup,
                             blockInteraction,
                             worldItems,
+                            physicalWorldItems,
                             feedback,
                             InteractionBlockState.unblocked(),
                             hudFrames,

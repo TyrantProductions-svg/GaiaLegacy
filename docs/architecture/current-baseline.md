@@ -2,17 +2,56 @@
 
 ## Snapshot
 
-The current working snapshot is Phase 9A on `feat/block-interaction-core`,
-based on `origin/main@078067e` after the Phase 8 body-inventory merge. Phase 9A
-adds fixed-step breaking/placement, Survival/Creative policy, repository-backed
-world mutation, and the single logical world-item backend without changing the
-Phase 5 rendering or Phase 6 physics implementations.
+The current working snapshot is Phase 11 on `feat/physical-world-items`, based
+on `origin/main@819a690f85ab4b1a192bd2db3bca73ddb573ced7` after Phase 10. It
+adds the stable-ID physical world-item projection, fixed 1/60 static-voxel
+physics, Shift+right transactional pickup, six-face item presentation,
+priority-safe bounded particles, allocation/GC measurement, and idempotent
+runtime cleanup. `LogicalWorldItemService` remains the sole canonical item
+store and `BodyInventoryService` remains the sole inventory mutation boundary.
 
-The final local Phase 9A candidate passed the Windows/JDK 21 clean build with
-663 Engine tests and 331 Game tests (994 total), plus all packaged-resource
-checks. Final Engine and Game/shared owner review is approved with no remaining
-Critical, Important, or Minor finding. Native macOS/Retina acceptance remains
-not run.
+Phase 11.6 corrects the Windows-observed drop and feedback paths. Plain Q drops
+one active-slot item; either Ctrl+Q drops the complete active-slot stack.
+Successful Survival break always creates a canonical world drop instead of
+inserting directly into available inventory. Its event-derived base/outward
+horizontal speed is `1.25..1.75 blocks/s`; the independently bounded
+orthogonal lateral component is `+/-0.20 blocks/s`, giving a maximum total
+horizontal resultant of approximately `1.7614 blocks/s`. Shift+right-click
+remains the only pickup gesture, ordinary right-click remains placement, and walking near an
+item performs no automatic pickup or attraction. Committed placement, break,
+drop, and pickup receipts drive render-only held-item animation, a copied-view
+camera spring, bounded transient block proxies, and deterministic mixed debris
+and astral particles; these presentation systems never decide gameplay state.
+
+First-person movement presentation advances at fixed 1/60 and exposes
+immutable previous/current state for render-alpha interpolation. Grounded
+horizontal movement drives a 1.8 Hz walk bob bounded to `0.025` vertical,
+`0.012` lateral, and `0.18` degree roll. Grounded-to-grounded bounded vertical
+traversal drives step-up/down smoothing; grounded/airborne transitions drive
+jump takeoff and impact-speed-scaled landing. Movement presentation composes
+before the independent action impulse. Neither layer mutates the canonical
+Camera, player position, collision, or raycast authority.
+
+The first-person held block is a rigid camera-space cube using canonical
+outward CCW geometry and the shared six-face UV convention. Its runtime
+concave/open-box defect was caused by the viewmodel pass disabling depth
+testing, depth writes, and face culling, which allowed back/interior triangles
+to overwrite visible faces in draw order. The corrected pass clears only the
+depth buffer before viewmodel rendering, enables depth testing/writes and
+canonical back-face culling, and restores prior GL state afterward. Cube
+geometry, UVs, world rendering, and gameplay are unchanged. The live
+exclusion-mask uniform-array path is also closed and no longer crashes during
+break/place rendering.
+
+Canonical world-item automatic expiry is deferred. Phase 11 defines physical projection, pickup, unloaded-Chunk freezing and runtime cleanup, but does not define despawn duration or timeout-based stable-ID termination.
+
+Human Windows development acceptance is **PASS** for Phase 11, including drop,
+manual pickup, physical projection, break/place feedback, particles, movement
+presentation, held-block orientation/convexity, and the live exclusion-mask
+shader path. The latest pre-documentation clean verification contains engine
+`947`, game `825`, and tools `27` tests: `1,799` total, `1,798` passed, `1`
+skipped, and zero failures or errors. Windows installed-distribution and native
+macOS/Retina interactive acceptance remain not run.
 
 The historical Phase 5A render-pipeline baseline was developed on
 `feat/render-pipeline-core` from `origin/main`

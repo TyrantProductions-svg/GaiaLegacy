@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.overlord.assets.AssetManager;
 import com.overlord.core.thread.MainThreadGuard;
 import com.overlord.renderer.queue.RenderQueue;
+import com.overlord.renderer.shader.WorldShaderUniforms;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -112,22 +113,37 @@ class RendererStructureTest {
                                 "src/main/java/com/overlord/renderer/"
                                         + "Renderer.java"));
 
-        for (String uniform :
-                java.util.List.of(
-                        "projection",
-                        "view",
-                        "model",
-                        "textureAtlas",
-                        "sunDirection",
-                        "ambientStrength",
-                        "directionalStrength",
-                        "fogColor",
-                        "fogStart",
-                        "fogEnd")) {
+        java.util.List<String> requiredUniforms = WorldShaderUniforms.requiredUniforms();
+        for (String uniform : java.util.List.of(
+                "projection",
+                "view",
+                "model",
+                "textureAtlas",
+                "sunDirection",
+                "ambientStrength",
+                "directionalStrength",
+                "fogColor",
+                "fogStart",
+                "fogEnd",
+                "excludedBlockCount")) {
             assertTrue(
-                    source.contains("\"" + uniform + "\""),
+                    requiredUniforms.contains(uniform),
                     "Missing required world uniform: " + uniform);
         }
+        assertTrue(requiredUniforms.contains("excludedBlockCells[0]"));
+        assertTrue(requiredUniforms.contains(
+                "excludedBlockCells["
+                        + (WorldShaderUniforms.MAX_EXCLUDED_BLOCK_CELLS - 1)
+                        + "]"));
+        assertFalse(requiredUniforms.contains("excludedBlockCells"));
+        assertFalse(requiredUniforms.contains(
+                "excludedBlockCells["
+                        + WorldShaderUniforms.MAX_EXCLUDED_BLOCK_CELLS
+                        + "]"));
+        assertEquals(
+                11 + WorldShaderUniforms.MAX_EXCLUDED_BLOCK_CELLS,
+                requiredUniforms.size());
+        assertTrue(source.contains("WorldShaderUniforms.requiredUniforms()"));
         assertTrue(source.contains("glDisable(GL_FRAMEBUFFER_SRGB);"));
         assertFalse(source.contains("glEnable(GL_FRAMEBUFFER_SRGB)"));
         assertTrue(source.contains("visualSettings,"));
