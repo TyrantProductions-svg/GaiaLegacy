@@ -10,8 +10,8 @@ public final class CameraImpulseController implements AutoCloseable {
     private static final double PLACEMENT_PITCH = 0.35;
     private static final double PLACEMENT_TRANSLATION_Y = -0.006;
     private static final double PLACEMENT_DURATION = 0.15;
-    private static final double BREAK_PITCH = 0.55;
-    private static final double BREAK_YAW = 0.14;
+    private static final double BREAK_PITCH = 0.275;
+    private static final double BREAK_YAW = 0.07;
     private static final double BREAK_DURATION = 0.20;
 
     private final EnvelopeAxis pitch = new EnvelopeAxis(-1.0, 1.0);
@@ -31,9 +31,9 @@ public final class CameraImpulseController implements AutoCloseable {
         if (closed) {
             return;
         }
-        pitch.add(BREAK_PITCH, BREAK_DURATION);
+        pitch.restart(BREAK_PITCH, BREAK_DURATION);
         double side = (mix64(eventIdentity) & 1L) == 0 ? 1.0 : -1.0;
-        yaw.add(side * BREAK_YAW, BREAK_DURATION);
+        yaw.restart(side * BREAK_YAW, BREAK_DURATION);
     }
 
     public void update(double deltaSeconds) {
@@ -104,6 +104,13 @@ public final class CameraImpulseController implements AutoCloseable {
 
         private void add(double impulse, double newDuration) {
             start = clamp(value + impulse, minimum, maximum);
+            value = start;
+            elapsed = 0.0;
+            duration = newDuration;
+        }
+
+        private void restart(double impulse, double newDuration) {
+            start = clamp(impulse, minimum, maximum);
             value = start;
             elapsed = 0.0;
             duration = newDuration;

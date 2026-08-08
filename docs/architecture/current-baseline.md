@@ -2,13 +2,36 @@
 
 ## Snapshot
 
-The current working snapshot is Phase 11 on `feat/physical-world-items`, based
-on `origin/main@819a690f85ab4b1a192bd2db3bca73ddb573ced7` after Phase 10. It
-adds the stable-ID physical world-item projection, fixed 1/60 static-voxel
-physics, Shift+right transactional pickup, six-face item presentation,
-priority-safe bounded particles, allocation/GC measurement, and idempotent
-runtime cleanup. `LogicalWorldItemService` remains the sole canonical item
-store and `BodyInventoryService` remains the sole inventory mutation boundary.
+The current working snapshot is Phase 12 release-candidate integration on
+`release/milestone-1-vertical-slice`, based on
+`origin/main@25d3a78040b08f32d6264a6a7e2a8968eed679f9`. All Milestone 1 feature
+phases are merged at that baseline. Phase 12 reconciles release defaults,
+native runtime and lifecycle evidence, clean-clone packaging, documentation,
+and a deterministic demo route without adding another gameplay authority.
+
+The protected application graph is `GameBootstrap -> GameContext -> GameLoop`.
+`LogicalWorldItemService`, `BodyInventoryService`, `DefaultWorldMutationService`,
+`ChunkRepository`, `ChunkMeshManager`, and `PlayerController` remain the unique
+authorities for their canonical state. The renderer and HUD consume immutable
+presentation. GLFW, OpenGL, shader, framebuffer, mesh, texture, and GPU
+lifecycle calls remain on the context-owning main thread; worker threads
+publish CPU-only world and mesh results through the established boundaries.
+
+The release defaults are seed `12345`, world-generation algorithm `2`, finite
+radius `4` (81 loaded Chunks), vertical FOV `70.0`, mouse sensitivity `0.1`,
+VSync enabled, debug HUD disabled, and Survival startup. Radius `4` is the
+finite demo load boundary, not a new streaming/render-distance system. Window
+initialization makes the GLFW context current and then explicitly applies swap
+interval `1`; the disabled branch explicitly applies `0`. Adaptive VSync is
+not used. VSync is presentation-only and does not change the exact 1/60
+simulation or eight-step catch-up policy.
+
+Phase 11 supplied the stable-ID physical world-item projection, fixed 1/60
+static-voxel physics, Shift+right transactional pickup, six-face item
+presentation, priority-safe bounded particles, allocation/GC measurement, and
+idempotent runtime cleanup. `LogicalWorldItemService` remains the sole
+canonical item store and `BodyInventoryService` remains the sole inventory
+mutation boundary.
 
 Phase 11.6 corrects the Windows-observed drop and feedback paths. Plain Q drops
 one active-slot item; either Ctrl+Q drops the complete active-slot stack.
@@ -22,6 +45,10 @@ item performs no automatic pickup or attraction. Committed placement, break,
 drop, and pickup receipts drive render-only held-item animation, a copied-view
 camera spring, bounded transient block proxies, and deterministic mixed debris
 and astral particles; these presentation systems never decide gameplay state.
+Phase 12 halves the committed break camera impulse to `0.275` degree pitch and
+deterministic `+/-0.07` degree yaw. Each rapid break restarts this reduced
+0.20-second envelope instead of accumulating unfinished impulses toward the
+`+/-1.0` degree clamp. The held-item break swing remains independent.
 
 First-person movement presentation advances at fixed 1/60 and exposes
 immutable previous/current state for render-alpha interpolation. Grounded
@@ -45,13 +72,25 @@ break/place rendering.
 
 Canonical world-item automatic expiry is deferred. Phase 11 defines physical projection, pickup, unloaded-Chunk freezing and runtime cleanup, but does not define despawn duration or timeout-based stable-ID termination.
 
-Human Windows development acceptance is **PASS** for Phase 11, including drop,
-manual pickup, physical projection, break/place feedback, particles, movement
-presentation, held-block orientation/convexity, and the live exclusion-mask
-shader path. The latest pre-documentation clean verification contains engine
-`947`, game `825`, and tools `27` tests: `1,799` total, `1,798` passed, `1`
-skipped, and zero failures or errors. Windows installed-distribution and native
-macOS/Retina interactive acceptance remain not run.
+Human Windows development acceptance is **PASS** for the Phase 12 candidate's
+VSync path, movement/jump, break/place, Q and Ctrl+Q drops, Shift+right manual
+pickup, mode switching, repeated launch, and clean Escape shutdown. The
+production safe spawn observed for the RC world is feet `(0,25,0)`. A real
+Creative rapid-break check found the previous additive camera envelope too
+strong in caves; after the reduction, human Windows retest confirmed the
+shake was greatly reduced. A human-reported continuous 20-minute installDist
+gameplay soak then passed without crash, stutter, duplicate objects, or
+abnormal particle growth. The only new observation was numeric ghosting on
+the rapidly changing F3 FPS/frame-time display; this is recorded as a debug-HUD
+readability issue. Current post-correction verification contains Engine `951`,
+Game `827`, and Tools `27` tests: `1,805` total, `1,804` passed, `1` skipped,
+and zero failures or errors. The exact RC commit
+`477945913cbeffbf7886b7eed0f152519a4f120b` also passed Apple Silicon MacBook
+Air clean-clone automation, packaged-resource/shader checks, development and
+installDist runtime, Retina/resize/focus recovery, the complete gameplay
+matrix, clean shutdown, and a continuous 26-minute soak under Java 26. The
+macOS version and automated test totals were not supplied. F3 numeric ghosting
+reproduced and remains an accepted debug-only known issue.
 
 The historical Phase 5A render-pipeline baseline was developed on
 `feat/render-pipeline-core` from `origin/main`
@@ -65,10 +104,12 @@ replacing inline shaders and direct world drawing with JAR-safe shader
 resources, one ten-float voxel vertex format, non-owning runtime materials,
 an ordered render pipeline, and exact OpenGL state scopes.
 
-The repository is a two-module Gradle build:
+The repository is a three-module Gradle build:
 
 - `engine` is a Java library containing runtime, rendering, physics, ECS, event, scheduling, and voxel infrastructure.
 - `game` is an application containing Gaia-specific blocks, resources, world generation, and the `GameBootstrap` composition root.
+- `tools` contains deterministic project-local UI asset generation and its
+  verification tests.
 
 Both modules target Java 17. The checked-in Gradle 8.5 Wrapper can run on JDK 21. LWJGL native selection in current main is based on operating system and CPU architecture.
 

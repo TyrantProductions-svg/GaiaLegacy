@@ -29,7 +29,7 @@ public class Camera {
         pitch = 0.0f;
         
         movementSpeed = GameConfig.Player.MOVEMENT_SPEED;
-        mouseSensitivity = 0.1f;
+        mouseSensitivity = GameConfig.Input.MOUSE_SENSITIVITY;
         
         updateVectors();
     }

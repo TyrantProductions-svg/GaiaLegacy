@@ -175,6 +175,31 @@ class GameBootstrapStructureTest {
     }
 
     @Test
+    void composesReleaseCandidateSimulationAndModeDefaults() throws IOException {
+        String source =
+                Files.readString(
+                        Path.of(
+                                "src/main/java/com/gaia/"
+                                        + "GameBootstrap.java"));
+        String compact = source.replaceAll("\\s+", "");
+
+        assertTrue(
+                compact.contains(
+                        "FIXED_STEP_SECONDS=1.0/60.0;"));
+        assertTrue(
+                compact.contains(
+                        "MAX_FIXED_STEPS_PER_FRAME=8;"));
+        assertTrue(
+                compact.contains(
+                        "newGameModeManager(GameMode.SURVIVAL,"));
+        assertEquals(
+                1,
+                occurrences(
+                        compact,
+                        "WorldGenerationConfig.visualRevisionCandidate()"));
+    }
+
+    @Test
     void composesOneCommittedFeedbackAuthorityAfterGameplayTransactions() throws IOException {
         String source = Files.readString(Path.of("src/main/java/com/gaia/GameBootstrap.java"));
         String compact = source.replaceAll("\\s+", "");
