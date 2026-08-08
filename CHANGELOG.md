@@ -42,8 +42,14 @@
 - Windows installDist completed a human-reported continuous 20-minute gameplay
   soak without crash, stutter, duplicate objects, or abnormal particle growth.
   A follow-up live Creative rapid-break check also confirmed the camera shake
-  was greatly reduced. Apple Silicon macOS rows remain governed by the Phase
-  12 handoff.
+  was greatly reduced.
+- The exact RC commit `477945913cbeffbf7886b7eed0f152519a4f120b` passed
+  Apple Silicon MacBook Air clean-clone automation, packaged resources/shaders,
+  development runtime, Retina/resize/focus recovery, the complete gameplay
+  matrix, clean shutdown, and a continuous 26-minute installDist soak under
+  Java 26. The macOS version and automated test totals were not supplied.
+- F3 FPS/frame-time numeric ghosting reproduced on macOS and remains an
+  accepted debug-only known issue with no associated gameplay failure.
 
 ### Deferred to Milestone 2
 

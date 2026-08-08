@@ -2,14 +2,16 @@
 
 ## Status
 
-**CURRENT: Windows automated verification PASS; Windows development runtime
-PASS; continuous 20-minute Windows installDist gameplay soak PASS; Apple
-Silicon macOS NOT RUN / PENDING.**
+**CURRENT: Windows and Apple Silicon macOS automated, development-runtime, and
+installDist/runtime-soak acceptance PASS. F3 numeric ghosting remains an
+accepted debug-only known issue.**
 
 This candidate is based on
 `origin/main@25d3a78040b08f32d6264a6a7e2a8968eed679f9` on
-`release/milestone-1-vertical-slice`. No work has been staged, committed,
-pushed, tagged, merged, or submitted as a pull request.
+`release/milestone-1-vertical-slice`. The exact cross-platform RC tested on
+both platforms is `477945913cbeffbf7886b7eed0f152519a4f120b`. It was committed
+and pushed for native macOS acceptance; no tag, merge, GitHub Release, or pull
+request has been created.
 
 ## Completed work
 
@@ -106,6 +108,32 @@ The F3 debug HUD showed visible ghosting on its rapidly changing FPS and
 frame-time digits. This was the only newly reported issue and did not coincide
 with a gameplay, simulation, or resource-growth anomaly.
 
+## Apple Silicon macOS acceptance evidence
+
+- Tested RC: `477945913cbeffbf7886b7eed0f152519a4f120b`.
+- Hardware: Apple Silicon MacBook Air; specific chip generation was not
+  supplied.
+- macOS version: `NOT SUPPLIED`.
+- Java: 26.
+- Clean clone: PASS.
+- Automated clean test/build: PASS; exact test totals were not supplied.
+- Packaged-resource and shader verification: PASS.
+- Development runtime: PASS.
+- Retina rendering and resize: PASS.
+- Movement, walk bob, and grounded step smoothing: PASS.
+- Jump and landing presentation: PASS.
+- Held-block convex geometry: PASS.
+- Survival break/place: PASS.
+- Physical WorldItem drops and particles: PASS.
+- Shift+right manual pickup: PASS.
+- Q single-item drop and Ctrl+Q full-stack drop: PASS.
+- F2/F3/F4 behavior: PASS.
+- Command+Tab focus recovery: PASS.
+- Clean Escape/shutdown: PASS.
+- installDist runtime: PASS; continuous soak duration 26 minutes.
+- F3 FPS/frame-time numeric ghosting: **REPRODUCED**. It remains debug-HUD
+  only, with no reported gameplay, simulation, or resource-growth failure.
+
 ## Performance observations
 
 An installDist run used `-Dgaia.renderMetrics=true -Xlog:gc`. Across 139
@@ -129,20 +157,17 @@ objects. The short metrics sample is not evidence to add pooling.
 | Platform/gate | Automated | Development runtime | installDist/runtime soak |
 | --- | --- | --- | --- |
 | Windows | PASS | PASS | continuous 20-minute gameplay soak PASS |
-| Apple Silicon macOS | NOT RUN / PENDING | NOT RUN / PENDING | NOT RUN / PENDING |
+| Apple Silicon macOS | PASS | PASS | continuous 26-minute gameplay soak PASS |
 
-Windows evidence does not imply macOS success. Native arm64 JVM, development
-run, installDist, Retina/resize, Command+Tab, function-key behavior, complete
-gameplay loop, and clean exit remain unverified on Apple Silicon macOS.
+The Apple Silicon result is direct human evidence for the exact RC SHA, not an
+inference from Windows. The tester supplied MacBook Air and Java 26 but did not
+supply the macOS version, chip generation, or automated test totals.
 
 ## Unfinished work and known risks
 
-- Run the complete automated and interactive matrix on Apple Silicon macOS.
 - Diagnose and correct the F3 FPS/frame-time numeric ghosting in a focused HUD
   task if release triage promotes this debug-only readability issue. Do not
   infer a fix or change UI behavior without a reproduction.
-- Do not infer clean-clone reproducibility from the current dirty integration
-  tree; it must be verified after an explicitly authorized commit exists.
 - Milestone 1 intentionally has no persistence, main menu, settings UI,
   crafting, mobs, complete survival economy, automatic world-item expiry,
   body-body item collision, or rotating WorldItems.
@@ -180,10 +205,9 @@ Documentation:
 - `docs/superpowers/specs/2026-08-08-phase-12-milestone-1-release-candidate-integration-design.md`
 - `docs/superpowers/plans/2026-08-08-phase-12-milestone-1-release-candidate-integration.md`
 
-Current final-audit working-tree inventory is 12 modified tracked files and 7
-untracked source/documentation files, 19 paths total. All 19 are listed above;
-no generated build output, local log, screenshot, save, crash dump, IDE file,
-class file, or local absolute path is included. `git diff --check` passes.
+The original RC commit contains the 19 intended Phase 12 paths listed above.
+Its pre-commit audit found no generated build output, local log, screenshot,
+save, crash dump, IDE file, class file, or local absolute path.
 
 ## Interfaces the next phase must not break
 
@@ -222,9 +246,11 @@ resources and controls, records the fixed demo route, and closes the rapid
 Creative-break presentation issue without changing gameplay authority.
 
 Windows automated, development runtime, and continuous 20-minute installDist
-gameplay gates pass. The rapidly changing F3 FPS/frame-time values have a known
-numeric ghosting issue. All native Apple Silicon macOS gates remain explicitly
-pending. No large Milestone 2 system is included.
+gameplay gates pass. The exact RC also passes Apple Silicon MacBook Air
+clean-clone automation, development runtime, and a continuous 26-minute
+installDist soak under Java 26. The rapidly changing F3 FPS/frame-time values
+have a reproduced debug-only numeric ghosting issue. No large Milestone 2
+system is included.
 ```
 
 Suggested tag notes, without creating a tag:

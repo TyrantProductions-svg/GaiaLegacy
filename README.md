@@ -160,12 +160,13 @@ See [CONTROLS.md](CONTROLS.md) for mode rules and developer-only inputs.
 | Platform | Automated | Development runtime | installDist runtime |
 | --- | --- | --- | --- |
 | Windows | fresh clean build PASS: 1,805 tests, 1 skipped, 0 failed | interactive gameplay and rapid-break correction PASS | continuous 20-minute gameplay soak PASS |
-| Apple Silicon macOS | NOT RUN / PENDING | NOT RUN / PENDING | NOT RUN / PENDING |
+| Apple Silicon macOS | clean-clone build and packaged-resource/shader checks PASS | interactive gameplay, Retina, resize, and focus recovery PASS | continuous 26-minute gameplay soak PASS |
 
-Windows evidence never implies macOS success. Final current totals and platform
-rows are recorded in
-[the Phase 12 handoff](docs/agent-handoffs/phase-12-handoff.md) when Gate 12E
-finishes.
+Apple Silicon macOS acceptance used a MacBook Air with Java 26 and the exact
+RC commit `477945913cbeffbf7886b7eed0f152519a4f120b`; the macOS version was not
+supplied. The F3 FPS/frame-time numeric ghosting reproduced and remains an
+accepted debug-only known issue. Detailed platform evidence is recorded in
+[the Phase 12 handoff](docs/agent-handoffs/phase-12-handoff.md).
 
 ## Architecture map
 

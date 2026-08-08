@@ -84,8 +84,13 @@ abnormal particle growth. The only new observation was numeric ghosting on
 the rapidly changing F3 FPS/frame-time display; this is recorded as a debug-HUD
 readability issue. Current post-correction verification contains Engine `951`,
 Game `827`, and Tools `27` tests: `1,805` total, `1,804` passed, `1` skipped,
-and zero failures or errors. Native Apple Silicon macOS acceptance is
-`NOT RUN / PENDING`.
+and zero failures or errors. The exact RC commit
+`477945913cbeffbf7886b7eed0f152519a4f120b` also passed Apple Silicon MacBook
+Air clean-clone automation, packaged-resource/shader checks, development and
+installDist runtime, Retina/resize/focus recovery, the complete gameplay
+matrix, clean shutdown, and a continuous 26-minute soak under Java 26. The
+macOS version and automated test totals were not supplied. F3 numeric ghosting
+reproduced and remains an accepted debug-only known issue.
 
 The historical Phase 5A render-pipeline baseline was developed on
 `feat/render-pipeline-core` from `origin/main`

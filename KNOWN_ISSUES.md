@@ -23,9 +23,12 @@
   Phase 12 candidate.
 - Windows installDist completed a human-reported continuous 20-minute gameplay
   soak without crash, stutter, duplicate objects, or abnormal particle growth.
-- Apple Silicon macOS automated build, development runtime, Retina/resize,
-  Command+Tab, function-key, installDist, and clean-exit acceptance are
-  `NOT RUN / PENDING`. Windows evidence is not macOS evidence.
+- Apple Silicon MacBook Air acceptance is PASS on the exact RC commit
+  `477945913cbeffbf7886b7eed0f152519a4f120b` with Java 26: clean clone,
+  automated build, packaged resources/shaders, development runtime,
+  Retina/resize, Command+Tab, function keys, complete gameplay, clean exit,
+  installDist, and a continuous 26-minute soak. The macOS version and
+  automated test totals were not supplied.
 
 ## Performance observations
 
