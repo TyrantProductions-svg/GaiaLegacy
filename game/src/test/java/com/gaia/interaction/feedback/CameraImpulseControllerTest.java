@@ -40,9 +40,8 @@ class CameraImpulseControllerTest {
         controller.triggerBreak(17L);
         CameraImpulseVisual peak = controller.snapshot();
 
-        assertTrue(peak.pitchDegrees() >= 0.48f && peak.pitchDegrees() <= 0.62f);
-        assertTrue(Math.abs(peak.yawDegrees()) >= 0.11f
-                && Math.abs(peak.yawDegrees()) <= 0.17f);
+        assertEquals(0.275f, peak.pitchDegrees(), 1.0e-6f);
+        assertEquals(0.07f, Math.abs(peak.yawDegrees()), 1.0e-6f);
         assertEquals(0.0f, peak.translationY());
 
         double elapsed = 0.0;
@@ -53,6 +52,21 @@ class CameraImpulseControllerTest {
         }
         assertEquals(CameraImpulseVisual.identity(), controller.snapshot());
         assertTrue(elapsed <= 0.20 + frame + 1.0e-9);
+    }
+
+    @Test
+    void rapidCreativeBreaksRestartReducedImpulseWithoutAccumulating() {
+        CameraImpulseController controller = new CameraImpulseController();
+
+        for (long eventIdentity = 0; eventIdentity < 32; eventIdentity++) {
+            controller.triggerBreak(eventIdentity);
+            CameraImpulseVisual peak = controller.snapshot();
+
+            assertEquals(0.275f, peak.pitchDegrees(), 1.0e-6f);
+            assertEquals(0.07f, Math.abs(peak.yawDegrees()), 1.0e-6f);
+            assertEquals(0.0f, peak.translationY());
+            controller.update(1.0 / 60.0);
+        }
     }
 
     @Test

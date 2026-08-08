@@ -10,6 +10,7 @@ public class GameConfig {
         public static final int OPENGL_VERSION_MAJOR = 4;
         public static final int OPENGL_VERSION_MINOR = 1;
         public static final int RESIZABLE = org.lwjgl.glfw.GLFW.GLFW_TRUE;
+        public static final boolean VSYNC = true;
     }
     
     public static final class Player {
@@ -52,6 +53,7 @@ public class GameConfig {
     }
     
     public static final class Input {
+        public static final float MOUSE_SENSITIVITY = 0.1f;
         public static final int KEY_FORWARD = org.lwjgl.glfw.GLFW.GLFW_KEY_W;
         public static final int KEY_BACKWARD = org.lwjgl.glfw.GLFW.GLFW_KEY_S;
         public static final int KEY_LEFT = org.lwjgl.glfw.GLFW.GLFW_KEY_A;

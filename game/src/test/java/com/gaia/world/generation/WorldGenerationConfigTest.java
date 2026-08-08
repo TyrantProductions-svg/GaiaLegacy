@@ -18,11 +18,14 @@ class WorldGenerationConfigTest {
     }
 
     @Test
-    void approvedVisualRevisionUsesAlgorithmVersionTwo() {
+    void releaseCandidateUsesTheApprovedFiniteDemoWorld() {
         WorldGenerationConfig config =
                 WorldGenerationConfig.visualRevisionCandidate();
 
+        assertEquals(12345L, config.seed());
         assertEquals(2, config.algorithmVersion());
+        assertEquals(4, config.chunkRadius());
+        assertEquals(81, squareChunkCount(config));
         assertEquals(1, WorldGenerationConfig.defaults().algorithmVersion());
     }
 

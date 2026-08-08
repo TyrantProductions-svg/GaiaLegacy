@@ -20,7 +20,6 @@ import static org.lwjgl.glfw.GLFW.glfwGetPrimaryMonitor;
 import static org.lwjgl.glfw.GLFW.glfwGetVideoMode;
 import static org.lwjgl.glfw.GLFW.glfwGetWindowSize;
 import static org.lwjgl.glfw.GLFW.glfwInit;
-import static org.lwjgl.glfw.GLFW.glfwMakeContextCurrent;
 import static org.lwjgl.glfw.GLFW.glfwPollEvents;
 import static org.lwjgl.glfw.GLFW.glfwSetFramebufferSizeCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetWindowContentScaleCallback;
@@ -40,6 +39,8 @@ import java.nio.FloatBuffer;
 import com.overlord.renderer.RenderSurfaceMetrics;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.IntConsumer;
+import java.util.function.LongConsumer;
 import org.lwjgl.glfw.GLFWVidMode;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.system.MemoryStack;
@@ -110,7 +111,12 @@ public class Window {
                         (videoMode.height() - requestedHeight) / 2);
             }
 
-            glfwMakeContextCurrent(window);
+            configureContext(
+                    mainThreadGuard,
+                    window,
+                    GameConfig.Window.VSYNC,
+                    org.lwjgl.glfw.GLFW::glfwMakeContextCurrent,
+                    org.lwjgl.glfw.GLFW::glfwSwapInterval);
             GL.createCapabilities();
             initializeMetrics();
             installResizeCallbacks();
@@ -119,6 +125,20 @@ public class Window {
             destroy();
             throw failure;
         }
+    }
+
+    static void configureContext(
+            MainThreadGuard mainThreadGuard,
+            long window,
+            boolean vsync,
+            LongConsumer makeContextCurrent,
+            IntConsumer setSwapInterval) {
+        Objects.requireNonNull(mainThreadGuard, "mainThreadGuard")
+                .assertMainThread("GLFW context activation and VSync");
+        Objects.requireNonNull(makeContextCurrent, "makeContextCurrent")
+                .accept(window);
+        Objects.requireNonNull(setSwapInterval, "setSwapInterval")
+                .accept(vsync ? 1 : 0);
     }
 
     private void initializeMetrics() {

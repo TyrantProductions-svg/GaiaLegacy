@@ -312,6 +312,12 @@ block. The renderer derives
 a copied visual view while frustum culling, targeting, `Camera.forward()`, and
 saved orientation use the canonical view unchanged.
 
+The Phase 12 release candidate uses `+0.275` degree pitch and deterministic
+`+/-0.07` degree yaw for committed break feedback, exactly half the original
+Phase 11.6 amplitudes. A rapid break restarts the 0.20-second break envelope;
+it does not add to an unfinished break impulse. Placement feedback and the
+independent held-item break swing retain their existing behavior.
+
 Committed placement mutates World/collision immediately, then shows a 0.14 s
 render-only scale transition from 0.85 to 1.00. Committed break removes
 World/collision immediately and preserves the old six-face appearance in a
