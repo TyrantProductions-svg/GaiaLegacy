@@ -48,6 +48,9 @@ import java.util.Objects;
 import org.joml.Matrix4f;
 
 public final class Renderer implements ChunkRenderBackend {
+    private static final float MIN_FOV_DEGREES = 50.0f;
+    private static final float MAX_FOV_DEGREES = 100.0f;
+
     private final MainThreadGuard mainThreadGuard;
     private final RenderAssets renderAssets;
     private final AssetManager assetManager;
@@ -69,6 +72,7 @@ public final class Renderer implements ChunkRenderBackend {
     private InstalledUi installedUi;
     private RenderSurfaceMetrics surfaceMetrics;
     private RenderSurfaceController surfaceController;
+    private float fovDegrees = GameConfig.Rendering.FOV;
 
     public Renderer(
             MainThreadGuard mainThreadGuard,
@@ -228,9 +232,8 @@ public final class Renderer implements ChunkRenderBackend {
                     Objects.requireNonNull(surfaceMetrics, "surfaceMetrics");
             RenderSurfaceController initializedSurfaceController =
                     new RenderSurfaceController(initializedSurfaceMetrics);
-            Matrix4f initializedProjection = createProjection(
-                    initializedSurfaceMetrics.framebufferWidth(),
-                    initializedSurfaceMetrics.framebufferHeight());
+            Matrix4f initializedProjection = projectionFor(
+                    initializedSurfaceMetrics, fovDegrees);
 
             glDisable(GL_FRAMEBUFFER_SRGB);
             glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
@@ -317,7 +320,16 @@ public final class Renderer implements ChunkRenderBackend {
         if (next.framebufferWidth() <= 0 || next.framebufferHeight() <= 0) return;
         if (rebuild) {
             glViewport(0, 0, next.framebufferWidth(), next.framebufferHeight());
-            rebuildProjection(next.framebufferWidth(), next.framebufferHeight());
+            rebuildProjection();
+        }
+    }
+
+    public void setFovDegrees(float fovDegrees) {
+        mainThreadGuard.assertMainThread("renderer FOV application");
+        float validated = requireValidFov(fovDegrees);
+        this.fovDegrees = validated;
+        if (surfaceMetrics != null) {
+            projectionMatrix = projectionFor(surfaceMetrics, validated);
         }
     }
 
@@ -486,8 +498,10 @@ public final class Renderer implements ChunkRenderBackend {
         }
     }
 
-    private void rebuildProjection(int width, int height) {
-        projectionMatrix = createProjection(width, height);
+    private void rebuildProjection() {
+        projectionMatrix = projectionFor(
+                requireInitialized(surfaceMetrics, "surface metrics"),
+                fovDegrees);
     }
 
     static RenderPipeline createPipeline(
@@ -563,17 +577,29 @@ public final class Renderer implements ChunkRenderBackend {
         return applyVisualCameraImpulse(movementView, actionImpulse);
     }
 
-    private static Matrix4f createProjection(int width, int height) {
-        int projectionWidth = Math.max(1, width);
-        int projectionHeight = Math.max(1, height);
+    static Matrix4f projectionFor(
+            RenderSurfaceMetrics surfaceMetrics, float fovDegrees) {
+        RenderSurfaceMetrics surface = Objects.requireNonNull(
+                surfaceMetrics, "surfaceMetrics");
+        float validated = requireValidFov(fovDegrees);
+        int projectionWidth = Math.max(1, surface.framebufferWidth());
+        int projectionHeight = Math.max(1, surface.framebufferHeight());
         return new Matrix4f()
                 .perspective(
-                        (float)
-                                Math.toRadians(
-                                        GameConfig.Rendering.FOV),
+                        (float) Math.toRadians(validated),
                         (float) projectionWidth / projectionHeight,
                         GameConfig.Rendering.NEAR_PLANE,
                         GameConfig.Rendering.FAR_PLANE);
+    }
+
+    private static float requireValidFov(float fovDegrees) {
+        if (!Float.isFinite(fovDegrees)
+                || fovDegrees < MIN_FOV_DEGREES
+                || fovDegrees > MAX_FOV_DEGREES) {
+            throw new IllegalArgumentException(
+                    "FOV must be finite and between 50 and 100 degrees");
+        }
+        return fovDegrees;
     }
 
     private static void cleanupAfterInitializationFailure(

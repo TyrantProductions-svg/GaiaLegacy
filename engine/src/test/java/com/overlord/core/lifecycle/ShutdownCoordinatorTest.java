@@ -109,4 +109,30 @@ class ShutdownCoordinatorTest {
         assertEquals(List.of("first", "later"), events);
         assertSame(laterFailure, thrown.getSuppressed()[0]);
     }
+
+    @Test
+    void repeatedSameFailureInstanceNeverSelfSuppressesAndFinalCleanupStillRuns() {
+        List<String> events = new ArrayList<>();
+        RuntimeException shared = new RuntimeException("shared cleanup failure");
+        ShutdownCoordinator coordinator = new ShutdownCoordinator();
+        coordinator.register("final", () -> events.add("final"));
+        coordinator.register(
+                "same-again",
+                () -> {
+                    events.add("same-again");
+                    throw shared;
+                });
+        coordinator.register(
+                "first",
+                () -> {
+                    events.add("first");
+                    throw shared;
+                });
+
+        RuntimeException thrown = assertThrows(RuntimeException.class, coordinator::close);
+
+        assertSame(shared, thrown);
+        assertEquals(List.of("first", "same-again", "final"), events);
+        assertEquals(0, thrown.getSuppressed().length);
+    }
 }

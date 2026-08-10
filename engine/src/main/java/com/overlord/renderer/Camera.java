@@ -5,6 +5,8 @@ import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
 public class Camera {
+    private static final float MIN_MOUSE_SENSITIVITY = 0.02f;
+    private static final float MAX_MOUSE_SENSITIVITY = 0.50f;
     
     private Vector3f position;
     private Vector3f front;
@@ -17,6 +19,7 @@ public class Camera {
     
     private float movementSpeed;
     private float mouseSensitivity;
+    private boolean invertY;
     
     public Camera() {
         position = new Vector3f(0.0f, 0.0f, 3.0f);
@@ -30,6 +33,7 @@ public class Camera {
         
         movementSpeed = GameConfig.Player.MOVEMENT_SPEED;
         mouseSensitivity = GameConfig.Input.MOUSE_SENSITIVITY;
+        invertY = false;
         
         updateVectors();
     }
@@ -69,6 +73,9 @@ public class Camera {
     public void processMouseMovement(float xoffset, float yoffset) {
         xoffset *= mouseSensitivity;
         yoffset *= mouseSensitivity;
+        if (invertY) {
+            yoffset = -yoffset;
+        }
         
         yaw += xoffset;
         pitch += yoffset;
@@ -108,6 +115,17 @@ public class Camera {
     
     public void setMovementSpeed(float movementSpeed) {
         this.movementSpeed = movementSpeed;
+    }
+
+    public void setLookSettings(float mouseSensitivity, boolean invertY) {
+        if (!Float.isFinite(mouseSensitivity)
+                || mouseSensitivity < MIN_MOUSE_SENSITIVITY
+                || mouseSensitivity > MAX_MOUSE_SENSITIVITY) {
+            throw new IllegalArgumentException(
+                    "Mouse sensitivity must be finite and between 0.02 and 0.50");
+        }
+        this.mouseSensitivity = mouseSensitivity;
+        this.invertY = invertY;
     }
     
     public void setPitch(float pitch) {

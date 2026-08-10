@@ -1,5 +1,37 @@
 # Changelog
 
+## Phase 13 product shell, settings, and audio - 2026-08-10
+
+### Added
+
+- Main Menu, Pause, Settings, Controls, modal routing, input blocking, and a
+  fresh `GameSession` lifecycle under one owner-thread `ProductLoop`.
+- Versioned cross-platform settings persistence with transactional Apply,
+  validated defaults, hot display/input/audio settings, and next-session world
+  defaults.
+- Owner-thread OpenAL/STB Vorbis streaming, Gaia Main Menu/exploration music,
+  pause ducking, focus mute/recovery, volume buses, Silent fallback, packaged
+  Gaia/Legacy runtime OGG assets, and authored-source provenance.
+
+### Verified
+
+- Windows fresh clean build: 2,248 tests, 2,247 passed, 1 skipped, zero
+  failures/errors; 30/30 build tasks passed.
+- Windows development runtime passed for 10 minutes and installDist passed for
+  7 minutes with no reported anomaly.
+- Apple Silicon MacBook Air / native arm64 / Java 26 complete Gate 13D
+  automated/native, development, and installDist checklist is HUMAN-REPORTED
+  PASS on exact implementation candidate
+  `a16855c19082a09f21bd53389cd24f711bd13f0e`. Exact macOS version, test totals,
+  raw logs, runtime durations, and audio-device details were not supplied.
+
+### Deferred
+
+- F3 numeric ghosting remains an accepted debug-only issue.
+- Load World/save persistence belongs to Phase 14.
+- Loading percentage progress and ordinary-exploration Legacy routing remain
+  deferred.
+
 ## Milestone 1 release candidate - 2026-08-08
 
 ### Added across Milestone 1

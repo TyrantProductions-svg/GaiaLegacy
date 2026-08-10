@@ -64,6 +64,8 @@ tasks.register('verifyPackagedResources') {
             'assets/gaia/atlases/blocks.json',
             'assets/gaia/textures/atlas.png',
             'assets/gaia/textures/effects/block_damage.png',
+            'assets/gaia/audio/music/gaia.ogg',
+            'assets/gaia/audio/music/legacy.ogg',
             'assets/gaia/ui/ui-assets.json',
             'assets/gaia/ui/ui_font.png',
             'assets/gaia/ui/ui_font.json',
@@ -77,6 +79,15 @@ tasks.register('verifyPackagedResources') {
                         "Packaged game JAR is missing ${path}")
                 }
             }
+            def packagedMp3 = zip.entries().findAll { entry ->
+                !entry.directory
+                    && entry.name.toLowerCase(java.util.Locale.ROOT).endsWith('.mp3')
+            }
+            if (!packagedMp3.isEmpty()) {
+                throw new GradleException(
+                    "Packaged game JAR must not contain source MP3 files: "
+                        + "${packagedMp3*.name}")
+            }
         }
     }
 }
@@ -85,8 +96,81 @@ tasks.named('check') {
     dependsOn tasks.named('verifyPackagedResources')
 }
 
+tasks.register('verifyInstalledAudioRuntime') {
+    if (!providers.gradleProperty('gaiaAudioAuditRoot').isPresent()) {
+        dependsOn tasks.named('installDist')
+    }
+    doLast {
+        def auditRoot = providers.gradleProperty('gaiaAudioAuditRoot')
+            .map { file(it) }
+            .getOrElse(file('build/install/game'))
+        def libraryDirectory = new File(auditRoot, 'lib')
+        def resolvedOpenAl = configurations.runtimeClasspath
+            .resolvedConfiguration
+            .resolvedArtifacts
+            .findAll { artifact ->
+                artifact.moduleVersion.id.group == 'org.lwjgl'
+                    && artifact.name == 'lwjgl-openal'
+            }
+        def resolvedApi = resolvedOpenAl.findAll { artifact ->
+            artifact.classifier == null
+        }
+        if (resolvedApi.size() != 1) {
+            throw new GradleException(
+                'AUDIO_INSTALL_OPENAL_API_SET_MISMATCH '
+                    + "expected exactly one resolved API, actual=${resolvedApi*.file*.name}")
+        }
+        def resolvedNative = resolvedOpenAl.findAll { artifact ->
+            artifact.classifier != null
+        }
+        if (resolvedNative.size() != 1) {
+            throw new GradleException(
+                'AUDIO_INSTALL_OPENAL_NATIVE_SET_MISMATCH '
+                    + "expected exactly one resolved native, actual=${resolvedNative*.file*.name}")
+        }
+
+        def expectedApi = [resolvedApi[0].file.name] as Set
+        def expectedNative = [resolvedNative[0].file.name] as Set
+        def installedOpenAl = fileTree(libraryDirectory) {
+            include 'lwjgl-openal-*.jar'
+        }.files.collect { it.name } as Set
+        def installedApi = installedOpenAl.findAll { name ->
+            !name.contains('-natives-')
+        } as Set
+        def installedNative = installedOpenAl.findAll { name ->
+            name.contains('-natives-')
+        } as Set
+        if (installedApi != expectedApi) {
+            throw new GradleException(
+                'AUDIO_INSTALL_OPENAL_API_SET_MISMATCH '
+                    + "expected=${expectedApi.sort()} actual=${installedApi.sort()}")
+        }
+        if (installedNative != expectedNative) {
+            throw new GradleException(
+                'AUDIO_INSTALL_OPENAL_NATIVE_SET_MISMATCH '
+                    + "expected=${expectedNative.sort()} actual=${installedNative.sort()}")
+        }
+
+        def looseMp3 = fileTree(auditRoot).files.findAll { installed ->
+            installed.name.toLowerCase(java.util.Locale.ROOT).endsWith('.mp3')
+        }.collect { installed ->
+            auditRoot.toPath().relativize(installed.toPath()).toString()
+        }.sort()
+        if (!looseMp3.isEmpty()) {
+            throw new GradleException(
+                "AUDIO_INSTALL_MP3_FORBIDDEN paths=${looseMp3}")
+        }
+
+        println(
+            'AUDIO_INSTALL_AUDIT_OK '
+                + "api=${resolvedApi[0].file.name} "
+                + "native=${resolvedNative[0].file.name}")
+    }
+}
+
 tasks.register('verifyInstalledShaderResources') {
     dependsOn tasks.named('installDist')
+    dependsOn tasks.named('verifyInstalledAudioRuntime')
     doLast {
         def libraryDirectory = file('build/install/game/lib')
         def engineJars = fileTree(libraryDirectory) {
@@ -131,9 +215,11 @@ tasks.register('verifyInstalledShaderResources') {
                     + "${libraryDirectory}, found ${gameJars}")
         }
         def gameJar = gameJars[0]
-        def requiredGameUi = [
+        def requiredGameResources = [
             'META-INF/gaialegacy/resource-indexes.list',
             'assets/gaia/resource-index.json',
+            'assets/gaia/audio/music/gaia.ogg',
+            'assets/gaia/audio/music/legacy.ogg',
             'assets/gaia/ui/ui-assets.json',
             'assets/gaia/ui/ui_font.png',
             'assets/gaia/ui/ui_font.json',
@@ -141,11 +227,20 @@ tasks.register('verifyInstalledShaderResources') {
             'assets/gaia/ui/ui_icons.json'
         ]
         new java.util.zip.ZipFile(gameJar).withCloseable { zip ->
-            requiredGameUi.each { path ->
+            requiredGameResources.each { path ->
                 if (zip.getEntry(path) == null) {
                     throw new GradleException(
                         "Installed game JAR is missing ${path}")
                 }
+            }
+            def packagedMp3 = zip.entries().findAll { entry ->
+                !entry.directory
+                    && entry.name.toLowerCase(java.util.Locale.ROOT).endsWith('.mp3')
+            }
+            if (!packagedMp3.isEmpty()) {
+                throw new GradleException(
+                    "Installed game JAR must not contain source MP3 files: "
+                        + "${packagedMp3*.name}")
             }
         }
     }

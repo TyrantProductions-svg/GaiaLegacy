@@ -5,9 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.gaia.world.WorldLoadResult;
-import com.gaia.world.WorldLoadState;
 import com.gaia.interaction.feedback.FirstPersonMovementState;
+import com.gaia.world.WorldLoadResult;
 import com.overlord.config.GameConfig;
 import com.overlord.physics.Aabb;
 import com.overlord.physics.BlockCollisionShapeResolver;
@@ -29,236 +28,152 @@ class GameLoopStructureTest {
     void movementPresentationCaptureReadsButNeverMutatesAuthoritativeBody() {
         World world = new World();
         PlayerController player = playerController(world);
-        Vector3f expectedPosition = new Vector3f(3.0f, 4.0f, 5.0f);
-        Vector3f expectedVelocity = new Vector3f(3.0f, -2.0f, 4.0f);
+        Vector3f expectedPosition =
+                new Vector3f(3.0f, 4.0f, 5.0f);
+        Vector3f expectedVelocity =
+                new Vector3f(3.0f, -2.0f, 4.0f);
         player.body().teleport(expectedPosition);
         player.body().setLinearVelocity(expectedVelocity);
 
-        FirstPersonMovementState state = GameLoop.movementState(
-                player, new Vector3f(), new Vector3f());
+        FirstPersonMovementState state =
+                GameLoop.movementState(
+                        player,
+                        new Vector3f(),
+                        new Vector3f());
 
         assertEquals(4.0f, state.feetY());
         assertEquals(5.0f, state.horizontalSpeed());
         assertEquals(-2.0f, state.verticalSpeed());
         assertFalse(state.grounded());
         assertFalse(state.noclip());
-        assertEquals(expectedPosition, player.body().position(new Vector3f()));
-        assertEquals(expectedVelocity, player.body().linearVelocity(new Vector3f()));
+        assertEquals(
+                expectedPosition,
+                player.body().position(new Vector3f()));
+        assertEquals(
+                expectedVelocity,
+                player.body().linearVelocity(new Vector3f()));
     }
 
     @Test
-    void pumpsChunkLifecycleBeforeRenderingOnlyCompleteInitialTerrain()
+    void productLoopDelegatesSessionLifecycleWithoutOwningWorldLoadOrFixedTime()
             throws IOException {
-        String source =
+        String productLoop =
                 Files.readString(
                         Path.of(
-                                "src/main/java/com/gaia/"
-                                        + "GameLoop.java"));
-        String compact = source.replaceAll("\\s+", "");
-
-        assertTrue(compact.contains("privateWorldLoadResultloadResult;"));
-        assertTrue(
-                compact.contains(
-                        "completeLoadingIfReady(){"
-                                + "if(loadResult!=null){return;}"));
-        assertTrue(compact.contains("chunkMeshes().scheduleEligible()"));
-        assertTrue(
-                compact.contains(
-                        "chunkMeshes().processMainThreadWork()"));
-        assertTrue(compact.contains("chunkMeshes().pollFailure()"));
-        assertTrue(compact.contains("loadResult.initialChunks()"));
-        assertTrue(compact.contains("chunkMeshes().allRenderable("));
-        assertTrue(compact.contains("dispatchFeedbackFrame("));
-        assertTrue(compact.contains(
-                "feedback->{GameLoopFrameOrchestrator.captureAndRender("));
-        assertTrue(compact.contains(
-                "fixedInput->captureHudFrame("));
-        assertTrue(compact.contains(
-                "context.engine().getRenderer().renderFrame(newRenderFrameInput("));
-        assertTrue(compact.contains(
-                "state==State.RUNNING?List.copyOf(context.chunkMeshes().renderObjects()):"
-                        + "List.of(),frameDeltaSeconds,"
-                        + "context.chunkMeshes().meshQueueDepth(),feedback,hud.frame()"));
-
-        int schedule = compact.indexOf("chunkMeshes().scheduleEligible()");
-        int process =
-                compact.indexOf(
-                        "chunkMeshes().processMainThreadWork()");
-        int failure = compact.indexOf("chunkMeshes().pollFailure()");
-        int allRenderable =
-                compact.indexOf("chunkMeshes().allRenderable(");
-        int pump = compact.indexOf("pumpChunkMeshes();");
-        int render = compact.indexOf("renderFrame(");
-        assertTrue(schedule < process);
-        assertTrue(process < failure);
-        assertTrue(failure < allRenderable);
-        assertTrue(pump < render);
-
-        assertFalse(compact.contains(".clear();"));
-        assertFalse(compact.contains(".renderChunks("));
-        assertFalse(source.contains("result.meshData()"));
-        assertFalse(source.contains("combineMeshData"));
-        assertFalse(source.contains("new Mesh("));
-        assertFalse(source.contains("replaceMesh("));
-    }
-
-    @Test
-    void preservesMeshFailureIdentity() throws IOException {
-        String source =
+                                "src/main/java/com/gaia/shell/"
+                                        + "ProductLoop.java"));
+        String gameplayHelpers =
                 Files.readString(
                         Path.of(
                                 "src/main/java/com/gaia/"
                                         + "GameLoop.java"));
 
-        assertTrue(
-                source.contains(
-                        "if (failure instanceof RuntimeException "
-                                + "runtimeException)"));
-        assertTrue(source.contains("throw runtimeException;"));
-        assertTrue(source.contains("throw (Error) failure;"));
-    }
-
-    @Test
-    void failedWorldLoadEntersExplicitFailedStateBeforeRethrow()
-            throws IOException {
-        String source =
-                Files.readString(
-                        Path.of(
-                                "src/main/java/com/gaia/"
-                                        + "GameLoop.java"));
-        String compact = source.replaceAll("\\s+", "");
-
-        assertTrue(compact.contains("FAILED"));
-        assertTrue(compact.contains("state=State.FAILED;"));
-        assertTrue(
-                compact.contains(
-                        "context.worldLoader().state()"
-                                + "!=WorldLoadState.SUCCEEDED"));
+        assertTrue(productLoop.contains("GameSession"));
+        assertTrue(productLoop.contains("session.pollLoad()"));
+        assertTrue(productLoop.contains("session.advancePlaying("));
+        assertTrue(productLoop.contains("session.capturePaused()"));
+        assertTrue(productLoop.contains("session.discardFixedTime()"));
+        assertTrue(productLoop.contains("inputManager.invalidateGameplayInput()"));
         assertFalse(
-                compact.contains(
-                        "state=State.RUNNING;"
-                                + "if(context.worldLoader().state()"
-                                + "==WorldLoadState.FAILED"));
-        assertEquals(WorldLoadState.FAILED, WorldLoadState.valueOf("FAILED"));
+                java.util.Arrays.stream(
+                                GameLoop.class.getDeclaredFields())
+                        .anyMatch(
+                                field ->
+                                        field.getType()
+                                                == WorldLoadResult.class));
+        assertFalse(productLoop.contains("completeLoadingIfReady("));
+        assertFalse(productLoop.contains("fixedStepClock().advance("));
+        assertFalse(productLoop.contains("new World("));
+        assertFalse(productLoop.contains("BlockInteractionController"));
+        assertFalse(productLoop.contains("InteractionFeedbackCoordinator"));
+        assertEquals(1, occurrences(productLoop, "while ("));
+        assertEquals(0, occurrences(gameplayHelpers, "while ("));
     }
 
     @Test
-    void loadsFeetThenRunsOrderedPhysicsAndRenderInterpolation()
+    void sessionRuntimePreservesFixedOrderingAndImmutableCapture()
             throws IOException {
         String source =
                 Files.readString(
                         Path.of(
-                                "src/main/java/com/gaia/"
-                                        + "GameLoop.java"));
+                                "src/main/java/com/gaia/session/"
+                                        + "GameSessionFactory.java"));
         String compact = source.replaceAll("\\s+", "");
 
         assertTrue(
                 compact.contains(
-                        "completePlayerLoading("
-                                + "context.playerController(),loadResult)"));
+                        "FixedBatchfixedBatch=runFixedBatch(fixedSteps)"));
         assertTrue(
                 compact.contains(
-                        "playerController.teleport("
-                                + "loadResult.playerFeetPosition())"));
+                        "inputManager.consumeFixedInput()"));
         assertTrue(
                 compact.contains(
-                        "if(!playerController"
-                                + ".recoverFromPenetration()){"
-                                + "thrownewIllegalStateException("));
-        assertTrue(compact.contains(
-                "GameLoopFrameOrchestrator.runFixedBatch("));
-        assertTrue(compact.contains(
-                "inventoryInput().handleSelection(stepInput)"));
-        assertTrue(compact.contains(
-                "inventoryInput().handleDrop(stepInput,inventoryTick,"
-                        + "Optional.of(dropLocation(inventoryTick)),fixedInteractionEnabled)"));
-        assertTrue(compact.contains(
-                "physicalWorldItems().prepareStep(inventoryTick)"));
-        assertTrue(compact.contains("physicsWorld().step(fixedDelta)"));
-        assertTrue(compact.contains("physicalWorldItems().finishStep()"));
-        assertTrue(compact.contains("worldInteractionInput().route("));
-        assertTrue(compact.contains("worldItemPickup().fixedUpdate("));
-        assertTrue(compact.contains(
-                "blockInteraction().fixedUpdate("));
+                        "step==0?frameInput:frameInput.heldOnly()"));
         assertTrue(
                 compact.contains(
-                        "playerController().body()"
-                                + ".interpolatedPosition("));
+                        "inventoryInput.handleSelection(stepInput)"));
         assertTrue(
                 compact.contains(
-                        "fixedStepClock().interpolationAlpha()"));
+                        "physicalWorldItems.prepareStep(inventoryTick)"));
+        assertTrue(compact.contains("physicsWorld.step(fixedDelta)"));
+        assertTrue(
+                compact.contains(
+                        "physicalWorldItems.finishStep()"));
+        assertTrue(
+                compact.contains(
+                        "worldItemPickup.fixedUpdate("));
+        assertTrue(
+                compact.contains(
+                        "blockInteraction.fixedUpdate("));
+        assertTrue(
+                compact.contains(
+                        "feedback.fixedUpdate("));
+        assertTrue(
+                compact.contains(
+                        "ModuleManager.getInstance().updateAll("));
+        assertTrue(
+                compact.contains(
+                        "EventBus.getInstance().processAll()"));
+        assertTrue(
+                compact.contains(
+                        "fixedStepClock.interpolationAlpha()"));
+        assertTrue(
+                compact.contains("newGameSessionFrame("));
 
-        int playerUpdate =
-                compact.indexOf("playerManager().fixedUpdate(");
-        int inventoryInput = compact.indexOf("inventoryInput().handleSelection(");
-        int worldItemPrepare = compact.indexOf(
-                "physicalWorldItems().prepareStep(inventoryTick)");
-        int physicsStep =
-                compact.indexOf("physicsWorld().step(fixedDelta)");
-        int worldItemFinish = compact.indexOf(
-                "physicalWorldItems().finishStep()");
-        int moduleUpdate =
+        int selection =
                 compact.indexOf(
-                        "ModuleManager.getInstance()"
-                                + ".updateAll(fixedDelta)");
-        int eventProcessing =
+                        "inventoryInput.handleSelection(stepInput)");
+        int player =
+                compact.indexOf("playerManager.fixedUpdate(");
+        int prepare =
+                compact.indexOf(
+                        "physicalWorldItems.prepareStep(inventoryTick)");
+        int physics =
+                compact.indexOf("physicsWorld.step(fixedDelta)");
+        int finish =
+                compact.indexOf(
+                        "physicalWorldItems.finishStep()");
+        int pickup =
+                compact.indexOf("worldItemPickup.fixedUpdate(");
+        int interaction =
+                compact.indexOf("blockInteraction.fixedUpdate(");
+        int feedback =
+                compact.indexOf("feedback.fixedUpdate(");
+        int modules =
+                compact.indexOf(
+                        "ModuleManager.getInstance().updateAll(");
+        int events =
                 compact.indexOf(
                         "EventBus.getInstance().processAll()");
-        int interpolation =
-                compact.indexOf(".interpolatedPosition(");
-        int cameraPosition =
-                compact.indexOf(".getCamera().setPosition(");
-        int renderCameraUpdate =
-                compact.indexOf("updateRenderCamera();");
-        int render = compact.indexOf("renderFrame(");
-        int interactionUpdate =
-                compact.indexOf("blockInteraction().fixedUpdate(");
-        int pickupUpdate =
-                compact.indexOf("worldItemPickup().fixedUpdate(");
-        int feedbackUpdate =
-                compact.indexOf("interactionFeedback().fixedUpdate(");
-        assertTrue(inventoryInput < playerUpdate);
-        assertTrue(playerUpdate < worldItemPrepare);
-        assertTrue(worldItemPrepare < physicsStep);
-        assertTrue(physicsStep < worldItemFinish);
-        assertTrue(worldItemFinish < pickupUpdate);
-        assertTrue(pickupUpdate < interactionUpdate);
-        assertTrue(worldItemFinish < interactionUpdate);
-        assertTrue(interactionUpdate < feedbackUpdate);
-        assertTrue(feedbackUpdate < moduleUpdate);
-        assertTrue(interactionUpdate < moduleUpdate);
-        assertTrue(moduleUpdate < eventProcessing);
-        assertTrue(interpolation < cameraPosition);
-        assertTrue(renderCameraUpdate < render);
-        assertFalse(source.contains("PhysicsManager"));
-        int lifecycleFeedback = compact.indexOf("handleFeedbackLifecycle("
-                + "context.interactionFeedback(),"
-                + "feedbackLifecycleBoundaryForRender,");
-        int renderFeedbackUpdate = compact.indexOf(
-                "interactionFeedback().renderUpdate(frameDeltaSeconds)");
-        int feedbackSnapshot = compact.indexOf("feedbackSnapshotPhysical(");
-        assertTrue(lifecycleFeedback >= 0);
-        assertTrue(lifecycleFeedback < feedbackSnapshot);
-        assertTrue(feedbackSnapshot < renderFeedbackUpdate);
-    }
-
-    @Test
-    void samplesAuthoritativeUiBlockStateAfterFixedUpdatesBeforeFeedbackRender()
-            throws IOException {
-        String source = Files.readString(
-                Path.of("src/main/java/com/gaia/GameLoop.java"));
-        String compact = source.replaceAll("\\s+", "");
-
-        int fixedUpdates = compact.indexOf("runFixedUpdates(frameDeltaSeconds,mouseDelta);");
-        int blockedSample = compact.indexOf(
-                "booleanfeedbackBlocked=context.interactionBlockState().blocked();");
-        int feedbackDispatch = compact.indexOf("dispatchFeedbackFrame(");
-
-        assertTrue(fixedUpdates >= 0);
-        assertTrue(blockedSample > fixedUpdates,
-                "render feedback must resample blocking state after fixed systems");
-        assertTrue(blockedSample < feedbackDispatch,
-                "blocking state must be sampled before lifecycle clear and snapshot");
+        assertTrue(selection < player);
+        assertTrue(player < prepare);
+        assertTrue(prepare < physics);
+        assertTrue(physics < finish);
+        assertTrue(finish < pickup);
+        assertTrue(pickup < interaction);
+        assertTrue(interaction < feedback);
+        assertTrue(feedback < modules);
+        assertTrue(modules < events);
     }
 
     @Test
@@ -330,9 +245,21 @@ class GameLoopStructureTest {
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
                 for (int z = minZ; z <= maxZ; z++) {
-                    assertTrue(world.setBlock(x, y, z, (byte) 1));
+                    assertTrue(
+                            world.setBlock(
+                                    x, y, z, (byte) 1));
                 }
             }
         }
+    }
+
+    private static int occurrences(String source, String token) {
+        int count = 0;
+        int index = 0;
+        while ((index = source.indexOf(token, index)) >= 0) {
+            count++;
+            index += token.length();
+        }
+        return count;
     }
 }

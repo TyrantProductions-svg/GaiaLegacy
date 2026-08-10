@@ -7,7 +7,9 @@
 GaiaLegacy is an experimental physical voxel survival project focused on
 embodied choices, deterministic exploration, and systems with explicit
 technical ownership. Milestone 1 is a pre-alpha vertical slice rather than a
-finished game.
+finished game. The current Phase 13 working branch adds a product shell,
+persistent user settings, and the first cross-platform audio foundation around
+that vertical slice.
 
 ## Milestone 1 vertical slice
 
@@ -26,8 +28,23 @@ The current release-candidate branch integrates:
   impulses, and a depth-correct held-block viewmodel;
 - OpenGL 4.1 / GLSL 410 rendering with VSync enabled by default.
 
-Persistence, a main menu, crafting, mobs, and the broader survival economy are
-not part of Milestone 1.
+World/save persistence, crafting, mobs, and the broader survival economy are
+not implemented. The application now launches to a Main Menu with New World,
+disabled `Load World - Available in Phase 14`, Settings, Controls, and Quit.
+Gameplay has an explicit Pause Menu and return-to-menu confirmation.
+
+## Product shell and audio
+
+- Settings persist VSync, FOV, mouse sensitivity, invert-Y, Chunk radius,
+  Master/Music/SFX volume, mute-when-unfocused, default game mode, and debug-HUD
+  default through a versioned platform settings file.
+- VSync, FOV, look settings, and audio apply after explicit Apply; Chunk radius,
+  default mode, and debug-HUD default are captured by the next New World/session.
+- Gaia plays as the Main Menu and exploration theme with startup fade, pause
+  ducking, and focus mute/recovery. Legacy is packaged and registered for future
+  explicit use rather than forced into normal exploration.
+- Music credit: **Leo Deng (Leosteeeve) and David Li (Omi Hurricane)**. See
+  [audio provenance](docs/audio-provenance.md).
 
 ## Requirements
 
@@ -105,6 +122,8 @@ macOS:
 | VSync | enabled, swap interval `1` |
 | Debug HUD | disabled |
 | Initial game mode | Survival |
+| Master / Music / SFX | `100%` / `65%` / `100%` |
+| Mute when unfocused | enabled |
 
 The Chunk radius is a finite demo-world loading boundary. Milestone 1 does
 not implement a configurable streaming distance or a separate
@@ -153,9 +172,11 @@ See [CONTROLS.md](CONTROLS.md) for mode rules and developer-only inputs.
 | Drop one / full stack | `Q` / `Ctrl+Q` |
 | HUD / debug HUD | `F2` / `F3` |
 | Survival / Creative | `F4` |
-| Cursor capture / exit | `F1` / `Escape` |
+| Pause/resume / route back | `F1` / `Escape` |
 
 ## Platform acceptance
+
+Milestone 1 Phase 12 acceptance is historical:
 
 | Platform | Automated | Development runtime | installDist runtime |
 | --- | --- | --- | --- |
@@ -168,10 +189,24 @@ supplied. The F3 FPS/frame-time numeric ghosting reproduced and remains an
 accepted debug-only known issue. Detailed platform evidence is recorded in
 [the Phase 12 handoff](docs/agent-handoffs/phase-12-handoff.md).
 
+Phase 13 cross-platform acceptance is complete on exact implementation
+candidate `a16855c19082a09f21bd53389cd24f711bd13f0e`:
+
+| Platform | Automated/native | Development runtime | installDist runtime |
+| --- | --- | --- | --- |
+| Windows | PASS: 2,248 total, 2,247 passed, 1 skipped, 0 failed/errors | PASS, 10 minutes | PASS, 7 minutes |
+| Apple Silicon macOS | HUMAN-REPORTED PASS | HUMAN-REPORTED PASS | HUMAN-REPORTED PASS |
+
+The macOS tester used an Apple Silicon MacBook Air / native arm64 with Java 26
+and reported the complete requested Gate 13D checklist passing. Exact macOS
+version, JUnit totals, raw logs, runtime durations, and audio-device details
+were not supplied and are not claimed. See the
+[Phase 13 acceptance matrix](docs/testing/phase-13-product-shell-audio-acceptance.md).
+
 ## Architecture map
 
-- `engine/`: reusable window/context, rendering, input, physics, scheduling,
-  events, ECS primitives, resources, voxel storage, and meshing;
+- `engine/`: reusable window/context, rendering, input, audio/OpenAL, physics,
+  scheduling, events, ECS primitives, resources, voxel storage, and meshing;
 - `game/`: Gaia startup composition, block/resource definitions, deterministic
   generation, transactions, feedback, HUD, and gameplay orchestration;
 - `tools/`: deterministic project-local asset generation tools;
@@ -181,14 +216,16 @@ accepted debug-only known issue. Detailed platform evidence is recorded in
 OpenGL/GLFW and GPU lifecycle operations stay on the context-owning main
 thread. CPU world generation and meshing may run on workers and publish only
 through the established revisioned boundaries. See
-[the current architecture baseline](docs/architecture/current-baseline.md).
+[the current architecture baseline](docs/architecture/current-baseline.md) and
+[the Phase 13 product-shell/settings/audio architecture](docs/architecture/product-shell-settings-audio.md).
 
-## Known issues and Milestone 2
+## Known issues and deferred work
 
-See [KNOWN_ISSUES.md](KNOWN_ISSUES.md). Milestone 2 owns menus, persistence,
-settings UI, crafting, mobs, expanded content, and any future audio system.
-`Gaia.mp3` and `Legacy.mp3` are named future collaborator assets only and are
-not present in, packaged by, or played by this release candidate.
+See [KNOWN_ISSUES.md](KNOWN_ISSUES.md). Phase 14 owns real save discovery and
+world persistence. Crafting, mobs, expanded content, key rebinding, and broader
+accessibility remain later Milestone 2 work. Gaia and Legacy are authored
+source assets with verified runtime OGG derivatives; source MP3s are excluded
+from runtime packaging.
 
 ## License and provenance
 

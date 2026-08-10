@@ -1,0 +1,81 @@
+package com.gaia.shell;
+
+import java.util.Objects;
+
+/** Typed product-shell intents produced by screen input. */
+public sealed interface ScreenCommand permits
+        ScreenCommand.NewWorld,
+        ScreenCommand.OpenSettings,
+        ScreenCommand.OpenControls,
+        ScreenCommand.Resume,
+        ScreenCommand.ReturnToMainMenu,
+        ScreenCommand.Quit,
+        ScreenCommand.Back,
+        ScreenCommand.Confirm,
+        ScreenCommand.Dismiss,
+        ScreenCommand.ToggleSetting,
+        ScreenCommand.AdjustSetting,
+        ScreenCommand.ApplySettings,
+        ScreenCommand.DiscardSettings,
+        ScreenCommand.CancelSettings {
+    record NewWorld() implements ScreenCommand {}
+
+    record OpenSettings() implements ScreenCommand {}
+
+    record OpenControls() implements ScreenCommand {}
+
+    record Resume() implements ScreenCommand {}
+
+    record ReturnToMainMenu() implements ScreenCommand {}
+
+    record Quit() implements ScreenCommand {}
+
+    record Back() implements ScreenCommand {}
+
+    record Confirm() implements ScreenCommand {}
+
+    record Dismiss() implements ScreenCommand {}
+
+    record ToggleSetting(ToggleTarget target) implements ScreenCommand {
+        public ToggleSetting {
+            Objects.requireNonNull(target, "target");
+        }
+    }
+
+    record AdjustSetting(
+            AdjustmentTarget target,
+            AdjustmentDirection direction) implements ScreenCommand {
+        public AdjustSetting {
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(direction, "direction");
+        }
+    }
+
+    record ApplySettings() implements ScreenCommand {}
+
+    record DiscardSettings() implements ScreenCommand {}
+
+    record CancelSettings() implements ScreenCommand {}
+
+    enum ToggleTarget {
+        VSYNC,
+        INVERT_Y,
+        MUTE_WHEN_UNFOCUSED,
+        DEFAULT_GAME_MODE,
+        DEBUG_HUD_DEFAULT
+    }
+
+    enum AdjustmentTarget {
+        FOV,
+        MOUSE_SENSITIVITY,
+        CHUNK_RADIUS,
+        MASTER_VOLUME,
+        MUSIC_VOLUME,
+        SFX_VOLUME
+    }
+
+    enum AdjustmentDirection {
+        DECREMENT,
+        INCREMENT
+    }
+}

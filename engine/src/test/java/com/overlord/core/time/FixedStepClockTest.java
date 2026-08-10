@@ -39,4 +39,13 @@ class FixedStepClockTest {
 
         assertEquals(0.5, clock.interpolationAlpha(), 1.0e-9);
     }
+
+    @Test
+    void discardRemainderPreventsPausedTimeFromCompletingAnOldStep() {
+        FixedStepClock clock = new FixedStepClock(1.0 / 60.0, 8);
+        assertEquals(0, clock.advance(0.010));
+        clock.discardRemainder();
+        assertEquals(0.0, clock.remainderSeconds());
+        assertEquals(0, clock.advance(0.0067));
+    }
 }

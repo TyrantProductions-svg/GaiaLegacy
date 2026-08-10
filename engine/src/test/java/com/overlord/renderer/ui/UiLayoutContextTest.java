@@ -66,6 +66,21 @@ class UiLayoutContextTest {
         assertEquals(31, layout.snapY(20.4d));
     }
 
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("windowToLogicalCoordinates")
+    void mapsWindowCoordinatesIntoFramebufferDerivedLogicalUiSpace(
+            String scenario,
+            RenderSurfaceMetrics metrics,
+            double windowX,
+            double windowY,
+            double expectedLogicalX,
+            double expectedLogicalY) {
+        UiLayoutContext layout = new UiLayoutContext(metrics);
+
+        assertEquals(expectedLogicalX, layout.windowToLogicalX(windowX), 0.000_001d);
+        assertEquals(expectedLogicalY, layout.windowToLogicalY(windowY), 0.000_001d);
+    }
+
     @Test
     void rejectsMissingMetricsAndNonFiniteOrOverflowingCoordinates() {
         assertThrows(NullPointerException.class, () -> new UiLayoutContext(null));
@@ -75,6 +90,15 @@ class UiLayoutContextTest {
         assertThrows(IllegalArgumentException.class, () -> layout.snapX(Double.NaN));
         assertThrows(IllegalArgumentException.class, () -> layout.snapY(Double.POSITIVE_INFINITY));
         assertThrows(IllegalArgumentException.class, () -> layout.snapX(Double.MAX_VALUE));
+        assertThrows(IllegalArgumentException.class, () -> layout.windowToLogicalX(Double.NaN));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> layout.windowToLogicalY(Double.POSITIVE_INFINITY));
+
+        UiLayoutContext zeroWindow =
+                new UiLayoutContext(new RenderSurfaceMetrics(0, 0, 0, 0, 1.0f, 1.0f));
+        assertThrows(IllegalStateException.class, () -> zeroWindow.windowToLogicalX(0.0d));
+        assertThrows(IllegalStateException.class, () -> zeroWindow.windowToLogicalY(0.0d));
     }
 
     private static Stream<Arguments> layoutSnapshots() {
@@ -177,6 +201,45 @@ class UiLayoutContextTest {
                         new RenderSurfaceMetrics(1536, 864, 3840, 2160, 1.25f, 1.5f),
                         new UiRect(0.0d, 0.0d, 3072.0d, 1440.0d),
                         new UiRect(13.0d, 30.0d, 38.0d, 61.0d)));
+    }
+
+    private static Stream<Arguments> windowToLogicalCoordinates() {
+        return Stream.of(
+                Arguments.of(
+                        "Windows 150 percent maps the window center to the UI center",
+                        new RenderSurfaceMetrics(1920, 1080, 1920, 1080, 1.5f, 1.5f),
+                        960.0d,
+                        540.0d,
+                        640.0d,
+                        360.0d),
+                Arguments.of(
+                        "Retina 2x keeps logical window coordinates unchanged",
+                        new RenderSurfaceMetrics(1280, 720, 2560, 1440, 2.0f, 2.0f),
+                        640.0d,
+                        360.0d,
+                        640.0d,
+                        360.0d),
+                Arguments.of(
+                        "mismatched axes scale independently",
+                        new RenderSurfaceMetrics(2000, 1000, 2400, 1800, 1.5f, 2.0f),
+                        1000.0d,
+                        500.0d,
+                        800.0d,
+                        450.0d),
+                Arguments.of(
+                        "coordinates below the window remain outside the UI viewport",
+                        new RenderSurfaceMetrics(1920, 1080, 1920, 1080, 1.5f, 1.5f),
+                        -0.015d,
+                        -0.03d,
+                        -0.01d,
+                        -0.02d),
+                Arguments.of(
+                        "exclusive window extents map to exclusive UI extents",
+                        new RenderSurfaceMetrics(2000, 1000, 2400, 1800, 1.5f, 2.0f),
+                        2000.0d,
+                        1000.0d,
+                        1600.0d,
+                        900.0d));
     }
 
     private static Arguments snapshot(

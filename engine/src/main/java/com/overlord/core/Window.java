@@ -50,6 +50,7 @@ public class Window {
     private final String title;
     private final int requestedWidth;
     private final int requestedHeight;
+    private final boolean initialVsync;
     private long window;
     private WindowMetrics metrics;
     private boolean glfwInitialized;
@@ -63,18 +64,43 @@ public class Window {
                 mainThreadGuard,
                 GameConfig.Window.TITLE,
                 GameConfig.Window.WIDTH,
-                GameConfig.Window.HEIGHT);
+                GameConfig.Window.HEIGHT,
+                GameConfig.Window.VSYNC);
+    }
+
+    public Window(MainThreadGuard mainThreadGuard, boolean initialVsync) {
+        this(
+                mainThreadGuard,
+                GameConfig.Window.TITLE,
+                GameConfig.Window.WIDTH,
+                GameConfig.Window.HEIGHT,
+                initialVsync);
     }
 
     public Window(String title, int width, int height) {
-        this(MainThreadGuard.captureCurrentThread(), title, width, height);
+        this(
+                MainThreadGuard.captureCurrentThread(),
+                title,
+                width,
+                height,
+                GameConfig.Window.VSYNC);
     }
 
     public Window(MainThreadGuard mainThreadGuard, String title, int width, int height) {
+        this(mainThreadGuard, title, width, height, GameConfig.Window.VSYNC);
+    }
+
+    public Window(
+            MainThreadGuard mainThreadGuard,
+            String title,
+            int width,
+            int height,
+            boolean initialVsync) {
         this.mainThreadGuard = Objects.requireNonNull(mainThreadGuard, "mainThreadGuard");
         this.title = Objects.requireNonNull(title, "title");
         this.requestedWidth = width;
         this.requestedHeight = height;
+        this.initialVsync = initialVsync;
         init();
     }
 
@@ -114,7 +140,7 @@ public class Window {
             configureContext(
                     mainThreadGuard,
                     window,
-                    GameConfig.Window.VSYNC,
+                    initialVsync,
                     org.lwjgl.glfw.GLFW::glfwMakeContextCurrent,
                     org.lwjgl.glfw.GLFW::glfwSwapInterval);
             GL.createCapabilities();
@@ -137,8 +163,22 @@ public class Window {
                 .assertMainThread("GLFW context activation and VSync");
         Objects.requireNonNull(makeContextCurrent, "makeContextCurrent")
                 .accept(window);
+        applySwapInterval(vsync, setSwapInterval);
+    }
+
+    static void applySwapInterval(
+            boolean vsync, IntConsumer setSwapInterval) {
         Objects.requireNonNull(setSwapInterval, "setSwapInterval")
                 .accept(vsync ? 1 : 0);
+    }
+
+    static void applySwapInterval(
+            MainThreadGuard mainThreadGuard,
+            boolean vsync,
+            IntConsumer setSwapInterval) {
+        Objects.requireNonNull(mainThreadGuard, "mainThreadGuard")
+                .assertMainThread("runtime VSync application");
+        applySwapInterval(vsync, setSwapInterval);
     }
 
     private void initializeMetrics() {
@@ -174,6 +214,13 @@ public class Window {
         mainThreadGuard.assertMainThread("cursor capture");
         glfwSetInputMode(
                 window, GLFW_CURSOR, captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+    }
+
+    public void setVsync(boolean vsync) {
+        applySwapInterval(
+                mainThreadGuard,
+                vsync,
+                org.lwjgl.glfw.GLFW::glfwSwapInterval);
     }
 
     public void pollEvents() {

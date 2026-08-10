@@ -2,20 +2,30 @@
 
 ## Snapshot
 
-The current working snapshot is Phase 12 release-candidate integration on
-`release/milestone-1-vertical-slice`, based on
-`origin/main@25d3a78040b08f32d6264a6a7e2a8968eed679f9`. All Milestone 1 feature
-phases are merged at that baseline. Phase 12 reconciles release defaults,
-native runtime and lifecycle evidence, clean-clone packaging, documentation,
-and a deterministic demo route without adding another gameplay authority.
+The current snapshot is Phase 13 product-shell, settings, and audio integration
+on `feat/product-shell-audio`, based on
+`origin/main@80ea67bf9a41e467dbd17ba81876ab870c41407d`. The exact implementation
+candidate is `a16855c19082a09f21bd53389cd24f711bd13f0e`. Gates 13A-13D pass and
+cross-platform acceptance is complete for human-created PR review.
 
-The protected application graph is `GameBootstrap -> GameContext -> GameLoop`.
+The protected product graph is `GameBootstrap -> ProductLoop -> optional
+GameSession`. `ProductLoop` is the sole outer owner-thread loop; each New World
+creates one fresh session containing the existing fixed-step gameplay runtime.
 `LogicalWorldItemService`, `BodyInventoryService`, `DefaultWorldMutationService`,
 `ChunkRepository`, `ChunkMeshManager`, and `PlayerController` remain the unique
-authorities for their canonical state. The renderer and HUD consume immutable
-presentation. GLFW, OpenGL, shader, framebuffer, mesh, texture, and GPU
-lifecycle calls remain on the context-owning main thread; worker threads
-publish CPU-only world and mesh results through the established boundaries.
+authorities for canonical state. Menus, settings, music, renderer, and HUD
+consume typed commands or immutable presentation; no second gameplay authority
+was added. GLFW, OpenGL, OpenAL, shader, framebuffer, mesh, texture, and GPU/
+audio-native lifecycle calls remain on their owning thread.
+
+Phase 13 adds schema-v1 platform settings, atomic persistence, hot VSync/FOV/
+look/audio application, next-session world defaults, and bounded OpenAL/STB
+Vorbis streaming. Windows Gate 13D automation passed at 2,248 tests (2,247
+passed, one skipped, zero failures/errors); development and installDist human
+acceptance passed at 10 and 7 minutes. Apple Silicon MacBook Air / native arm64
+/ Java 26 complete Gate 13D acceptance is HUMAN-REPORTED PASS on the same
+candidate. Exact macOS version, macOS test totals, raw logs, runtime durations,
+and audio-device details were not supplied and are not claimed.
 
 The release defaults are seed `12345`, world-generation algorithm `2`, finite
 radius `4` (81 loaded Chunks), vertical FOV `70.0`, mouse sensitivity `0.1`,

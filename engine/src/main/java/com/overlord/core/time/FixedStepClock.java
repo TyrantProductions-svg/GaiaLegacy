@@ -41,6 +41,10 @@ public final class FixedStepClock {
         return accumulatorSeconds;
     }
 
+    public void discardRemainder() {
+        accumulatorSeconds = 0.0;
+    }
+
     public double interpolationAlpha() {
         return Math.min(
                 Math.nextDown(1.0),
