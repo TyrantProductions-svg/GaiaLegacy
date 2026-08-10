@@ -8,7 +8,6 @@ import com.overlord.renderer.Camera;
 import com.overlord.renderer.RenderAssets;
 import com.overlord.renderer.Renderer;
 import com.overlord.renderer.visual.RenderVisualSettings;
-import com.overlord.voxel.World;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -24,13 +23,13 @@ public class Engine {
     private final RenderAssets renderAssets;
     private final AssetManager assetManager;
     private final RenderVisualSettings visualSettings;
+    private final boolean initialVsync;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
     private Window window;
     private Camera camera;
     private Renderer renderer;
-    private World world;
 
     public Engine() {
         this(
@@ -68,6 +67,20 @@ public class Engine {
             RenderAssets renderAssets,
             AssetManager assetManager,
             RenderVisualSettings visualSettings) {
+        this(
+                mainThreadGuard,
+                renderAssets,
+                assetManager,
+                visualSettings,
+                GameConfig.Window.VSYNC);
+    }
+
+    public Engine(
+            MainThreadGuard mainThreadGuard,
+            RenderAssets renderAssets,
+            AssetManager assetManager,
+            RenderVisualSettings visualSettings,
+            boolean initialVsync) {
         this.mainThreadGuard =
                 Objects.requireNonNull(mainThreadGuard, "mainThreadGuard");
         this.renderAssets =
@@ -76,6 +89,7 @@ public class Engine {
                 Objects.requireNonNull(assetManager, "assetManager");
         this.visualSettings =
                 Objects.requireNonNull(visualSettings, "visualSettings");
+        this.initialVsync = initialVsync;
         int maxCores = Runtime.getRuntime().availableProcessors();
         availableCores = Math.min(4, Math.max(1, maxCores));
         taskScheduler = new TaskScheduler(availableCores);
@@ -94,7 +108,7 @@ public class Engine {
         Renderer initializedRenderer = null;
         boolean schedulerStarted = false;
         try {
-            initializedWindow = new Window(mainThreadGuard);
+            initializedWindow = new Window(mainThreadGuard, initialVsync);
             Camera initializedCamera = new Camera();
             initializedRenderer =
                     new Renderer(
@@ -102,8 +116,6 @@ public class Engine {
                             renderAssets,
                             assetManager,
                             visualSettings);
-            World initializedWorld = new World();
-
             initializedRenderer.init(
                     initializedCamera,
                     initializedWindow.currentSurfaceMetrics());
@@ -114,7 +126,6 @@ public class Engine {
             window = initializedWindow;
             camera = initializedCamera;
             renderer = initializedRenderer;
-            world = initializedWorld;
             registerServices();
             running.set(true);
 
@@ -138,7 +149,6 @@ public class Engine {
             window = null;
             camera = null;
             renderer = null;
-            world = null;
             throw failure;
         }
     }
@@ -152,7 +162,6 @@ public class Engine {
         services.register(Window.class, window);
         services.register(Camera.class, camera);
         services.register(Renderer.class, renderer);
-        services.register(World.class, world);
     }
 
     public void submitToCore(int core, Runnable task) {
@@ -181,10 +190,6 @@ public class Engine {
 
     public Renderer getRenderer() {
         return renderer;
-    }
-
-    public World getWorld() {
-        return world;
     }
 
     public boolean isRunning() {

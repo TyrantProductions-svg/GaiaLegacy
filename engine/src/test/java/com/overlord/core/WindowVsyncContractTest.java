@@ -17,6 +17,43 @@ import org.junit.jupiter.api.Test;
 
 class WindowVsyncContractTest {
     @Test
+    void runtimeVsyncAppliesOneForTrueAndZeroForFalse() {
+        List<Integer> intervals = new ArrayList<>();
+
+        Window.applySwapInterval(true, intervals::add);
+        Window.applySwapInterval(false, intervals::add);
+
+        assertEquals(List.of(1, 0), intervals);
+    }
+
+    @Test
+    void runtimeVsyncRejectsWorkerBeforeCallingTheGlfwBoundary()
+            throws InterruptedException {
+        MainThreadGuard guard = MainThreadGuard.captureCurrentThread();
+        List<Integer> intervals = new ArrayList<>();
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        try {
+            ExecutionException failure =
+                    assertThrows(
+                            ExecutionException.class,
+                            () ->
+                                    worker.submit(
+                                                    () ->
+                                                            Window.applySwapInterval(
+                                                                    guard,
+                                                                    true,
+                                                                    intervals::add))
+                                            .get());
+
+            assertInstanceOf(IllegalStateException.class, failure.getCause());
+            assertTrue(intervals.isEmpty());
+        } finally {
+            worker.shutdownNow();
+            assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
     void releaseCandidateMakesContextCurrentBeforeEnablingVsync() {
         List<String> calls = new ArrayList<>();
 

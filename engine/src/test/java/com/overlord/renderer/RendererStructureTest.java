@@ -12,7 +12,6 @@ import com.overlord.renderer.queue.RenderQueue;
 import com.overlord.renderer.shader.WorldShaderUniforms;
 import java.io.IOException;
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -199,12 +198,10 @@ class RendererStructureTest {
             int height,
             float expectedAspect)
             throws ReflectiveOperationException {
-        Method createProjection =
-                Renderer.class.getDeclaredMethod(
-                        "createProjection", int.class, int.class);
-        createProjection.setAccessible(true);
-        Matrix4f projection =
-                (Matrix4f) createProjection.invoke(null, width, height);
+        Matrix4f projection = Renderer.projectionFor(
+                new RenderSurfaceMetrics(
+                        320, 240, width, height, 1.0f, 1.0f),
+                70.0f);
 
         assertTrue(
                 projection.isFinite(),

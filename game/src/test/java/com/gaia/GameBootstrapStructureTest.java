@@ -44,8 +44,8 @@ class GameBootstrapStructureTest {
         String source =
                 Files.readString(
                         Path.of(
-                                "src/main/java/com/gaia/"
-                                        + "GameBootstrap.java"));
+                                "src/main/java/com/gaia/session/"
+                                        + "GameSessionFactory.java"));
         String compact = source.replaceAll("\\s+", "");
 
         assertTrue(compact.contains("newChunkMeshManager("));
@@ -56,12 +56,12 @@ class GameBootstrapStructureTest {
         assertTrue(
                 compact.contains(
                         "newChunkMeshManager("
-                                + "engine.getWorld().chunks(),"
+                                + "world.chunks(),"
                                 + "newChunkMeshBuilder(blocks),"
                                 + "meshExecutor,"
                                 + "engine.getRenderer(),"
                                 + "mainThreadGuard,2)"));
-        assertTrue(compact.contains("newShutdownBarrier("));
+        assertTrue(compact.contains("newSessionShutdownBarrier("));
         assertTrue(
                 compact.contains(
                         "shutdownBarrier.registerChunkMeshes("));
@@ -69,12 +69,6 @@ class GameBootstrapStructureTest {
                 compact.contains(
                         "shutdownBarrier.registerWorldExecutor("));
 
-        int engineConstruction = compact.indexOf("newEngine(");
-        int engineRegistration =
-                compact.indexOf(
-                        "register(\"engine\","
-                                + "()->shutdownBarrier.closeEngine("
-                                + "engine::shutdown))");
         int managerConstruction =
                 compact.indexOf("newChunkMeshManager(");
         int meshLifecycleRegistration =
@@ -87,9 +81,6 @@ class GameBootstrapStructureTest {
                 compact.indexOf(
                         "register(\"world-load\"");
 
-        assertTrue(engineConstruction >= 0);
-        assertTrue(engineConstruction < engineRegistration);
-        assertTrue(engineRegistration < meshLifecycleRegistration);
         assertTrue(meshLifecycleRegistration < managerConstruction);
         assertTrue(
                 managerConstruction < worldExecutorRegistration);
@@ -111,12 +102,17 @@ class GameBootstrapStructureTest {
     @Test
     void composesIndexedAssetsBeforeEngineAndWorldWork()
             throws IOException {
-        String source =
+        String bootstrap =
                 Files.readString(
                         Path.of(
                                 "src/main/java/com/gaia/"
                                         + "GameBootstrap.java"));
-        String compact = source.replaceAll("\\s+", "");
+        String factory =
+                Files.readString(
+                        Path.of(
+                                "src/main/java/com/gaia/session/"
+                                        + "GameSessionFactory.java"));
+        String compact = bootstrap.replaceAll("\\s+", "");
 
         assertTrue(
                 compact.contains(
@@ -128,50 +124,55 @@ class GameBootstrapStructureTest {
                         "newGaiaResourceLoader(assetManager).load();"));
         assertTrue(
                 compact.contains(
-                        "RenderVisualSettingsvisualSettings="
-                                + "RenderVisualSettings.milestoneOneDefaults();"));
-        assertTrue(compact.contains("newEngine(mainThreadGuard,catalog.renderAssets(),assetManager,visualSettings);"));
+                        "newEngine(mainThreadGuard,catalog.renderAssets(),"
+                                + "assetManager,RenderVisualSettings."
+                                + "milestoneOneDefaults(),initialVsync);"));
+        assertTrue(compact.contains("newDefaultSettingsPathProvider()"));
+        assertTrue(compact.contains("JsonSettingsStore::new"));
         assertTrue(
-                source.contains(
+                factory.contains(
                         "GaiaWorldGenerator.createVisualRevisionCandidate()"));
         assertTrue(
-                source.contains(
+                factory.contains(
                         "WorldGenerationConfig.visualRevisionCandidate()"));
         assertTrue(
-                source.contains(
+                factory.contains(
                         "new SafeSpawnSelector()"));
-        assertTrue(source.contains("new WorldLoader("));
-        assertTrue(source.contains("new ChunkMeshBuilder("));
+        assertTrue(factory.contains("new WorldLoader("));
+        assertTrue(factory.contains("new ChunkMeshBuilder("));
         assertTrue(
-                source.contains(
-                        "worldLoader.loadAsync(engine.getWorld())"));
-        assertFalse(source.contains("CompletableFuture.supplyAsync("));
+                factory.contains("worldLoader.loadAsync(world)"));
+        assertFalse(factory.contains("CompletableFuture.supplyAsync("));
         assertFalse(
-                source.contains(
+                bootstrap.contains(
                         "BlockRegistry." + "init()"));
         assertFalse(
-                source.contains(
+                bootstrap.contains(
                         "BlockRegistry."
                                 + "loadAllFromResources()"));
         assertFalse(
-                source.contains(
+                bootstrap.contains(
                         "BlockRegistry." + "GRASS"));
         assertFalse(
-                source.contains(
+                bootstrap.contains(
                         "BlockRegistry." + "DIRT"));
         assertFalse(
-                source.contains(
+                bootstrap.contains(
                         "BlockRegistry." + "STONE"));
-        assertFalse(source.contains("AssetLoadException"));
-        assertFalse(source.contains("ServiceLocator"));
+        assertFalse(bootstrap.contains("AssetLoadException"));
+        assertFalse(bootstrap.contains("ServiceLocator"));
 
         int assetLoad = compact.indexOf("newGaiaResourceLoader(");
+        int settingsOpen = compact.indexOf("ProductSettingsLifecycle.open(");
         int engineConstruction = compact.indexOf("newEngine(");
-        int engineInitialization = compact.indexOf("engine.init()");
-        int worldConstruction = compact.indexOf("newWorldLoader(");
+        int engineInitialization = compact.indexOf("initializedEngine.init()");
+        int factoryConstruction =
+                compact.indexOf("newGameSessionFactory(");
         assertTrue(assetLoad < engineConstruction);
+        assertTrue(assetLoad < settingsOpen);
+        assertTrue(settingsOpen < engineConstruction);
         assertTrue(engineConstruction < engineInitialization);
-        assertTrue(engineInitialization < worldConstruction);
+        assertTrue(engineInitialization < factoryConstruction);
     }
 
     @Test
@@ -179,8 +180,8 @@ class GameBootstrapStructureTest {
         String source =
                 Files.readString(
                         Path.of(
-                                "src/main/java/com/gaia/"
-                                        + "GameBootstrap.java"));
+                                "src/main/java/com/gaia/session/"
+                                        + "GameSessionFactory.java"));
         String compact = source.replaceAll("\\s+", "");
 
         assertTrue(
@@ -191,7 +192,7 @@ class GameBootstrapStructureTest {
                         "MAX_FIXED_STEPS_PER_FRAME=8;"));
         assertTrue(
                 compact.contains(
-                        "newGameModeManager(GameMode.SURVIVAL,"));
+                        "newGameModeManager(config.defaultGameMode(),"));
         assertEquals(
                 1,
                 occurrences(
@@ -201,7 +202,8 @@ class GameBootstrapStructureTest {
 
     @Test
     void composesOneCommittedFeedbackAuthorityAfterGameplayTransactions() throws IOException {
-        String source = Files.readString(Path.of("src/main/java/com/gaia/GameBootstrap.java"));
+        String source = Files.readString(
+                Path.of("src/main/java/com/gaia/session/GameSessionFactory.java"));
         String compact = source.replaceAll("\\s+", "");
 
         assertEquals(1, occurrences(compact, "newParticleSystem("));
@@ -218,17 +220,45 @@ class GameBootstrapStructureTest {
     }
 
     @Test
+    void bootstrapCapturesAppliedSettingsOnlyWhenCreatingANewSession()
+            throws IOException {
+        String source =
+                Files.readString(
+                        Path.of(
+                                "src/main/java/com/gaia/"
+                                        + "GameBootstrap.java"));
+        String compact = source.replaceAll("\\s+", "");
+
+        assertTrue(source.contains("new GameSessionFactory("));
+        assertTrue(
+                compact.contains(
+                        "()->sessionFactory.create("
+                                + "settingsLifecycle.newSessionConfig())"));
+        assertTrue(source.contains("ProductSettingsLifecycle.open("));
+        assertTrue(source.contains("settingsLifecycle::close"));
+        assertFalse(source.contains("InMemorySettingsStore"));
+        assertFalse(compact.contains("initialSessionConfig"));
+        assertTrue(source.contains("new ProductLoop("));
+        assertTrue(source.contains("new EmptySaveCatalog()"));
+        assertFalse(source.contains("new GameLoop("));
+        assertFalse(source.contains("worldLoader.loadAsync("));
+        assertFalse(source.contains("new WorldLoader("));
+        assertFalse(source.contains("new FixedStepClock("));
+    }
+
+    @Test
     void registersQAndBlockSpawnBarriersForIdempotentShutdownResolution()
             throws IOException {
-        String source = Files.readString(Path.of("src/main/java/com/gaia/GameBootstrap.java"));
+        String source = Files.readString(
+                Path.of("src/main/java/com/gaia/session/GameSessionFactory.java"));
         String compact = source.replaceAll("\\s+", "");
 
         assertEquals(1, occurrences(compact, "newInventoryDropController("));
         assertEquals(1, occurrences(compact, "newBlockBreakTransaction("));
         assertTrue(compact.contains(
-                "shutdownCoordinator.register(\"inventory-drop\",inventoryDrop::close)"));
+                "shutdown.register(\"inventory-drop\",inventoryDrop::close)"));
         assertTrue(compact.contains(
-                "shutdownCoordinator.register(\"block-break\",blockBreak::close)"));
+                "shutdown.register(\"block-break\",blockBreak::close)"));
     }
 
     @Test

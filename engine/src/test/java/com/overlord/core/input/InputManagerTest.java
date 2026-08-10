@@ -9,11 +9,90 @@ import static org.lwjgl.glfw.GLFW.GLFW_RELEASE;
 import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT;
 import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_RIGHT;
 
+import com.overlord.config.GameConfig;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 class InputManagerTest {
+    @Test
+    void captureUiInputUsesAbsolutePointerAndDoesNotConsumeGameplayEdges() {
+        InputManager input = new InputManager();
+        InputManagerTestDriver.cursor(input, 320.0, 180.0);
+        InputManagerTestDriver.key(input, org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER, GLFW_PRESS);
+        InputManagerTestDriver.mouseButton(input, GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS);
+        InputManagerTestDriver.scroll(input, 0.0, -2.0);
+
+        UiInputSnapshot ui = input.captureUiInput(7L);
+
+        assertEquals(320.0, ui.pointerX());
+        assertEquals(180.0, ui.pointerY());
+        assertTrue(ui.focused());
+        assertEquals(7L, ui.sampleId());
+        assertTrue(ui.isKeyDown(org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER));
+        assertTrue(ui.isKeyPressed(org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER));
+        assertTrue(ui.isMouseDown(GLFW_MOUSE_BUTTON_LEFT));
+        assertTrue(ui.isMousePressed(GLFW_MOUSE_BUTTON_LEFT));
+        assertEquals(List.of(-2), ui.scrollDeltas());
+        assertTrue(input.consumeFixedInput().isKeyPressed(org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("gameplayKeys")
+    void invalidationSuppressesAndRearmsEveryGameplayKeyAfterPhysicalRelease(
+            String control,
+            int key) {
+        InputManager input = new InputManager();
+        InputManagerTestDriver.key(input, key, GLFW_PRESS);
+
+        input.invalidateGameplayInput();
+
+        InputSnapshot suppressed = input.consumeFixedInput();
+        assertFalse(suppressed.isKeyDown(key), control);
+        assertFalse(suppressed.isKeyPressed(key), control);
+
+        InputManagerTestDriver.key(input, key, GLFW_PRESS);
+        InputSnapshot stillSuppressed = input.consumeFixedInput();
+        assertFalse(stillSuppressed.isKeyDown(key), control);
+        assertFalse(stillSuppressed.isKeyPressed(key), control);
+
+        InputManagerTestDriver.key(input, key, GLFW_RELEASE);
+        InputManagerTestDriver.key(input, key, GLFW_PRESS);
+        InputSnapshot fresh = input.consumeFixedInput();
+        assertTrue(fresh.isKeyDown(key), control);
+        assertTrue(fresh.isKeyPressed(key), control);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("gameplayMouseButtons")
+    void invalidationSuppressesAndRearmsEveryGameplayMouseButtonAfterPhysicalRelease(
+            String control,
+            int button) {
+        InputManager input = new InputManager();
+        InputManagerTestDriver.mouseButton(input, button, GLFW_PRESS);
+
+        input.invalidateGameplayInput();
+
+        InputSnapshot suppressed = input.consumeFixedInput();
+        assertFalse(suppressed.isMouseButtonDown(button), control);
+        assertFalse(suppressed.isMouseButtonPressed(button), control);
+
+        InputManagerTestDriver.mouseButton(input, button, GLFW_PRESS);
+        InputSnapshot stillSuppressed = input.consumeFixedInput();
+        assertFalse(stillSuppressed.isMouseButtonDown(button), control);
+        assertFalse(stillSuppressed.isMouseButtonPressed(button), control);
+
+        InputManagerTestDriver.mouseButton(input, button, GLFW_RELEASE);
+        InputManagerTestDriver.mouseButton(input, button, GLFW_PRESS);
+        InputSnapshot fresh = input.consumeFixedInput();
+        assertTrue(fresh.isMouseButtonDown(button), control);
+        assertTrue(fresh.isMouseButtonPressed(button), control);
+    }
+
     @Test
     void windowFocusAccessorTracksTheCallbackOwnedState() {
         InputManager manager = new InputManager();
@@ -239,25 +318,47 @@ class InputManagerTest {
     }
 
     @Test
-    void focusLossRejectsAnotherPressUntilPhysicalRelease() {
+    void focusLossReleaseRearmsAnotherPressForUiAndGameplay() {
         InputManager manager = new InputManager();
         manager.onMouseButton(GLFW_MOUSE_BUTTON_RIGHT, GLFW_PRESS);
+
+        manager.invalidateGameplayInput();
+        InputSnapshot suppressed = manager.consumeFixedInput();
+        assertFalse(suppressed.isMouseButtonDown(GLFW_MOUSE_BUTTON_RIGHT));
+        assertFalse(suppressed.isMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT));
 
         manager.onWindowFocus(false);
         manager.onMouseButton(GLFW_MOUSE_BUTTON_RIGHT, GLFW_RELEASE);
         manager.onWindowFocus(true);
         manager.onMouseButton(GLFW_MOUSE_BUTTON_RIGHT, GLFW_PRESS);
-        InputSnapshot stillSuppressed = manager.consumeFixedInput();
+        UiInputSnapshot ui = manager.captureUiInput(8L);
 
-        assertFalse(stillSuppressed.isMouseButtonDown(GLFW_MOUSE_BUTTON_RIGHT));
-        assertFalse(stillSuppressed.isMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT));
+        assertTrue(ui.isMouseDown(GLFW_MOUSE_BUTTON_RIGHT));
+        assertTrue(ui.isMousePressed(GLFW_MOUSE_BUTTON_RIGHT));
 
-        manager.onMouseButton(GLFW_MOUSE_BUTTON_RIGHT, GLFW_RELEASE);
-        manager.onMouseButton(GLFW_MOUSE_BUTTON_RIGHT, GLFW_PRESS);
         InputSnapshot rearmed = manager.consumeFixedInput();
 
         assertTrue(rearmed.isMouseButtonDown(GLFW_MOUSE_BUTTON_RIGHT));
         assertTrue(rearmed.isMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT));
+    }
+
+    @Test
+    void suppressedMousePressRemainsVisibleToUiButIsFilteredFromGameplay() {
+        InputManager manager = new InputManager();
+        manager.onMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS);
+        manager.invalidateGameplayInput();
+
+        manager.onWindowFocus(false);
+        manager.onWindowFocus(true);
+        manager.onMouseButton(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS);
+
+        UiInputSnapshot ui = manager.captureUiInput(9L);
+        InputSnapshot gameplay = manager.consumeFixedInput();
+
+        assertTrue(ui.isMouseDown(GLFW_MOUSE_BUTTON_LEFT));
+        assertTrue(ui.isMousePressed(GLFW_MOUSE_BUTTON_LEFT));
+        assertFalse(gameplay.isMouseButtonDown(GLFW_MOUSE_BUTTON_LEFT));
+        assertFalse(gameplay.isMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT));
     }
 
     @Test
@@ -270,5 +371,60 @@ class InputManagerTest {
 
         assertTrue(snapshot.isMouseButtonDown(GLFW_MOUSE_BUTTON_LEFT));
         assertFalse(snapshot.isMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT));
+    }
+
+    private static Stream<Arguments> gameplayKeys() {
+        return Stream.of(
+                Arguments.of("forward", GameConfig.Input.KEY_FORWARD),
+                Arguments.of("backward", GameConfig.Input.KEY_BACKWARD),
+                Arguments.of("left", GameConfig.Input.KEY_LEFT),
+                Arguments.of("right", GameConfig.Input.KEY_RIGHT),
+                Arguments.of("jump", GameConfig.Input.KEY_JUMP),
+                Arguments.of("descend", GameConfig.Input.KEY_DESCEND),
+                Arguments.of(
+                        "pickup modifier left",
+                        GameConfig.Input.KEY_PICKUP_MODIFIER_LEFT),
+                Arguments.of(
+                        "pickup modifier right",
+                        GameConfig.Input.KEY_PICKUP_MODIFIER_RIGHT),
+                Arguments.of("close or pause", GameConfig.Input.KEY_CLOSE),
+                Arguments.of(
+                        "cursor capture or pause",
+                        GameConfig.Input.KEY_CURSOR_CAPTURE),
+                Arguments.of("toggle HUD", GameConfig.Input.KEY_TOGGLE_HUD),
+                Arguments.of(
+                        "toggle debug HUD",
+                        GameConfig.Input.KEY_TOGGLE_DEBUG_HUD),
+                Arguments.of("select left slot", GameConfig.Input.KEY_SELECT_LEFT),
+                Arguments.of("select right slot", GameConfig.Input.KEY_SELECT_RIGHT),
+                Arguments.of("select mouth slot", GameConfig.Input.KEY_SELECT_MOUTH),
+                Arguments.of("drop", GameConfig.Input.KEY_DROP),
+                Arguments.of(
+                        "drop all modifier left",
+                        GameConfig.Input.KEY_DROP_ALL_LEFT),
+                Arguments.of(
+                        "drop all modifier right",
+                        GameConfig.Input.KEY_DROP_ALL_RIGHT),
+                Arguments.of(
+                        "toggle game mode",
+                        GameConfig.Input.KEY_TOGGLE_GAME_MODE),
+                Arguments.of(
+                        "debug inventory seed",
+                        GameConfig.Input.KEY_DEBUG_INVENTORY_SEED),
+                Arguments.of(
+                        "debug inventory clear",
+                        GameConfig.Input.KEY_DEBUG_INVENTORY_CLEAR),
+                Arguments.of(
+                        "debug inventory fill",
+                        GameConfig.Input.KEY_DEBUG_INVENTORY_FILL),
+                Arguments.of(
+                        "debug inventory print",
+                        GameConfig.Input.KEY_DEBUG_INVENTORY_PRINT));
+    }
+
+    private static Stream<Arguments> gameplayMouseButtons() {
+        return Stream.of(
+                Arguments.of("primary mouse", GameConfig.Input.MOUSE_PRIMARY),
+                Arguments.of("secondary mouse", GameConfig.Input.MOUSE_SECONDARY));
     }
 }

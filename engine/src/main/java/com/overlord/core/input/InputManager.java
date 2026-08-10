@@ -28,12 +28,15 @@ public final class InputManager {
             new boolean[GLFW_MOUSE_BUTTON_LAST + 1];
     private final boolean[] pressedMouseButtons =
             new boolean[GLFW_MOUSE_BUTTON_LAST + 1];
+    private final boolean[] suppressedKeys = new boolean[GLFW_KEY_LAST + 1];
     private final boolean[] suppressedMouseButtons =
             new boolean[GLFW_MOUSE_BUTTON_LAST + 1];
 
     private boolean hasMouseBaseline;
     private double lastMouseX;
     private double lastMouseY;
+    private double pointerX;
+    private double pointerY;
     private double accumulatedMouseX;
     private double accumulatedMouseY;
     private final List<Integer> accumulatedScrollDeltas = new ArrayList<>();
@@ -68,6 +71,8 @@ public final class InputManager {
         Set<Integer> pressed = copySetBits(pressedKeys);
         Set<Integer> downButtons = copySetBits(downMouseButtons);
         Set<Integer> pressedButtons = copySetBits(pressedMouseButtons);
+        removeSuppressedKeys(down);
+        removeSuppressedKeys(pressed);
         removeSuppressedButtons(downButtons);
         removeSuppressedButtons(pressedButtons);
         List<Integer> scrollDeltas = List.copyOf(accumulatedScrollDeltas);
@@ -76,6 +81,35 @@ public final class InputManager {
         clearScrollEdges();
         return new InputSnapshot(
                 down, pressed, downButtons, pressedButtons, scrollDeltas);
+    }
+
+    /**
+     * Captures callback-owned UI input without consuming gameplay input edges.
+     * Pointer coordinates are the logical window coordinates supplied by GLFW.
+     */
+    public UiInputSnapshot captureUiInput(long sampleId) {
+        mainThreadGuard.assertMainThread("UI input capture");
+        return new UiInputSnapshot(
+                copySetBits(downKeys),
+                copySetBits(pressedKeys),
+                copySetBits(downMouseButtons),
+                copySetBits(pressedMouseButtons),
+                accumulatedScrollDeltas,
+                pointerX,
+                pointerY,
+                windowFocused,
+                sampleId);
+    }
+
+    /** Suppresses controls already held by the player until their next physical release. */
+    public void invalidateGameplayInput() {
+        mainThreadGuard.assertMainThread("gameplay input invalidation");
+        suppressDownInputs(downKeys, suppressedKeys);
+        suppressDownInputs(downMouseButtons, suppressedMouseButtons);
+        Arrays.fill(pressedKeys, false);
+        Arrays.fill(pressedMouseButtons, false);
+        clearScrollEdges();
+        resetMouseState();
     }
 
     /** Discards gameplay edges while retaining held-key state. */
@@ -150,6 +184,7 @@ public final class InputManager {
             downKeys[key] = true;
         } else if (action == GLFW_RELEASE) {
             downKeys[key] = false;
+            suppressedKeys[key] = false;
         }
     }
 
@@ -159,20 +194,20 @@ public final class InputManager {
             return;
         }
         if (action == GLFW_PRESS) {
-            if (!downMouseButtons[button] && !suppressedMouseButtons[button]) {
+            if (!downMouseButtons[button]) {
                 pressedMouseButtons[button] = true;
             }
             downMouseButtons[button] = true;
         } else if (action == GLFW_RELEASE) {
             downMouseButtons[button] = false;
-            if (windowFocused) {
-                suppressedMouseButtons[button] = false;
-            }
+            suppressedMouseButtons[button] = false;
         }
     }
 
     void onCursorPosition(double x, double y) {
         mainThreadGuard.assertMainThread("GLFW cursor callback");
+        pointerX = x;
+        pointerY = y;
         if (!hasMouseBaseline) {
             lastMouseX = x;
             lastMouseY = y;
@@ -237,6 +272,18 @@ public final class InputManager {
         if (downMouseButtons[button]) {
             suppressedMouseButtons[button] = true;
         }
+    }
+
+    private static void suppressDownInputs(boolean[] down, boolean[] suppressed) {
+        for (int index = 0; index < down.length; index++) {
+            if (down[index]) {
+                suppressed[index] = true;
+            }
+        }
+    }
+
+    private void removeSuppressedKeys(Set<Integer> keys) {
+        keys.removeIf(key -> suppressedKeys[key]);
     }
 
     private void removeSuppressedButtons(Set<Integer> buttons) {

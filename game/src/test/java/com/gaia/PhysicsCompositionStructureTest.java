@@ -13,19 +13,19 @@ import org.junit.jupiter.api.Test;
 
 class PhysicsCompositionStructureTest {
     @Test
-    void bootstrapOwnsExplicitSharedPhysicsComposition()
+    void sessionFactoryOwnsExplicitSharedPhysicsComposition()
             throws IOException {
         String source =
                 Files.readString(
                         Path.of(
-                                "src/main/java/com/gaia/"
-                                        + "GameBootstrap.java"));
+                                "src/main/java/com/gaia/session/"
+                                        + "GameSessionFactory.java"));
         String compact = source.replaceAll("\\s+", "");
 
         assertTrue(
                 compact.contains(
                         "newCollisionWorld("
-                                + "engine.getWorld(),shapes)"));
+                                + "world,shapes)"));
         assertTrue(
                 compact.contains(
                         "newPlayerController("));
@@ -35,7 +35,7 @@ class PhysicsCompositionStructureTest {
                 occurrences(
                         compact,
                         "newBlockRaycast("
-                                + "engine.getWorld(),shapes)"));
+                                + "world,shapes)"));
         assertTrue(
                 compact.contains(
                         "MAX_FIXED_STEPS_PER_FRAME=8;"));

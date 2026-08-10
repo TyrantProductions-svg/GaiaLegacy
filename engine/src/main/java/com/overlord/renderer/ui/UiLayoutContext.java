@@ -63,6 +63,16 @@ public final class UiLayoutContext {
         return safeArea;
     }
 
+    /** Maps a GLFW window-content x coordinate into this layout's logical UI space. */
+    public double windowToLogicalX(double windowX) {
+        return mapWindowCoordinate(windowX, logicalWindowWidth, logicalWidth, "x");
+    }
+
+    /** Maps a GLFW window-content y coordinate into this layout's logical UI space. */
+    public double windowToLogicalY(double windowY) {
+        return mapWindowCoordinate(windowY, logicalWindowHeight, logicalHeight, "y");
+    }
+
     public int snapX(double logicalX) {
         return snap(logicalX, contentScaleX);
     }
@@ -89,5 +99,26 @@ public final class UiLayoutContext {
             throw new IllegalArgumentException("snapped UI coordinate exceeds integer range");
         }
         return (int) rounded;
+    }
+
+    private static double mapWindowCoordinate(
+            double windowCoordinate,
+            int windowExtent,
+            double logicalExtent,
+            String axis) {
+        if (!Double.isFinite(windowCoordinate)) {
+            throw new IllegalArgumentException(
+                    "window " + axis + " coordinate must be finite");
+        }
+        if (windowExtent <= 0) {
+            throw new IllegalStateException(
+                    "cannot map window " + axis + " coordinate with zero window extent");
+        }
+        double mapped = windowCoordinate * logicalExtent / windowExtent;
+        if (!Double.isFinite(mapped)) {
+            throw new IllegalArgumentException(
+                    "mapped window " + axis + " coordinate must be finite");
+        }
+        return mapped;
     }
 }
