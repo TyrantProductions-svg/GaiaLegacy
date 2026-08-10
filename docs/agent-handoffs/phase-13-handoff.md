@@ -2,16 +2,19 @@
 
 ## Status
 
-**CURRENT: Gates 13A, 13B, and 13C PASS on Windows. Gate 13D automated,
-packaged-resource, Windows development, and Windows installDist acceptance PASS
-on the current working-tree candidate. Apple Silicon macOS remains NOT RUN /
-PENDING.**
+**CURRENT: Gates 13A, 13B, 13C, and 13D PASS. Windows automated, development,
+and installDist acceptance PASS. Apple Silicon MacBook Air / native arm64 /
+Java 26 automated, development, installDist, settings, lifecycle, and native
+audio acceptance are HUMAN-REPORTED PASS on exact implementation candidate
+`a16855c19082a09f21bd53389cd24f711bd13f0e`. Phase 13 cross-platform
+acceptance is complete and the branch is ready for human-created PR review.**
 
 Gate 13A adds the product shell and a fresh, closeable gameplay-session
 boundary. Gate 13B adds versioned persistent Settings and controlled runtime or
 next-session application. Gate 13C adds the audio ownership/backend boundary,
-Gaia/Legacy runtime assets, product-route music, fades/ducking, and Windows
-native playback evidence. Final cross-platform acceptance remains Gate 13D.
+Gaia/Legacy runtime assets, product-route music, fades/ducking, and native
+playback evidence. Gate 13D closes cross-platform acceptance without changing
+the tested implementation candidate.
 
 ## Completed work
 
@@ -112,15 +115,15 @@ native playback evidence. Final cross-platform acceptance remains Gate 13D.
   `Load World - Available in Phase 14` inside the disabled action, backed by a
   behavioral glyph-output regression; save discovery remains unchanged.
 
-## Unfinished work
+## Unfinished work and intentional deferrals
 
-- **Gate 13D - Windows complete / macOS pending:** fresh focused, module,
-  packaged-resource, installDist-audit, and clean-build automation pass. Human
-  Windows development (10 minutes) and installDist (7 minutes) paths pass with
-  no reported anomaly. Apple Silicon macOS menu/settings/native-audio/Retina/
-  focus/shutdown acceptance has not run and remains `NOT RUN / PENDING`.
-- Save discovery and persistence are deferred; `EmptySaveCatalog` keeps Load
-  World disabled.
+- Save discovery and persistence are deferred to Phase 14;
+  `EmptySaveCatalog` keeps Load World disabled.
+- Loading progress remains deferred because the current loading API exposes no
+  truthful percentage contract.
+- `Legacy` remains packaged and registered but is not forced into ordinary
+  exploration; future explicit routing is deferred.
+- The F3 numeric ghosting issue remains accepted debug-HUD-only work.
 
 ## Core architecture decisions
 
@@ -311,6 +314,36 @@ unrecorded.
   fallback: **PASS**, established by the human audio result.
 - Windows Gate 13C audio acceptance: **PASS**.
 
+## Apple Silicon macOS interactive and native evidence
+
+Human-reported PASS on Apple Silicon MacBook Air / native arm64 with Java 26.
+The collaborator reported that the complete requested Gate 13D checklist passed
+against exact implementation candidate
+`a16855c19082a09f21bd53389cd24f711bd13f0e` from the Phase 13 feature branch and
+a clean candidate checkout/clone.
+
+- Automated build/test and clean build: **HUMAN-REPORTED PASS**.
+- Packaged shaders, UI, OGG resources, installed resources, and macOS-native
+  OpenAL packaging/runtime: **HUMAN-REPORTED PASS**.
+- Main Menu mouse/keyboard, Controls, disabled Load World, Settings, modal,
+  Apply, next-session settings, and relaunch persistence paths:
+  **HUMAN-REPORTED PASS**.
+- Loading, New World, Pause/Resume, Return to Main Menu, second fresh session,
+  Quit, and clean shutdown: **HUMAN-REPORTED PASS**.
+- Retina, resize, pointer/layout alignment, Command+Tab, focus loss/recovery,
+  and no implicit gameplay resume: **HUMAN-REPORTED PASS**.
+- Audible Gaia Main Menu/gameplay continuity, pause duck/resume, Master/Music
+  application, mute-unfocused/focus recovery, duplicate suppression across
+  Return to Menu and a second session, and native OpenAL rather than Silent
+  fallback: **HUMAN-REPORTED PASS**.
+- installDist launch, menus/settings, native audio, gameplay, and clean shutdown:
+  **HUMAN-REPORTED PASS**.
+
+The exact macOS version, macOS JUnit totals, raw logs, development runtime
+duration, installDist runtime duration, audio-device model, OpenAL device name,
+and performance numbers were not supplied and are not claimed. The tester also
+did not separately report whether F3 ghosting reproduced on this candidate.
+
 ## Known issues and risks
 
 - The Phase 12 F3 rapidly changing FPS/frame-time numeric ghosting remains an
@@ -322,9 +355,9 @@ unrecorded.
 - `Legacy` is registered and packaged as the second authored theme but is not
   forced into ordinary exploration; future POI/credits/anomaly routing remains
   deferred.
-- Gate 13D Windows acceptance is complete. Apple Silicon macOS native audio,
-  Retina, focus, installDist, and shutdown acceptance remains `NOT RUN /
-  PENDING`; Phase 12 macOS evidence does not substitute for this candidate.
+- Gate 13D cross-platform acceptance is complete. Detailed macOS numerical and
+  environment evidence remains unavailable as listed above; this limits the
+  evidence granularity but does not override the human-reported PASS outcome.
 - Loading shows status text and Cancel but no progress bar. The tester accepted
   deferral because the current loading boundary has no truthful percentage
   contract; do not fabricate progress in presentation.
@@ -500,22 +533,16 @@ Preserved approved artifact:
 
 ## Final working-tree checks
 
-Fresh checks after Gate 13D automation, documentation, Windows development and
-installDist acceptance, and macOS pending-status recording:
+The implementation candidate was committed as
+`a16855c19082a09f21bd53389cd24f711bd13f0e` with 145 intended Phase 13 files.
+Before this acceptance-only closure, `git status --short --untracked-files=all`
+showed no tracked change and only the deliberately preserved Milestone 1 ZIP.
+This closure changes documentation only; its commit/push SHA and final status
+are reported by the closure session. No generated build output, log,
+screenshot, save, crash dump, IDE file, cache, user settings file, production
+source, test, build logic, shader, or audio binary is part of the closure.
 
-- `git diff --check`: exit `0`, no whitespace errors. Git printed only
-  `core.autocrlf` forecasts for tracked LF working copies.
-- `git status --short --untracked-files=all`: 27 tracked modifications and 119
-  untracked files. Every entry is an intended Gate 13A/13B/13C production,
-  test, asset, provenance, or documentation path; an approved Phase 13
-  design/plan path; or the preserved release ZIP. No generated build output,
-  log, screenshot, save, crash dump, IDE file, cache, user settings file, or
-  unrelated artifact appeared.
-- `git diff --stat`: 27 tracked files, 1,382 insertions and 1,891 deletions.
-  Untracked files, including the new audio implementation and binary assets,
-  are not represented by this command.
-
-Condensed tracked `git diff --stat` inventory:
+Condensed implementation-candidate `git diff --stat` inventory:
 
 ```text
  CONTROLS.md                                        |  60 +-
@@ -585,9 +612,13 @@ settings and atomic platform persistence, and Gate 13C owner-thread OpenAL/STB
 audio with Gaia/Legacy assets, fades, pause ducking, focus mute, transactional
 audio settings, packaged-resource audits, and provenance.
 
-The current clean build is green at 2,248 tests: 2,247 passed, one skipped, zero
-failures/errors. Windows Gate 13D development and installDist human acceptance
-passed at 10 and 7 minutes respectively, with no reported anomaly. Apple
-Silicon macOS remains NOT RUN / PENDING. F3 numeric ghosting remains the
-accepted debug-only baseline known issue; Loading progress remains deferred.
+The current Windows clean build is green at 2,248 tests: 2,247 passed, one
+skipped, zero failures/errors. Windows Gate 13D development and installDist
+human acceptance passed at 10 and 7 minutes respectively, with no reported
+anomaly. Apple Silicon MacBook Air / arm64 / Java 26 complete Gate 13D
+acceptance is HUMAN-REPORTED PASS on the same implementation candidate. Exact
+macOS version, test totals, raw logs, and durations were not supplied. F3
+numeric ghosting remains the accepted debug-only baseline known issue; Load
+World, Loading progress, and ordinary-exploration Legacy routing remain
+deferred.
 ```

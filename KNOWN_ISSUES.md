@@ -35,8 +35,14 @@
   Retina/resize, Command+Tab, function keys, complete gameplay, clean exit,
   installDist, and a continuous 26-minute soak. The macOS version and
   automated test totals were not supplied. This is historical Phase 12
-  evidence; Apple Silicon macOS Phase 13 menu/settings/native-audio acceptance
-  remains `NOT RUN / PENDING`.
+  evidence.
+- Phase 13 Apple Silicon MacBook Air / native arm64 / Java 26 acceptance is
+  HUMAN-REPORTED PASS on exact implementation candidate
+  `a16855c19082a09f21bd53389cd24f711bd13f0e`. The complete requested Gate 13D
+  automated/native, product-shell, settings, lifecycle, audio, development, and
+  installDist checklist was reported passing. Exact macOS version, test totals,
+  raw logs, runtime durations, and audio-device details were not supplied and
+  are not claimed.
 
 ## Performance observations
 

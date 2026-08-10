@@ -60,4 +60,12 @@ The portable tool, temporary MP3 copies, and conversion outputs were removed fro
 - The native OpenAL path produced audible Gaia playback; the runtime did not rely on the Silent fallback.
 - Main Menu/gameplay continuity, pause duck/resume recovery, Master/Music Apply, focus-loss mute/recovery, and return-to-menu duplicate suppression were included in the requested checklist and reported **PASS**.
 - No runtime duration, output-device model, or per-step timing was supplied, so none is inferred here.
-- Apple Silicon macOS native audio acceptance remains Gate 13D work and is not claimed by this record.
+- Apple Silicon MacBook Air / native arm64 / Java 26 complete Gate 13D audio
+  checklist is **HUMAN-REPORTED PASS** on exact implementation candidate
+  `a16855c19082a09f21bd53389cd24f711bd13f0e`. Reported coverage includes Gaia
+  Main Menu/gameplay continuity, pause duck/resume, Master/Music application,
+  mute-unfocused/focus recovery, duplicate suppression across Return to Menu and
+  a second session, installDist, clean shutdown, and audible native OpenAL rather
+  than Silent fallback.
+- Exact macOS version, raw logs, runtime durations, audio-device model, and
+  OpenAL device name were not supplied and are not inferred here.

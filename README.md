@@ -189,11 +189,18 @@ supplied. The F3 FPS/frame-time numeric ghosting reproduced and remains an
 accepted debug-only known issue. Detailed platform evidence is recorded in
 [the Phase 12 handoff](docs/agent-handoffs/phase-12-handoff.md).
 
-For the current Phase 13 candidate, Windows Gate 13D development and installDist
-runtime checks PASS, including product-shell, settings, gameplay, and native
-OpenAL paths. Human test duration was 10 minutes for development and 7 minutes
-for installDist, with no reported anomaly. All Apple Silicon macOS Phase 13
-checks remain `NOT RUN / PENDING`; see the
+Phase 13 cross-platform acceptance is complete on exact implementation
+candidate `a16855c19082a09f21bd53389cd24f711bd13f0e`:
+
+| Platform | Automated/native | Development runtime | installDist runtime |
+| --- | --- | --- | --- |
+| Windows | PASS: 2,248 total, 2,247 passed, 1 skipped, 0 failed/errors | PASS, 10 minutes | PASS, 7 minutes |
+| Apple Silicon macOS | HUMAN-REPORTED PASS | HUMAN-REPORTED PASS | HUMAN-REPORTED PASS |
+
+The macOS tester used an Apple Silicon MacBook Air / native arm64 with Java 26
+and reported the complete requested Gate 13D checklist passing. Exact macOS
+version, JUnit totals, raw logs, runtime durations, and audio-device details
+were not supplied and are not claimed. See the
 [Phase 13 acceptance matrix](docs/testing/phase-13-product-shell-audio-acceptance.md).
 
 ## Architecture map

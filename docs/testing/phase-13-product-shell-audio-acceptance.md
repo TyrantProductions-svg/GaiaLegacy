@@ -3,9 +3,9 @@
 ## Candidate
 
 - Branch: `feat/product-shell-audio`
-- Baseline and current unstaged HEAD: `80ea67bf9a41e467dbd17ba81876ab870c41407d`
-- Candidate form: tracked and untracked Phase 13 working tree; no Phase 13
-  commit exists yet.
+- Baseline: `origin/main@80ea67bf9a41e467dbd17ba81876ab870c41407d`.
+- Exact implementation candidate tested on Windows and macOS:
+  `a16855c19082a09f21bd53389cd24f711bd13f0e`.
 - Preserved non-candidate artifact:
   `dist/GaiaLegacy-v0.2.0-alpha.1-windows-x64.zip`.
 
@@ -57,26 +57,47 @@ acceptance gate.
 
 ## Apple Silicon macOS matrix
 
-No Phase 13 Gate 13D candidate has been run on an actual Apple Silicon Mac.
-Milestone 1 Phase 12 evidence does not establish Phase 13 UI/settings/audio
-acceptance.
+Human-reported PASS on Apple Silicon MacBook Air / native arm64 with Java 26.
+The exact implementation candidate was
+`a16855c19082a09f21bd53389cd24f711bd13f0e`, and the complete requested Gate
+13D acceptance checklist was reported passing. Exact macOS version, JUnit
+totals, raw logs, development duration, installDist duration, audio-device
+model, OpenAL device name, and performance numbers were not supplied and are
+therefore not claimed.
 
 | Check | Status |
 | --- | --- |
-| Native arm64 clean build and module totals | NOT RUN / PENDING |
-| Packaged shaders/UI/OGG/OpenAL native | NOT RUN / PENDING |
-| Development runtime | NOT RUN / PENDING |
-| installDist runtime | NOT RUN / PENDING |
-| Retina/resize hit alignment | NOT RUN / PENDING |
-| Command+Tab pause/focus/audio recovery | NOT RUN / PENDING |
-| Native Gaia playback and settings volume | NOT RUN / PENDING |
-| Function keys and complete product/gameplay path | NOT RUN / PENDING |
-| Clean close/relaunch and duration | NOT RUN / PENDING |
-| F3 numeric ghosting | NOT CHECKED |
+| Fresh candidate checkout/clone, exact SHA, correct branch family | HUMAN-REPORTED PASS |
+| Native arm64 automated build/test and clean build | HUMAN-REPORTED PASS; exact totals not supplied |
+| Packaged shaders, UI, OGG, resources, installed runtime, macOS OpenAL native | HUMAN-REPORTED PASS |
+| Main Menu mouse/keyboard, Controls, disabled Load World, Settings and modals | HUMAN-REPORTED PASS |
+| FOV, sensitivity, invert-Y, VSync, Master/Music/SFX, mute-unfocused Apply | HUMAN-REPORTED PASS |
+| Next-session Chunk radius, game mode and debug-HUD defaults | HUMAN-REPORTED PASS |
+| Settings persistence across relaunch | HUMAN-REPORTED PASS |
+| Loading, New World, Pause/Resume, Return to Menu, second fresh session | HUMAN-REPORTED PASS |
+| Retina, resize and pointer/layout alignment | HUMAN-REPORTED PASS |
+| Command+Tab, focus recovery and no implicit gameplay resume | HUMAN-REPORTED PASS |
+| Gaia audible in Main Menu/gameplay, pause duck, resume and volume settings | HUMAN-REPORTED PASS |
+| Focus mute/recovery and no duplicate Gaia across menu/second session | HUMAN-REPORTED PASS |
+| Native OpenAL audible path rather than Silent fallback | HUMAN-REPORTED PASS |
+| Development runtime and clean shutdown | HUMAN-REPORTED PASS; duration not supplied |
+| installDist menus/settings, native audio, gameplay and clean shutdown | HUMAN-REPORTED PASS; duration not supplied |
+| F3 ghosting reproduction status | NOT SUPPLIED; accepted debug-only issue remains open |
+
+## Final Gate 13D status
+
+- Gate 13A: **PASS**.
+- Gate 13B: **PASS**.
+- Gate 13C: **PASS**.
+- Gate 13D Windows automated/development/installDist: **PASS**.
+- Gate 13D Apple Silicon macOS automated/native/development/installDist:
+  **HUMAN-REPORTED PASS**.
+- Phase 13: **CROSS-PLATFORM ACCEPTANCE COMPLETE / READY FOR PR**.
 
 ## Accepted known issue
 
 Rapidly changing F3 FPS/frame-time digits can leave a visible numeric trail.
 This is an accepted debug-HUD-only issue. No gameplay, simulation, audio, or
-resource-growth failure is attributed to it. Gate 13D must record whether it was
-checked on each platform and must not fix it opportunistically.
+resource-growth failure is attributed to it. The Phase 13 macOS tester did not
+supply a separate reproduced/not-reproduced value; no value is inferred. Do not
+fix it opportunistically.
