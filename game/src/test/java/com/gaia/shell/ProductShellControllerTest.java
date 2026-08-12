@@ -5,7 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT;
 
-import com.gaia.shell.ProductShellController.LifecycleIntent;
+import com.gaia.save.format.SaveGameId;
+import com.gaia.session.NewWorldRequest;
 import com.gaia.shell.save.EmptySaveCatalog;
 import com.gaia.shell.ui.ProductScreenInputController;
 import com.gaia.shell.ui.ProductScreenPresenter;
@@ -32,14 +33,20 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 class ProductShellControllerTest {
+    private static final NewWorldRequest NEW_WORLD_REQUEST = new NewWorldRequest(
+            SaveGameId.parse("00000000-0000-0000-0000-000000000014"),
+            "New World",
+            12345L);
+
     @Test
     void newWorldRoutesToLoadingAndProducesTypedSessionStartIntent() {
         Fixture fixture = new Fixture();
 
-        LifecycleIntent intent =
-                fixture.controller().handle(new ScreenCommand.NewWorld());
+        fixture.controller().handle(new ScreenCommand.OpenNewWorldSetup());
+        ProductLifecycleIntent intent = fixture.controller().handle(
+                new ScreenCommand.CreateWorld(NEW_WORLD_REQUEST));
 
-        assertEquals(LifecycleIntent.START_NEW_SESSION, intent);
+        assertEquals(new ProductLifecycleIntent.StartNewWorld(NEW_WORLD_REQUEST), intent);
         assertEquals(ScreenId.LOADING, fixture.snapshot().screen());
         assertTrue(fixture.snapshot().modal().isEmpty());
     }
@@ -47,14 +54,16 @@ class ProductShellControllerTest {
     @Test
     void dismissingLoadingReturnsToMainMenuAndRequestsSessionCleanup() {
         Fixture fixture = new Fixture();
+        fixture.controller().handle(new ScreenCommand.OpenNewWorldSetup());
         assertEquals(
-                LifecycleIntent.START_NEW_SESSION,
-                fixture.controller().handle(new ScreenCommand.NewWorld()));
+                new ProductLifecycleIntent.StartNewWorld(NEW_WORLD_REQUEST),
+                fixture.controller().handle(
+                        new ScreenCommand.CreateWorld(NEW_WORLD_REQUEST)));
 
-        LifecycleIntent intent =
+        ProductLifecycleIntent intent =
                 fixture.controller().handle(new ScreenCommand.Dismiss());
 
-        assertEquals(LifecycleIntent.CLOSE_ACTIVE_SESSION, intent);
+        assertEquals(new ProductLifecycleIntent.CloseActiveSession(), intent);
         assertEquals(ScreenId.MAIN_MENU, fixture.snapshot().screen());
         assertTrue(fixture.snapshot().modal().isEmpty());
     }
@@ -80,19 +89,19 @@ class ProductShellControllerTest {
         Fixture fixture = new Fixture();
         fixture.enterPaused();
 
-        LifecycleIntent warning = fixture.controller().handle(
+        ProductLifecycleIntent warning = fixture.controller().handle(
                 new ScreenCommand.ReturnToMainMenu());
 
-        assertEquals(LifecycleIntent.NONE, warning);
+        assertEquals(ProductLifecycleIntent.none(), warning);
         assertEquals(ScreenId.PAUSED, fixture.snapshot().screen());
         assertEquals(
                 ModalId.UNSAVED_PROGRESS_CONFIRMATION,
                 fixture.snapshot().modal().orElseThrow());
 
-        LifecycleIntent confirmed =
+        ProductLifecycleIntent confirmed =
                 fixture.controller().handle(new ScreenCommand.Confirm());
 
-        assertEquals(LifecycleIntent.CLOSE_ACTIVE_SESSION, confirmed);
+        assertEquals(new ProductLifecycleIntent.CloseActiveSession(), confirmed);
         assertEquals(ScreenId.MAIN_MENU, fixture.snapshot().screen());
         assertTrue(fixture.snapshot().modal().isEmpty());
     }
@@ -102,18 +111,18 @@ class ProductShellControllerTest {
         Fixture fixture = new Fixture();
 
         assertEquals(
-                LifecycleIntent.NONE,
+                ProductLifecycleIntent.none(),
                 fixture.controller().handle(new ScreenCommand.Quit()));
         assertEquals(
                 ModalId.QUIT_CONFIRMATION,
                 fixture.snapshot().modal().orElseThrow());
 
         assertEquals(
-                LifecycleIntent.EXIT_PRODUCT,
+                new ProductLifecycleIntent.ExitProduct(),
                 fixture.controller().handle(new ScreenCommand.Confirm()));
         assertTrue(fixture.snapshot().modal().isEmpty());
         assertEquals(
-                LifecycleIntent.NONE,
+                ProductLifecycleIntent.none(),
                 fixture.controller().handle(new ScreenCommand.Confirm()));
         assertEquals(ScreenId.MAIN_MENU, fixture.snapshot().screen());
     }
@@ -125,19 +134,19 @@ class ProductShellControllerTest {
         fixture.router().openModal(ModalId.DIRTY_SETTINGS_CONFIRMATION);
 
         assertEquals(
-                LifecycleIntent.NONE,
+                ProductLifecycleIntent.none(),
                 fixture.controller().handle(new ScreenCommand.Dismiss()));
         assertEquals(ScreenId.SETTINGS, fixture.snapshot().screen());
         assertTrue(fixture.snapshot().modal().isEmpty());
 
         fixture.router().openModal(ModalId.DIRTY_SETTINGS_CONFIRMATION);
         assertEquals(
-                LifecycleIntent.NONE,
+                ProductLifecycleIntent.none(),
                 fixture.controller().handle(new ScreenCommand.Confirm()));
         assertEquals(ScreenId.MAIN_MENU, fixture.snapshot().screen());
         assertTrue(fixture.snapshot().modal().isEmpty());
         assertEquals(
-                LifecycleIntent.NONE,
+                ProductLifecycleIntent.none(),
                 fixture.controller().handle(new ScreenCommand.Confirm()));
     }
 
@@ -229,8 +238,11 @@ class ProductShellControllerTest {
 
         void enterPaused() {
             assertEquals(
-                    LifecycleIntent.START_NEW_SESSION,
-                    controller.handle(new ScreenCommand.NewWorld()));
+                    ProductLifecycleIntent.none(),
+                    controller.handle(new ScreenCommand.OpenNewWorldSetup()));
+            assertEquals(
+                    new ProductLifecycleIntent.StartNewWorld(NEW_WORLD_REQUEST),
+                    controller.handle(new ScreenCommand.CreateWorld(NEW_WORLD_REQUEST)));
             controller.loadingSucceeded();
             controller.togglePlaying();
             assertEquals(ScreenId.PAUSED, snapshot().screen());

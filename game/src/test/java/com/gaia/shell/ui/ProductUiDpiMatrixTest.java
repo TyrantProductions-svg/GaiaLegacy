@@ -62,7 +62,7 @@ class ProductUiDpiMatrixTest {
                 1L);
 
         assertEquals(
-                new ScreenCommand.NewWorld(),
+                new ScreenCommand.OpenNewWorldSetup(),
                 new ProductScreenInputController().route(click, layout).orElseThrow());
     }
 
@@ -80,7 +80,7 @@ class ProductUiDpiMatrixTest {
                 * context.logicalWindowHeight() / context.logicalHeight();
 
         assertEquals(
-                new ScreenCommand.NewWorld(),
+                new ScreenCommand.OpenNewWorldSetup(),
                 new ProductScreenInputController()
                         .route(clickAt(windowX, windowY, 50L), layout)
                         .orElseThrow(),
@@ -125,7 +125,7 @@ class ProductUiDpiMatrixTest {
                 2L);
 
         assertEquals(
-                new ScreenCommand.NewWorld(),
+                new ScreenCommand.OpenNewWorldSetup(),
                 new ProductScreenInputController().route(click, layout).orElseThrow());
     }
 

@@ -40,8 +40,8 @@ class CameraImpulseControllerTest {
         controller.triggerBreak(17L);
         CameraImpulseVisual peak = controller.snapshot();
 
-        assertEquals(0.275f, peak.pitchDegrees(), 1.0e-6f);
-        assertEquals(0.07f, Math.abs(peak.yawDegrees()), 1.0e-6f);
+        assertEquals(0.055f, peak.pitchDegrees(), 1.0e-6f);
+        assertEquals(0.014f, Math.abs(peak.yawDegrees()), 1.0e-6f);
         assertEquals(0.0f, peak.translationY());
 
         double elapsed = 0.0;
@@ -62,8 +62,8 @@ class CameraImpulseControllerTest {
             controller.triggerBreak(eventIdentity);
             CameraImpulseVisual peak = controller.snapshot();
 
-            assertEquals(0.275f, peak.pitchDegrees(), 1.0e-6f);
-            assertEquals(0.07f, Math.abs(peak.yawDegrees()), 1.0e-6f);
+            assertEquals(0.055f, peak.pitchDegrees(), 1.0e-6f);
+            assertEquals(0.014f, Math.abs(peak.yawDegrees()), 1.0e-6f);
             assertEquals(0.0f, peak.translationY());
             controller.update(1.0 / 60.0);
         }

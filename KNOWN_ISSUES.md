@@ -4,9 +4,9 @@
 
 - The demo world is a deterministic finite 81-Chunk load. It does not stream
   an unbounded world and has no user-facing render-distance control.
-- The product shell, Main Menu, Pause Menu, Controls, and persistent Settings
-  are implemented. Real world/save persistence and a save browser are not;
-  `Load World - Available in Phase 14` is deliberately disabled.
+- Local versioned world saves and the paged World Slots browser are implemented.
+  Save data is finite-world v1 only; cloud synchronization, multiplayer save
+  locking, infinite region streaming, and migration UI are not implemented.
 - Survival is a systems vertical slice rather than a complete economy: there
   is no crafting, mob loop, or broader progression.
 - Canonical WorldItems do not expire automatically. Sleeping and unloaded
@@ -43,6 +43,14 @@
   installDist checklist was reported passing. Exact macOS version, test totals,
   raw logs, runtime durations, and audio-device details were not supplied and
   are not claimed.
+- Phase 14 Windows automation and development runtime are PASS. The development
+  tester confirmed New World `Test`, player-position and item-state restore,
+  slot deletion, reduced mining shake, and clean exit. Phase 14 Windows
+  installDist create/load, Save & Quit, relaunch, restored-state verification,
+  and normal exit cycle is HUMAN-REPORTED PASS. The requested Apple Silicon
+  macOS Gate 14E test is also HUMAN-REPORTED PASS, but the exact Mac model,
+  macOS version, Java version, automated totals, raw logs, durations, and
+  performance measurements were not supplied and are not claimed.
 
 ## Performance observations
 
@@ -61,8 +69,11 @@
 
 ## Deferred work
 
-- Phase 14 owns save discovery, real Save/Load, world serialization, and
-  restoration. Cloud saves remain outside that initial persistence scope.
+- Phase 14 cross-platform acceptance is complete. Detailed macOS numeric and
+  environment evidence and an exact Windows installDist duration/raw runtime
+  log remain unavailable and are not claimed.
+- Save is manual through Pause (`Save` or `Save & Quit`). There is deliberately
+  no timed autosave or background writer in v1.
 - Loading currently presents status text and Cancel but no progress bar. A
   truthful percentage requires a future loading-progress contract; the human
   Gate 13D tester explicitly accepted deferral rather than adding fabricated

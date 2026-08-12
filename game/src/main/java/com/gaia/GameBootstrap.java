@@ -5,8 +5,24 @@ import com.gaia.assets.GaiaResourceLoader;
 import com.gaia.audio.GaiaAudioSettingsAdapter;
 import com.gaia.audio.GaiaMusicCatalog;
 import com.gaia.audio.MusicManager;
+import com.gaia.save.archive.SaveArchiveReader;
+import com.gaia.save.archive.SaveArchiveWriter;
+import com.gaia.save.codec.ChunkSectionCodec;
+import com.gaia.save.codec.InventorySectionCodec;
+import com.gaia.save.codec.PlayerSectionCodec;
+import com.gaia.save.codec.SaveSnapshotCodec;
+import com.gaia.save.codec.WorldItemsSectionCodec;
+import com.gaia.save.path.DefaultSaveRootProvider;
+import com.gaia.save.session.SaveCoordinator;
+import com.gaia.save.store.AtomicSaveStore;
+import com.gaia.save.store.FileSaveCatalog;
+import com.gaia.save.store.JdkSaveFileOperations;
+import com.gaia.save.store.SaveRepository;
+import com.gaia.save.format.SaveGameId;
+import com.gaia.session.GameSessionConfig;
 import com.gaia.session.GameSessionFactory;
 import com.gaia.session.GameSessionFrame;
+import com.gaia.session.GameSessionLauncher;
 import com.gaia.settings.DefaultSettingsPathProvider;
 import com.gaia.settings.JsonSettingsStore;
 import com.gaia.settings.ProductSettingsLifecycle;
@@ -15,11 +31,13 @@ import com.gaia.settings.SettingsController;
 import com.gaia.shell.ProductLoop;
 import com.gaia.shell.ProductShellController;
 import com.gaia.shell.ScreenRouter;
-import com.gaia.shell.save.EmptySaveCatalog;
+import com.gaia.shell.save.SaveCatalog;
 import com.gaia.shell.ui.ProductScreenInputController;
 import com.gaia.shell.ui.ProductScreenPresenter;
 import com.gaia.shell.ui.ProductUiCompositor;
 import com.gaia.shell.ui.ProductUiLayout;
+import com.gaia.shell.world.NewWorldDraftController;
+import com.gaia.shell.world.WorldSlotsController;
 import com.gaia.ui.GaiaUiAssetLoader;
 import com.gaia.ui.GaiaUiAssets;
 import com.overlord.assets.AssetDiagnostic;
@@ -45,7 +63,11 @@ import com.overlord.renderer.ui.UiLayoutContext;
 import com.overlord.renderer.visual.RenderVisualSettings;
 import java.util.List;
 import java.util.Objects;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 public final class GameBootstrap {
     private static final double MAX_FRAME_DELTA_SECONDS = 0.25;
@@ -147,12 +169,21 @@ public final class GameBootstrap {
             ProductShellController shell =
                     new ProductShellController(
                             ScreenRouter.mainMenu(), settingsController);
+            SaveComposition saveComposition = composeSaveLoad(
+                    new DefaultSaveRootProvider().saveRoot(),
+                    sessionFactory::create,
+                    sessionFactory::restore,
+                    settingsLifecycle::newSessionConfig,
+                    Instant::now,
+                    () -> SaveGameId.parse(UUID.randomUUID().toString()));
             ProductScreenPresenter productPresenter =
                     new ProductScreenPresenter(
-                            new EmptySaveCatalog(),
+                            saveComposition.catalog(),
                             new TextRenderer(
                                     uiAssets.renderAssets().glyphs()),
-                            settingsController::snapshot);
+                            settingsController::snapshot,
+                            saveComposition.newWorldDraft(),
+                            saveComposition.worldSlots());
             ProductFrameHost frameHost =
                     new ProductFrameHost(
                             engine,
@@ -166,9 +197,7 @@ public final class GameBootstrap {
                             shell,
                             new ProductScreenInputController(),
                             productPresenter,
-                            () ->
-                                    sessionFactory.create(
-                                            settingsLifecycle.newSessionConfig()),
+                            saveComposition.persistenceServices(),
                             frameClock::tick,
                             frameHost,
                             musicManager,
@@ -179,6 +208,98 @@ public final class GameBootstrap {
             throw failure;
         } finally {
             closeAfterRun(shutdownCoordinator, primaryFailure);
+        }
+    }
+
+    static SaveComposition composeSaveLoad(
+            Path saveRoot,
+            GameSessionLauncher.NewSessionFactory newSessions,
+            GameSessionLauncher.RestoreSessionFactory restoredSessions,
+            Supplier<GameSessionConfig> sessionDefaults,
+            Supplier<Instant> clock,
+            Supplier<SaveGameId> saveGameIds) {
+        Path root = Objects.requireNonNull(saveRoot, "saveRoot");
+        Objects.requireNonNull(newSessions, "newSessions");
+        Objects.requireNonNull(restoredSessions, "restoredSessions");
+        Objects.requireNonNull(sessionDefaults, "sessionDefaults");
+        Objects.requireNonNull(clock, "clock");
+        Objects.requireNonNull(saveGameIds, "saveGameIds");
+
+        SaveSnapshotCodec snapshotCodec = new SaveSnapshotCodec(
+                new ChunkSectionCodec(),
+                new PlayerSectionCodec(),
+                new InventorySectionCodec(),
+                new WorldItemsSectionCodec());
+        SaveArchiveReader archiveReader = new SaveArchiveReader(snapshotCodec);
+        SaveArchiveWriter archiveWriter = new SaveArchiveWriter();
+        JdkSaveFileOperations files = new JdkSaveFileOperations();
+        SaveRepository repository = SaveRepository.open(root, archiveReader, files);
+        SaveCatalog catalog = new FileSaveCatalog(repository);
+        NewWorldDraftController newWorldDraft = new NewWorldDraftController(catalog);
+        WorldSlotsController worldSlots = new WorldSlotsController(catalog, 4);
+        SaveCoordinator coordinator = new SaveCoordinator(id -> {
+            AtomicSaveStore store = new AtomicSaveStore(
+                    root,
+                    id,
+                    snapshotCodec,
+                    archiveWriter,
+                    archiveReader,
+                    files);
+            return store::save;
+        });
+        GameSessionLauncher launcher = new GameSessionLauncher(
+                newSessions,
+                restoredSessions,
+                repository::load,
+                coordinator,
+                request -> {
+                    GameSessionConfig defaults = Objects.requireNonNull(
+                            sessionDefaults.get(), "session defaults");
+                    return new GameSessionConfig(
+                            request.seed(),
+                            defaults.chunkRadius(),
+                            defaults.defaultGameMode(),
+                            defaults.debugHudDefault());
+                },
+                clock);
+        ProductLoop.WorldSlotOperations operations =
+                new ProductLoop.WorldSlotOperations() {
+                    @Override
+                    public com.gaia.save.store.SaveDeleteResult delete(
+                            SaveGameId saveGameId) {
+                        return repository.delete(saveGameId);
+                    }
+
+                    @Override
+                    public com.gaia.save.store.SaveRecoveryResult recover(
+                            SaveGameId saveGameId) {
+                        return repository.recoverBackup(saveGameId);
+                    }
+                };
+        ProductLoop.PersistenceServices persistenceServices =
+                new ProductLoop.PersistenceServices(
+                        launcher,
+                        newWorldDraft,
+                        worldSlots,
+                        saveGameIds,
+                        operations);
+        return new SaveComposition(
+                catalog,
+                newWorldDraft,
+                worldSlots,
+                persistenceServices);
+    }
+
+    record SaveComposition(
+            SaveCatalog catalog,
+            NewWorldDraftController newWorldDraft,
+            WorldSlotsController worldSlots,
+            ProductLoop.PersistenceServices persistenceServices) {
+        SaveComposition {
+            Objects.requireNonNull(catalog, "catalog");
+            Objects.requireNonNull(newWorldDraft, "newWorldDraft");
+            Objects.requireNonNull(worldSlots, "worldSlots");
+            Objects.requireNonNull(persistenceServices, "persistenceServices");
         }
     }
 

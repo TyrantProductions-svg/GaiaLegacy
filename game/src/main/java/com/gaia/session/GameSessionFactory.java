@@ -1,6 +1,7 @@
 package com.gaia.session;
 
 import com.gaia.assets.GaiaAssetCatalog;
+import com.gaia.assets.GaiaResourceLoader;
 import com.gaia.blocks.BlockRegistry;
 import com.gaia.inventory.BodyInventoryInputController;
 import com.gaia.inventory.BodyInventoryService;
@@ -27,8 +28,16 @@ import com.gaia.interaction.feedback.InteractionFeedbackCoordinator;
 import com.gaia.interaction.feedback.VisualFeedbackDiagnostics;
 import com.gaia.interaction.feedback.VisualRegionDiagnostics;
 import com.gaia.interaction.feedback.WorldItemVisualTracker;
+import com.gaia.save.format.SaveFormatVersion;
+import com.gaia.save.format.SaveGameId;
+import com.gaia.save.session.SessionRestoreCoordinator;
+import com.gaia.save.snapshot.InventorySaveSnapshot;
+import com.gaia.save.snapshot.PlayerSaveSnapshot;
+import com.gaia.save.snapshot.SaveGameSnapshot;
+import com.gaia.save.snapshot.WorldItemsSaveSnapshot;
 import com.gaia.ui.GaiaHudScreen;
 import com.gaia.ui.GaiaUiAssets;
+import com.gaia.ui.GaiaUiAssetLoader;
 import com.gaia.ui.HudDebugSnapshot;
 import com.gaia.ui.HudFrameCoordinator;
 import com.gaia.ui.HudPresenter;
@@ -51,6 +60,7 @@ import com.gaia.worlditem.WorldItemPickupTransaction;
 import com.gaia.worlditem.WorldItemPresentationSnapshot;
 import com.gaia.worlditem.WorldItemTargetingService;
 import com.overlord.assets.ResourceLocation;
+import com.overlord.assets.AssetManager;
 import com.overlord.config.GameConfig;
 import com.overlord.core.Engine;
 import com.overlord.core.ModuleManager;
@@ -75,28 +85,49 @@ import com.overlord.physics.MassProperties;
 import com.overlord.physics.PhysicsBody;
 import com.overlord.physics.PhysicsWorld;
 import com.overlord.physics.PlayerController;
+import com.overlord.renderer.Camera;
+import com.overlord.renderer.ChunkGpuMesh;
+import com.overlord.renderer.ChunkRenderBackend;
+import com.overlord.renderer.ChunkRenderObject;
 import com.overlord.renderer.RenderFrameInput;
+import com.overlord.renderer.RenderSurfaceMetrics;
 import com.overlord.renderer.feedback.FeedbackVisibility;
 import com.overlord.renderer.feedback.InteractionFeedbackFrame;
 import com.overlord.renderer.metrics.RenderMetricsSnapshot;
 import com.overlord.renderer.particle.ParticleSystem;
 import com.overlord.renderer.ui.TextRenderer;
+import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkMeshBuilder;
+import com.overlord.voxel.ChunkMeshData;
 import com.overlord.voxel.ChunkMeshManager;
+import com.overlord.voxel.ChunkRepository;
+import com.overlord.voxel.ChunkRepositorySnapshot;
 import com.overlord.voxel.World;
 import com.overlord.worlditem.LogicalWorldItemService;
 import com.overlord.worlditem.api.WorldItemSnapshot;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
+import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import org.joml.Vector3f;
 
@@ -105,6 +136,10 @@ public final class GameSessionFactory {
     private static final int MAX_FIXED_STEPS_PER_FRAME = 8;
 
     private final SessionAssembler assembler;
+    private final NamedSessionAssembler namedAssembler;
+    private final RestoreSessionAssembler restoreAssembler;
+    private final boolean validateCanonicalFiniteWorld;
+    private final Thread ownerThread;
 
     public GameSessionFactory(
             Engine engine,
@@ -118,22 +153,132 @@ public final class GameSessionFactory {
         Objects.requireNonNull(mainThreadGuard, "mainThreadGuard");
         Objects.requireNonNull(catalog, "catalog");
         Objects.requireNonNull(uiAssets, "uiAssets");
+        ownerThread = Thread.currentThread();
+        validateCanonicalFiniteWorld = true;
+        ProductionEnvironment environment =
+                new EngineProductionEnvironment(engine);
         assembler =
                 (config, world, shutdown) ->
                         assembleProduction(
                                 config,
                                 world,
                                 shutdown,
-                                engine,
+                                environment,
                                 inputManager,
                                 mainThreadGuard,
                                 catalog,
                                 uiAssets,
-                                inventoryDebugShortcuts);
+                                inventoryDebugShortcuts,
+                                ProductionHooks.NONE);
+        namedAssembler =
+                (request, config, world, shutdown) ->
+                        assembleNewProduction(
+                                request,
+                                config,
+                                world,
+                                shutdown,
+                                environment,
+                                inputManager,
+                                mainThreadGuard,
+                                catalog,
+                                uiAssets,
+                                inventoryDebugShortcuts,
+                                ProductionHooks.NONE);
+        restoreAssembler =
+                (snapshot, world, shutdown) ->
+                        assembleRestoredProduction(
+                                snapshot,
+                                world,
+                                shutdown,
+                                environment,
+                                inputManager,
+                                mainThreadGuard,
+                                catalog,
+                                uiAssets,
+                                inventoryDebugShortcuts,
+                                ProductionHooks.NONE);
+    }
+
+    private GameSessionFactory(
+            ProductionEnvironment environment,
+            InputManager inputManager,
+            MainThreadGuard mainThreadGuard,
+            GaiaAssetCatalog catalog,
+            GaiaUiAssets uiAssets,
+            ProductionHooks hooks) {
+        Objects.requireNonNull(environment, "environment");
+        Objects.requireNonNull(inputManager, "inputManager");
+        Objects.requireNonNull(mainThreadGuard, "mainThreadGuard");
+        Objects.requireNonNull(catalog, "catalog");
+        Objects.requireNonNull(uiAssets, "uiAssets");
+        Objects.requireNonNull(hooks, "hooks");
+        ownerThread = Thread.currentThread();
+        validateCanonicalFiniteWorld = true;
+        assembler =
+                (config, world, shutdown) ->
+                        assembleProduction(
+                                config,
+                                world,
+                                shutdown,
+                                environment,
+                                inputManager,
+                                mainThreadGuard,
+                                catalog,
+                                uiAssets,
+                                false,
+                                hooks);
+        namedAssembler =
+                (request, config, world, shutdown) ->
+                        assembleNewProduction(
+                                request,
+                                config,
+                                world,
+                                shutdown,
+                                environment,
+                                inputManager,
+                                mainThreadGuard,
+                                catalog,
+                                uiAssets,
+                                false,
+                                hooks);
+        restoreAssembler =
+                (snapshot, world, shutdown) ->
+                        assembleRestoredProduction(
+                                snapshot,
+                                world,
+                                shutdown,
+                                environment,
+                                inputManager,
+                                mainThreadGuard,
+                                catalog,
+                                uiAssets,
+                                false,
+                                hooks);
     }
 
     GameSessionFactory(SessionAssembler assembler) {
+        ownerThread = Thread.currentThread();
+        validateCanonicalFiniteWorld = false;
         this.assembler = Objects.requireNonNull(assembler, "assembler");
+        namedAssembler = (request, config, world, shutdown) ->
+                this.assembler.assemble(config, world, shutdown);
+        restoreAssembler =
+                (snapshot, world, shutdown) -> {
+                    throw new IllegalStateException(
+                            "This session factory does not provide restore assembly");
+                };
+    }
+
+    GameSessionFactory(
+            SessionAssembler assembler,
+            RestoreSessionAssembler restoreAssembler) {
+        ownerThread = Thread.currentThread();
+        validateCanonicalFiniteWorld = false;
+        this.assembler = Objects.requireNonNull(assembler, "assembler");
+        namedAssembler = (request, config, world, shutdown) ->
+                this.assembler.assemble(config, world, shutdown);
+        this.restoreAssembler =
+                Objects.requireNonNull(restoreAssembler, "restoreAssembler");
     }
 
     public GameSession create(GameSessionConfig config) {
@@ -152,16 +297,220 @@ public final class GameSessionFactory {
         }
     }
 
+    public GameSession create(
+            NewWorldRequest request, GameSessionConfig config) {
+        NewWorldRequest validatedRequest = Objects.requireNonNull(request, "request");
+        GameSessionConfig validatedConfig = Objects.requireNonNull(config, "config");
+        if (validatedRequest.seed() != validatedConfig.seed()) {
+            throw new IllegalArgumentException(
+                    "new-world request seed must match the session config");
+        }
+        World world = new World();
+        ShutdownCoordinator shutdown = new ShutdownCoordinator();
+        try {
+            SessionRuntime runtime = Objects.requireNonNull(
+                    namedAssembler.assemble(
+                            validatedRequest,
+                            validatedConfig,
+                            world,
+                            shutdown),
+                    "session runtime");
+            return new OwnedGameSession(runtime, shutdown);
+        } catch (RuntimeException | Error failure) {
+            closeWithSuppression(shutdown, failure);
+            throw failure;
+        }
+    }
+
+    public GameSession restore(SaveGameSnapshot snapshot) {
+        requireFactoryOwnerThread("restore session");
+        SaveGameSnapshot validated = Objects.requireNonNull(snapshot, "snapshot");
+        if (validateCanonicalFiniteWorld) {
+            validateRestoreSnapshot(validated);
+        }
+        World world =
+                new World(
+                        new ChunkRepository(
+                                validated.chunks().worldHeight()));
+        ShutdownCoordinator shutdown = new ShutdownCoordinator();
+        try {
+            SessionRuntime runtime =
+                    Objects.requireNonNull(
+                            restoreAssembler.assemble(
+                                    validated, world, shutdown),
+                            "restored session runtime");
+            return new OwnedGameSession(runtime, shutdown);
+        } catch (RuntimeException | Error failure) {
+            closeWithSuppression(shutdown, failure);
+            throw failure;
+        }
+    }
+
+    private static void validateRestoreSnapshot(SaveGameSnapshot snapshot) {
+        int radius = snapshot.metadata().chunkRadius();
+        Set<ChunkKey> restoredKeys = new HashSet<>();
+        for (var chunk : snapshot.chunks().chunks()) {
+            ChunkKey key = chunk.key();
+            if (key.x() < -radius
+                    || key.x() > radius
+                    || key.z() < -radius
+                    || key.z() > radius) {
+                throw new IllegalArgumentException(
+                        "chunk key is outside the saved world radius: " + key);
+            }
+            restoredKeys.add(key);
+        }
+        long diameter = Math.addExact(Math.multiplyExact((long) radius, 2L), 1L);
+        long expectedChunkCount = Math.multiplyExact(diameter, diameter);
+        if (restoredKeys.size() != expectedChunkCount) {
+            throw new IllegalArgumentException(
+                    "saved Chunks must contain every key in radius "
+                            + radius
+                            + ": expected "
+                            + expectedChunkCount
+                            + " but found "
+                            + restoredKeys.size());
+        }
+        for (int chunkX = -radius; chunkX <= radius; chunkX++) {
+            for (int chunkZ = -radius; chunkZ <= radius; chunkZ++) {
+                ChunkKey expected = new ChunkKey(chunkX, chunkZ);
+                if (!restoredKeys.contains(expected)) {
+                    throw new IllegalArgumentException(
+                            "saved Chunks are missing expected key "
+                                    + expected);
+                }
+            }
+        }
+
+        PlayerSaveSnapshot player = snapshot.player();
+        requireExactFloat(player.feetPositionX(), "feetPositionX");
+        requireExactFloat(player.feetPositionY(), "feetPositionY");
+        requireExactFloat(player.feetPositionZ(), "feetPositionZ");
+        requireExactFloat(player.velocityX(), "velocityX");
+        requireExactFloat(player.velocityY(), "velocityY");
+        requireExactFloat(player.velocityZ(), "velocityZ");
+        requireExactFloat(player.yaw(), "yaw");
+        requireExactFloat(player.pitch(), "pitch");
+    }
+
+    private static void requireExactFloat(double value, String field) {
+        float converted = (float) value;
+        if (!Float.isFinite(converted)
+                || Double.doubleToRawLongBits(value)
+                        != Double.doubleToRawLongBits((double) converted)) {
+            throw new IllegalArgumentException(
+                    field + " must round-trip exactly through float");
+        }
+    }
+
+    private void requireFactoryOwnerThread(String operation) {
+        if (Thread.currentThread() != ownerThread) {
+            throw new IllegalStateException(
+                    "Cannot " + operation + " outside the factory owner thread");
+        }
+    }
+
     private static SessionRuntime assembleProduction(
             GameSessionConfig config,
             World world,
             ShutdownCoordinator shutdown,
-            Engine engine,
+            ProductionEnvironment environment,
             InputManager inputManager,
             MainThreadGuard mainThreadGuard,
             GaiaAssetCatalog catalog,
             GaiaUiAssets uiAssets,
-            boolean inventoryDebugShortcuts) {
+            boolean inventoryDebugShortcuts,
+            ProductionHooks hooks) {
+        return assembleProduction(
+                config,
+                Optional.empty(),
+                Optional.empty(),
+                world,
+                shutdown,
+                environment,
+                inputManager,
+                mainThreadGuard,
+                catalog,
+                uiAssets,
+                inventoryDebugShortcuts,
+                hooks);
+    }
+
+    private static SessionRuntime assembleNewProduction(
+            NewWorldRequest request,
+            GameSessionConfig config,
+            World world,
+            ShutdownCoordinator shutdown,
+            ProductionEnvironment environment,
+            InputManager inputManager,
+            MainThreadGuard mainThreadGuard,
+            GaiaAssetCatalog catalog,
+            GaiaUiAssets uiAssets,
+            boolean inventoryDebugShortcuts,
+            ProductionHooks hooks) {
+        return assembleProduction(
+                config,
+                Optional.of(Objects.requireNonNull(request, "request")),
+                Optional.empty(),
+                world,
+                shutdown,
+                environment,
+                inputManager,
+                mainThreadGuard,
+                catalog,
+                uiAssets,
+                inventoryDebugShortcuts,
+                hooks);
+    }
+
+    private static SessionRuntime assembleRestoredProduction(
+            SaveGameSnapshot snapshot,
+            World world,
+            ShutdownCoordinator shutdown,
+            ProductionEnvironment environment,
+            InputManager inputManager,
+            MainThreadGuard mainThreadGuard,
+            GaiaAssetCatalog catalog,
+            GaiaUiAssets uiAssets,
+            boolean inventoryDebugShortcuts,
+            ProductionHooks hooks) {
+        GameSessionConfig config =
+                new GameSessionConfig(
+                        snapshot.metadata().worldSeed(),
+                        snapshot.metadata().chunkRadius(),
+                        snapshot.player().gameMode(),
+                        false);
+        return assembleProduction(
+                config,
+                Optional.empty(),
+                Optional.of(snapshot),
+                world,
+                shutdown,
+                environment,
+                inputManager,
+                mainThreadGuard,
+                catalog,
+                uiAssets,
+                inventoryDebugShortcuts,
+                hooks);
+    }
+
+    private static SessionRuntime assembleProduction(
+            GameSessionConfig config,
+            Optional<NewWorldRequest> newWorldRequest,
+            Optional<SaveGameSnapshot> restoreSnapshot,
+            World world,
+            ShutdownCoordinator shutdown,
+            ProductionEnvironment environment,
+            InputManager inputManager,
+            MainThreadGuard mainThreadGuard,
+            GaiaAssetCatalog catalog,
+            GaiaUiAssets uiAssets,
+            boolean inventoryDebugShortcuts,
+            ProductionHooks hooks) {
+        Objects.requireNonNull(environment, "environment");
+        Objects.requireNonNull(hooks, "hooks");
+        hooks.registerShutdown(shutdown);
         BlockCollisionShapeResolver shapes =
                 BlockCollisionShapeResolver.fullCubesForNonAir();
         CollisionWorld collisionWorld = new CollisionWorld(world, shapes);
@@ -190,7 +539,7 @@ public final class GameSessionFactory {
                         collisionWorld,
                         new Vector3f(0, GameConfig.Physics.GRAVITY, 0));
         PlayerManager playerManager =
-                new PlayerManager(engine.getCamera(), playerController);
+                new PlayerManager(environment.camera(), playerController);
         FixedStepClock fixedStepClock =
                 new FixedStepClock(
                         FIXED_STEP_SECONDS,
@@ -239,6 +588,11 @@ public final class GameSessionFactory {
                         world.chunks(),
                         mainThreadGuard,
                         WorldItemPhysicsConfig.production());
+        hooks.observeOwners(
+                physicsWorld,
+                inventoryService,
+                inventoryOwner,
+                worldItems);
         VisualRegionDiagnostics visualRegionDiagnostics =
                 VisualRegionDiagnostics.safe(
                         (item, failure) ->
@@ -316,7 +670,7 @@ public final class GameSessionFactory {
                 new PlayerBlockTargeting(
                         blockRaycasts,
                         playerBody,
-                        engine.getCamera(),
+                        environment.camera(),
                         world.chunks(),
                         GameConfig.Player.EYE_HEIGHT,
                         GameConfig.Interaction.REACH);
@@ -340,7 +694,7 @@ public final class GameSessionFactory {
                 new WorldItemPickupController(
                         worldItems,
                         playerBody,
-                        engine.getCamera(),
+                        environment.camera(),
                         () ->
                                 inventoryService
                                         .viewModel(inventoryOwner)
@@ -384,55 +738,30 @@ public final class GameSessionFactory {
                                 ResourceLocation.parse("gaia:air")),
                         GameConfig.Interaction.BASE_BREAK_SPEED,
                         feedback);
-        runConfiguredInventoryDebugCommand(inventoryDebugCommands);
+        if (restoreSnapshot.isEmpty()) {
+            runConfiguredInventoryDebugCommand(inventoryDebugCommands);
+        }
 
-        WorldGenerator generator =
-                GaiaWorldGenerator.createVisualRevisionCandidate();
-        WorldGenerationConfig worldGenerationConfig =
-                configuredGeneration(config);
         SessionShutdownBarrier shutdownBarrier =
                 new SessionShutdownBarrier(5, TimeUnit.SECONDS);
         ExecutorService meshExecutor =
                 Executors.newFixedThreadPool(
                         2,
-                        namedThreadFactory("Gaia-Chunk-Mesher"));
+                        instrumentedThreadFactory(
+                                namedThreadFactory("Gaia-Chunk-Mesher"),
+                                hooks));
         ChunkMeshManager chunkMeshes =
                 shutdownBarrier.registerChunkMeshes(
                         shutdown,
                         meshExecutor,
                         () ->
-                                new ChunkMeshManager(
+                                environment.newChunkMeshManager(
                                         world.chunks(),
-                                        new ChunkMeshBuilder(blocks),
+                                        blocks,
                                         meshExecutor,
-                                        engine.getRenderer(),
-                                        mainThreadGuard,
-                                        2),
+                                        mainThreadGuard),
                         ChunkMeshManager::close);
 
-        ExecutorService worldExecutor =
-                Executors.newSingleThreadExecutor(
-                        runnable -> {
-                            Thread thread =
-                                    new Thread(
-                                            runnable,
-                                            "Gaia-World-Loader");
-                            thread.setDaemon(true);
-                            return thread;
-                        });
-        shutdownBarrier.registerWorldExecutor(
-                shutdown, worldExecutor);
-        WorldLoader worldLoader =
-                new WorldLoader(
-                        generator,
-                        blocks,
-                        worldGenerationConfig,
-                        new SafeSpawnSelector(),
-                        worldExecutor);
-        CompletableFuture<WorldLoadResult> worldLoad =
-                worldLoader.loadAsync(world);
-        shutdown.register(
-                "world-load", () -> worldLoad.cancel(true));
         shutdown.register(
                 "interaction-feedback", feedback::close);
         shutdown.register(
@@ -444,8 +773,78 @@ public final class GameSessionFactory {
         shutdown.register(
                 "block-break", blockBreak::close);
 
+        Optional<WorldLoader> sessionWorldLoader = Optional.empty();
+        Optional<CompletableFuture<WorldLoadResult>> worldLoad =
+                Optional.empty();
+        Set<ChunkKey> meshReadiness = Set.of();
+        long initialFixedTick = 0L;
+        SaveGameSnapshot.StaticMetadata persistenceMetadata;
+        PendingCameraOrientation cameraOrientation =
+                new PendingCameraOrientation(environment.camera());
+        if (restoreSnapshot.isPresent()) {
+            SaveGameSnapshot restored = restoreSnapshot.orElseThrow();
+            AtomicLong restoredFixedTick = new AtomicLong(-1L);
+            AtomicReference<Set<ChunkKey>> restoredReadiness =
+                    new AtomicReference<>(Set.of());
+            new SessionRestoreCoordinator(
+                            world.chunks(),
+                            inventoryService,
+                            inventoryOwner,
+                            worldItems,
+                            playerController,
+                            environment.camera(),
+                            gameModes,
+                            physicalWorldItems,
+                            restoredFixedTick::set,
+                            keys -> restoredReadiness.set(Set.copyOf(keys)),
+                            cameraOrientation::stage,
+                            stage -> beforeRestoreStage(hooks, stage))
+                    .restore(restored);
+            if (restoredFixedTick.get() != restored.fixedTick()) {
+                throw new IllegalStateException(
+                        "restore did not preserve the fixed tick");
+            }
+            initialFixedTick = restoredFixedTick.get();
+            meshReadiness = restoredReadiness.get();
+            persistenceMetadata = restored.metadata();
+        } else {
+            hooks.generationInvoked();
+            WorldGenerator generator =
+                    GaiaWorldGenerator.createVisualRevisionCandidate();
+            WorldGenerationConfig worldGenerationConfig =
+                    configuredGeneration(config);
+            ExecutorService worldExecutor =
+                    Executors.newSingleThreadExecutor(
+                            runnable -> {
+                                Thread thread =
+                                        new Thread(
+                                                runnable,
+                                                "Gaia-World-Loader");
+                                thread.setDaemon(true);
+                                return thread;
+                            });
+            shutdownBarrier.registerWorldExecutor(
+                    shutdown, worldExecutor);
+            WorldLoader worldLoader =
+                    new WorldLoader(
+                            generator,
+                            blocks,
+                            worldGenerationConfig,
+                            new SafeSpawnSelector(),
+                            worldExecutor);
+            CompletableFuture<WorldLoadResult> createdWorldLoad =
+                    worldLoader.loadAsync(world);
+            shutdown.register(
+                    "world-load", () -> createdWorldLoad.cancel(true));
+            sessionWorldLoader = Optional.of(worldLoader);
+            worldLoad = Optional.of(createdWorldLoad);
+            persistenceMetadata =
+                    newSessionMetadata(
+                            config, worldGenerationConfig, newWorldRequest);
+        }
+
         return new ProductionSessionRuntime(
-                engine,
+                environment,
                 inputManager,
                 world,
                 playerManager,
@@ -453,8 +852,12 @@ public final class GameSessionFactory {
                 playerController,
                 fixedStepClock,
                 chunkMeshes,
-                worldLoader,
+                cameraOrientation,
+                sessionWorldLoader,
                 worldLoad,
+                meshReadiness,
+                initialFixedTick,
+                persistenceMetadata,
                 inventoryOwner,
                 inventoryService,
                 inventoryInput,
@@ -469,7 +872,127 @@ public final class GameSessionFactory {
                 feedback,
                 InteractionBlockState.unblocked(),
                 hudFrames,
-                config.debugHudDefault());
+                config.debugHudDefault(),
+                hooks);
+    }
+
+    static SessionSaveCaptureResult captureSave(
+            SaveGameSnapshot.StaticMetadata metadata,
+            LongSupplier persistenceRevision,
+            LongSupplier fixedTick,
+            World world,
+            EntityRef inventoryOwner,
+            BodyInventoryService inventoryService,
+            LogicalWorldItemService worldItems,
+            PlayerController playerController,
+            Camera camera,
+            GameModeManager gameModes) {
+        return captureSave(
+                metadata,
+                persistenceRevision,
+                fixedTick,
+                world,
+                inventoryOwner,
+                inventoryService,
+                worldItems,
+                playerController,
+                camera,
+                gameModes,
+                SessionPersistenceClock.restored(0L, 0L));
+    }
+
+    private static SessionSaveCaptureResult captureSave(
+            SaveGameSnapshot.StaticMetadata metadata,
+            LongSupplier persistenceRevision,
+            LongSupplier fixedTick,
+            World world,
+            EntityRef inventoryOwner,
+            BodyInventoryService inventoryService,
+            LogicalWorldItemService worldItems,
+            PlayerController playerController,
+            Camera camera,
+            GameModeManager gameModes,
+            SessionPersistenceClock captureAuthority) {
+        Objects.requireNonNull(metadata, "metadata");
+        Objects.requireNonNull(persistenceRevision, "persistenceRevision");
+        Objects.requireNonNull(fixedTick, "fixedTick");
+        Objects.requireNonNull(world, "world");
+        Objects.requireNonNull(inventoryOwner, "inventoryOwner");
+        Objects.requireNonNull(inventoryService, "inventoryService");
+        Objects.requireNonNull(worldItems, "worldItems");
+        Objects.requireNonNull(playerController, "playerController");
+        Objects.requireNonNull(camera, "camera");
+        Objects.requireNonNull(gameModes, "gameModes");
+        Objects.requireNonNull(captureAuthority, "captureAuthority");
+
+        long revisionBefore = requireNonnegativeRevision(persistenceRevision.getAsLong());
+        long fixedTickBefore = requireNonnegativeFixedTick(fixedTick.getAsLong());
+        ChunkRepositorySnapshot chunks;
+        try {
+            chunks = world.chunks().canonicalSnapshot();
+        } catch (IllegalStateException inconsistentRevision) {
+            return SessionSaveCaptureResult.inconsistentRevision();
+        }
+        InventorySaveSnapshot inventory;
+        WorldItemsSaveSnapshot logicalItems;
+        try {
+            inventory =
+                    new InventorySaveSnapshot(
+                            inventoryService.canonicalSnapshot(inventoryOwner));
+            logicalItems =
+                    new WorldItemsSaveSnapshot(
+                            fixedTickBefore, worldItems.canonicalSnapshot());
+        } catch (IllegalStateException pendingTransaction) {
+            return SessionSaveCaptureResult.pendingTransaction();
+        }
+
+        Vector3f feet =
+                playerController.body().position(new Vector3f());
+        Vector3f velocity =
+                playerController.body().linearVelocity(new Vector3f());
+        PlayerSaveSnapshot player =
+                new PlayerSaveSnapshot(
+                        inventoryOwner,
+                        feet.x,
+                        feet.y,
+                        feet.z,
+                        velocity.x,
+                        velocity.y,
+                        velocity.z,
+                        camera.getYaw(),
+                        camera.getPitch(),
+                        gameModes.mode(),
+                        playerController.isNoclip());
+
+        long fixedTickAfter = requireNonnegativeFixedTick(fixedTick.getAsLong());
+        long revisionAfter = requireNonnegativeRevision(persistenceRevision.getAsLong());
+        if (fixedTickAfter != fixedTickBefore || revisionAfter != revisionBefore) {
+            return SessionSaveCaptureResult.inconsistentRevision();
+        }
+        SaveGameSnapshot snapshot =
+                new SaveGameSnapshot(
+                        metadata,
+                        fixedTickBefore,
+                        chunks,
+                        player,
+                        inventory,
+                        logicalItems);
+        return captureAuthority.captured(snapshot, revisionBefore);
+    }
+
+    private static long requireNonnegativeRevision(long revision) {
+        if (revision < 0) {
+            throw new IllegalStateException(
+                    "session persistence revision must be non-negative");
+        }
+        return revision;
+    }
+
+    private static long requireNonnegativeFixedTick(long fixedTick) {
+        if (fixedTick < 0) {
+            throw new IllegalStateException("fixed tick must be non-negative");
+        }
+        return fixedTick;
     }
 
     private static WorldGenerationConfig configuredGeneration(
@@ -486,6 +1009,54 @@ public final class GameSessionFactory {
                 defaults.surface(),
                 defaults.decoration(),
                 defaults.spawn());
+    }
+
+    private static SaveGameSnapshot.StaticMetadata newSessionMetadata(
+            GameSessionConfig config,
+            WorldGenerationConfig generationConfig,
+            Optional<NewWorldRequest> newWorldRequest) {
+        NewWorldRequest request = newWorldRequest.orElse(null);
+        if (request != null && request.seed() != config.seed()) {
+            throw new IllegalArgumentException(
+                    "new-world request seed must match generation config");
+        }
+        String implementationVersion =
+                GameSessionFactory.class
+                        .getPackage()
+                        .getImplementationVersion();
+        return new SaveGameSnapshot.StaticMetadata(
+                SaveFormatVersion.CURRENT,
+                implementationVersion == null
+                        ? "development"
+                        : implementationVersion,
+                request == null
+                        ? SaveGameId.parse(UUID.randomUUID().toString())
+                        : request.saveGameId(),
+                request == null ? "New World" : request.displayName(),
+                Instant.now(),
+                config.seed(),
+                "gaia-v" + generationConfig.algorithmVersion(),
+                generationFingerprint(generationConfig),
+                config.chunkRadius(),
+                GameConfig.Chunk.MAX_HEIGHT,
+                Optional.empty());
+    }
+
+    private static String generationFingerprint(
+            WorldGenerationConfig generationConfig) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of()
+                    .formatHex(
+                            digest.digest(
+                                    generationConfig
+                                            .canonicalFingerprintInput()
+                                            .getBytes(
+                                                    StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(
+                    "SHA-256 is unavailable", impossible);
+        }
     }
 
     private static InventoryDebugCommands createInventoryDebugCommands(
@@ -534,6 +1105,33 @@ public final class GameSessionFactory {
         };
     }
 
+    private static ThreadFactory instrumentedThreadFactory(
+            ThreadFactory delegate,
+            ProductionHooks hooks) {
+        Objects.requireNonNull(delegate, "delegate");
+        Objects.requireNonNull(hooks, "hooks");
+        return runnable -> {
+            Thread worker = delegate.newThread(runnable);
+            hooks.workerCreated(worker);
+            return worker;
+        };
+    }
+
+    private static void beforeRestoreStage(
+            ProductionHooks hooks,
+            SessionRestoreCoordinator.RestoreStage stage) {
+        switch (stage) {
+            case CHUNKS -> hooks.before(ProductionFailurePoint.CHUNKS);
+            case INVENTORY -> hooks.before(ProductionFailurePoint.INVENTORY);
+            case WORLD_ITEMS -> hooks.before(ProductionFailurePoint.WORLD_ITEMS);
+            case PLAYER -> hooks.before(ProductionFailurePoint.PLAYER);
+            case PROJECTIONS -> hooks.before(ProductionFailurePoint.PROJECTION);
+            case MESH_READINESS -> {
+                // Mesh failure injection belongs to the real runtime pump.
+            }
+        }
+    }
+
     private static void closeWithSuppression(
             ShutdownCoordinator shutdown,
             Throwable primaryFailure) {
@@ -546,10 +1144,757 @@ public final class GameSessionFactory {
         }
     }
 
+    /**
+     * Production camera publication boundary shared by restored and generated
+     * sessions. Staging never mutates the shared camera; publication occurs
+     * only after its supplied READY-frame operation succeeds.
+     */
+    private static final class PendingCameraOrientation {
+        private final Camera camera;
+        private Float pendingYaw;
+        private Float pendingPitch;
+        private boolean committed;
+
+        private PendingCameraOrientation(Camera camera) {
+            this.camera = Objects.requireNonNull(camera, "camera");
+        }
+
+        private void stage(float yaw, float pitch) {
+            if (!Float.isFinite(yaw) || !Float.isFinite(pitch)) {
+                throw new IllegalArgumentException(
+                        "camera orientation must be finite");
+            }
+            if (committed) {
+                throw new IllegalStateException(
+                        "camera orientation is already published");
+            }
+            pendingYaw = yaw;
+            pendingPitch = pitch;
+        }
+
+        private <T> T beforeReady(Supplier<T> operation) {
+            if (committed) {
+                throw new IllegalStateException(
+                        "camera orientation is already published");
+            }
+            return Objects.requireNonNull(operation, "operation").get();
+        }
+
+        private <T> T commitAfterReady(Supplier<T> readyPublication) {
+            T published = beforeReady(readyPublication);
+            if (pendingYaw == null || pendingPitch == null) {
+                throw new IllegalStateException(
+                        "camera orientation was not staged");
+            }
+            camera.setYaw(pendingYaw);
+            camera.setPitch(pendingPitch);
+            committed = true;
+            return published;
+        }
+
+        private boolean isCommitted() {
+            return committed;
+        }
+    }
+
+    enum ProductionFailurePoint {
+        CHUNKS,
+        INVENTORY,
+        WORLD_ITEMS,
+        PLAYER,
+        PROJECTION,
+        INITIAL_FRAME,
+        MESH_PUMP,
+        READY_FRAME
+    }
+
+    private interface ProductionHooks {
+        ProductionHooks NONE = ignored -> {};
+
+        void before(ProductionFailurePoint failurePoint);
+
+        default void registerShutdown(
+                ShutdownCoordinator shutdown) {}
+
+        default void observeOwners(
+                PhysicsWorld physicsWorld,
+                BodyInventoryService inventory,
+                EntityRef inventoryOwner,
+                LogicalWorldItemService worldItems) {}
+
+        default void generationInvoked() {}
+
+        default void frameCaptured(
+                HudVisibility.Lifecycle lifecycle,
+                GameSessionFrame frame) {}
+
+        default void readyPublished() {}
+
+        default void workerCreated(Thread worker) {}
+    }
+
+    private interface ProductionEnvironment {
+        Camera camera();
+
+        ChunkMeshManager newChunkMeshManager(
+                ChunkRepository chunks,
+                BlockRegistry blocks,
+                ExecutorService meshExecutor,
+                MainThreadGuard mainThreadGuard);
+
+        RenderMetricsSnapshot renderMetricsSnapshot();
+
+        RenderSurfaceMetrics surfaceMetrics();
+    }
+
+    private static final class EngineProductionEnvironment
+            implements ProductionEnvironment {
+        private final Engine engine;
+
+        private EngineProductionEnvironment(Engine engine) {
+            this.engine = Objects.requireNonNull(engine, "engine");
+        }
+
+        @Override
+        public Camera camera() {
+            return engine.getCamera();
+        }
+
+        @Override
+        public ChunkMeshManager newChunkMeshManager(
+                ChunkRepository chunks,
+                BlockRegistry blocks,
+                ExecutorService meshExecutor,
+                MainThreadGuard mainThreadGuard) {
+            World world = new World(chunks);
+            return new ChunkMeshManager(
+                    world.chunks(),
+                    new ChunkMeshBuilder(blocks),
+                    meshExecutor,
+                    engine.getRenderer(),
+                    mainThreadGuard,
+                    2);
+        }
+
+        @Override
+        public RenderMetricsSnapshot renderMetricsSnapshot() {
+            return engine.getRenderer().metrics().snapshot();
+        }
+
+        @Override
+        public RenderSurfaceMetrics surfaceMetrics() {
+            return engine.getWindow().currentSurfaceMetrics();
+        }
+    }
+
+    private static final class HeadlessProductionEnvironment
+            implements ProductionEnvironment {
+        private final Camera camera = new Camera();
+        private final ChunkRenderBackend chunkRenderBackend =
+                new ChunkRenderBackend() {
+                    @Override
+                    public ChunkRenderObject upload(
+                            ChunkMeshData data) {
+                        return new ChunkRenderObject(
+                                data.key(),
+                                data.revision(),
+                                new HeadlessChunkGpuMesh(
+                                        data.vertexCount()),
+                                data.localBounds().orElseThrow());
+                    }
+
+                    @Override
+                    public void release(
+                            ChunkRenderObject object) {
+                        Objects.requireNonNull(object, "object")
+                                .mesh()
+                                .cleanup();
+                    }
+                };
+        private final RenderMetricsSnapshot metrics =
+                new RenderMetricsSnapshot(0.0, 0.0, 0, 0, 0L, 0);
+        private final RenderSurfaceMetrics surface =
+                new RenderSurfaceMetrics(1280, 720, 1280, 720, 1.0f, 1.0f);
+
+        @Override
+        public Camera camera() {
+            return camera;
+        }
+
+        @Override
+        public ChunkMeshManager newChunkMeshManager(
+                ChunkRepository chunks,
+                BlockRegistry blocks,
+                ExecutorService meshExecutor,
+                MainThreadGuard mainThreadGuard) {
+            return new ChunkMeshManager(
+                    chunks,
+                    new ChunkMeshBuilder(blocks),
+                    meshExecutor,
+                    chunkRenderBackend,
+                    mainThreadGuard,
+                    2);
+        }
+
+        @Override
+        public RenderMetricsSnapshot renderMetricsSnapshot() {
+            return metrics;
+        }
+
+        @Override
+        public RenderSurfaceMetrics surfaceMetrics() {
+            return surface;
+        }
+
+        private record HeadlessChunkGpuMesh(int vertexCount)
+                implements ChunkGpuMesh {
+            private HeadlessChunkGpuMesh {
+                if (vertexCount <= 0) {
+                    throw new IllegalArgumentException(
+                            "headless chunk mesh must contain vertices");
+                }
+            }
+
+            @Override
+            public void draw() {}
+
+            @Override
+            public void cleanup() {}
+        }
+    }
+
+    private static final class ProductionInstrumentation
+            implements ProductionHooks {
+        private final ProductionFailurePoint failurePoint;
+        private final RuntimeException primaryFailure =
+                new RuntimeException("injected actual production failure");
+        private final RuntimeException cleanupFailure =
+                new RuntimeException("injected actual production cleanup failure");
+        private final ConcurrentLinkedQueue<Thread> workers =
+                new ConcurrentLinkedQueue<>();
+        private boolean failureEnabled = true;
+        private int failureHookCalls;
+        private int generationInvocations;
+        private int capturedFrames;
+        private int transientPresentations;
+        private int readyPublications;
+        private int closeCalls;
+        private ShutdownCoordinator failedShutdown;
+        private PhysicsWorld physicsWorld;
+        private BodyInventoryService inventory;
+        private EntityRef inventoryOwner;
+        private LogicalWorldItemService worldItems;
+
+        private ProductionInstrumentation(
+                ProductionFailurePoint failurePoint) {
+            this.failurePoint = Objects.requireNonNull(
+                    failurePoint, "failurePoint");
+            failureEnabled = true;
+        }
+
+        private ProductionInstrumentation() {
+            failurePoint = null;
+            failureEnabled = false;
+        }
+
+        @Override
+        public void before(
+                ProductionFailurePoint currentPoint) {
+            if (failureEnabled && currentPoint == failurePoint) {
+                failureHookCalls++;
+                throw primaryFailure;
+            }
+        }
+
+        @Override
+        public void registerShutdown(
+                ShutdownCoordinator shutdown) {
+            if (failureEnabled) {
+                failedShutdown = shutdown;
+            }
+            shutdown.register(
+                    "production-test-observer",
+                    () -> {
+                        closeCalls++;
+                        if (failureEnabled) {
+                            throw cleanupFailure;
+                        }
+                    });
+        }
+
+        @Override
+        public void observeOwners(
+                PhysicsWorld physicsWorld,
+                BodyInventoryService inventory,
+                EntityRef inventoryOwner,
+                LogicalWorldItemService worldItems) {
+            this.physicsWorld = Objects.requireNonNull(
+                    physicsWorld, "physicsWorld");
+            this.inventory = Objects.requireNonNull(
+                    inventory, "inventory");
+            this.inventoryOwner = Objects.requireNonNull(
+                    inventoryOwner, "inventoryOwner");
+            this.worldItems = Objects.requireNonNull(
+                    worldItems, "worldItems");
+        }
+
+        @Override
+        public void generationInvoked() {
+            generationInvocations++;
+        }
+
+        @Override
+        public void frameCaptured(
+                HudVisibility.Lifecycle lifecycle,
+                GameSessionFrame frame) {
+            capturedFrames++;
+            transientPresentations = Objects.requireNonNull(frame, "frame")
+                    .renderInput()
+                    .feedback()
+                    .transientBlocks()
+                    .size();
+        }
+
+        @Override
+        public void readyPublished() {
+            readyPublications++;
+        }
+
+        @Override
+        public void workerCreated(Thread worker) {
+            workers.add(Objects.requireNonNull(worker, "worker"));
+        }
+
+        private void beginSuccessfulRetry() {
+            failureEnabled = false;
+        }
+
+        private int physicsBodyCount() {
+            return Objects.requireNonNull(
+                    physicsWorld, "production physics owner")
+                    .bodies()
+                    .size();
+        }
+
+        private int inventoryPendingReservations() {
+            try {
+                Objects.requireNonNull(
+                                inventory, "production inventory owner")
+                        .canonicalSnapshot(inventoryOwner);
+                return 0;
+            } catch (IllegalStateException pending) {
+                return 1;
+            }
+        }
+
+        private int worldItemPendingReservations() {
+            try {
+                Objects.requireNonNull(
+                                worldItems, "production world-item owner")
+                        .canonicalSnapshot();
+                return 0;
+            } catch (IllegalStateException pending) {
+                return 1;
+            }
+        }
+
+        private int liveWorkerCount() {
+            long deadline =
+                    System.nanoTime() + TimeUnit.SECONDS.toNanos(5L);
+            boolean interrupted = Thread.interrupted();
+            try {
+                for (Thread worker : workers) {
+                    while (worker.isAlive()
+                            && System.nanoTime() < deadline) {
+                        try {
+                            worker.join(10L);
+                        } catch (InterruptedException failure) {
+                            interrupted = true;
+                        }
+                    }
+                }
+            } finally {
+                if (interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return (int) workers.stream().filter(Thread::isAlive).count();
+        }
+    }
+
+    static final class ProductionLifecycleTestAccess {
+        private static final int MAX_LOAD_POLLS = 100_000;
+
+        private final SaveGameSnapshot failedSnapshot;
+        private final SaveGameSnapshot successfulRetrySnapshot;
+        private final HeadlessProductionEnvironment environment;
+        private final ProductionInstrumentation instrumentation;
+        private final GameSessionFactory factory;
+        private GameSession failedSession;
+        private GameSession successfulSession;
+        private int failedFrameCount;
+
+        private ProductionLifecycleTestAccess(
+                ProductionFailurePoint failurePoint,
+                SaveGameSnapshot failedSnapshot,
+                SaveGameSnapshot successfulRetrySnapshot) {
+            this.failedSnapshot = Objects.requireNonNull(
+                    failedSnapshot, "failedSnapshot");
+            this.successfulRetrySnapshot = Objects.requireNonNull(
+                    successfulRetrySnapshot, "successfulRetrySnapshot");
+            environment = new HeadlessProductionEnvironment();
+            instrumentation =
+                    new ProductionInstrumentation(failurePoint);
+            MainThreadGuard guard =
+                    MainThreadGuard.captureCurrentThread();
+            ProductionTestAssets assets =
+                    ProductionTestAssetsHolder.ASSETS;
+            factory = new GameSessionFactory(
+                    environment,
+                    new InputManager(guard),
+                    guard,
+                    assets.catalog(),
+                    assets.uiAssets(),
+                    instrumentation);
+        }
+
+        void triggerFailure() {
+            try {
+                failedSession = factory.restore(failedSnapshot);
+                driveToReady(failedSession);
+                throw new AssertionError(
+                        "injected production failure did not run");
+            } catch (RuntimeException | Error failure) {
+                failedFrameCount = instrumentation.capturedFrames;
+                throw failure;
+            }
+        }
+
+        RuntimeException primaryFailure() {
+            return instrumentation.primaryFailure;
+        }
+
+        RuntimeException cleanupFailure() {
+            return instrumentation.cleanupFailure;
+        }
+
+        Optional<GameSessionState> failedSessionState() {
+            return failedSession == null
+                    ? Optional.empty()
+                    : Optional.of(failedSession.state());
+        }
+
+        Camera camera() {
+            return environment.camera();
+        }
+
+        boolean readyPublished() {
+            return instrumentation.readyPublications != 0;
+        }
+
+        int capturedFrameCount() {
+            return failedFrameCount;
+        }
+
+        int failureHookCalls() {
+            return instrumentation.failureHookCalls;
+        }
+
+        int closeCalls() {
+            return instrumentation.closeCalls;
+        }
+
+        int physicsBodyCount() {
+            return instrumentation.physicsBodyCount();
+        }
+
+        int inventoryPendingReservations() {
+            return instrumentation.inventoryPendingReservations();
+        }
+
+        int worldItemPendingReservations() {
+            return instrumentation.worldItemPendingReservations();
+        }
+
+        int liveWorkerCount() {
+            return instrumentation.liveWorkerCount();
+        }
+
+        void closeFailedSessionAgain() {
+            if (failedSession != null) {
+                failedSession.close();
+            } else {
+                Objects.requireNonNull(
+                                instrumentation.failedShutdown,
+                                "failed production shutdown")
+                        .close();
+            }
+        }
+
+        void startSuccessfulRetry() {
+            instrumentation.beginSuccessfulRetry();
+            successfulSession =
+                    factory.restore(successfulRetrySnapshot);
+            driveToReady(successfulSession);
+        }
+
+        GameSessionState successfulRetryState() {
+            return Objects.requireNonNull(
+                            successfulSession,
+                            "successful retry session")
+                    .state();
+        }
+
+        int successfulRetryFrameCount() {
+            return instrumentation.capturedFrames - failedFrameCount;
+        }
+
+        void closeSuccessfulRetry() {
+            Objects.requireNonNull(
+                            successfulSession,
+                            "successful retry session")
+                    .close();
+        }
+
+        private static void driveToReady(GameSession session) {
+            for (int poll = 0;
+                    poll < MAX_LOAD_POLLS
+                            && session.state() == GameSessionState.LOADING;
+                    poll++) {
+                session.pollLoad();
+                if (session.state() == GameSessionState.LOADING) {
+                    Thread.yield();
+                }
+            }
+            if (session.state() == GameSessionState.LOADING) {
+                throw new IllegalStateException(
+                        "production test session did not finish loading");
+            }
+        }
+    }
+
+    static ProductionLifecycleTestAccess
+            productionLifecycleTestAccess(
+                    ProductionFailurePoint failurePoint,
+                    SaveGameSnapshot failedSnapshot,
+                    SaveGameSnapshot successfulRetrySnapshot) {
+        return new ProductionLifecycleTestAccess(
+                failurePoint,
+                failedSnapshot,
+                successfulRetrySnapshot);
+    }
+
+    static final class ProductionSessionTestAccess {
+        private final ProductionInstrumentation instrumentation;
+        private final GameSessionFactory factory;
+
+        private ProductionSessionTestAccess() {
+            HeadlessProductionEnvironment environment =
+                    new HeadlessProductionEnvironment();
+            instrumentation = new ProductionInstrumentation();
+            MainThreadGuard guard =
+                    MainThreadGuard.captureCurrentThread();
+            ProductionTestAssets assets =
+                    ProductionTestAssetsHolder.ASSETS;
+            factory = new GameSessionFactory(
+                    environment,
+                    new InputManager(guard),
+                    guard,
+                    assets.catalog(),
+                    assets.uiAssets(),
+                    instrumentation);
+        }
+
+        GameSessionFactory factory() {
+            return factory;
+        }
+
+        int generationInvocationCount() {
+            return instrumentation.generationInvocations;
+        }
+
+        int readyPublicationCount() {
+            return instrumentation.readyPublications;
+        }
+
+        int capturedFrameCount() {
+            return instrumentation.capturedFrames;
+        }
+
+        int transientPresentationCount() {
+            return instrumentation.transientPresentations;
+        }
+
+        int physicsBodyCount() {
+            return instrumentation.physicsBodyCount();
+        }
+
+        int inventoryPendingReservations() {
+            return instrumentation.inventoryPendingReservations();
+        }
+
+        int worldItemPendingReservations() {
+            return instrumentation.worldItemPendingReservations();
+        }
+
+        int liveWorkerCount() {
+            return (int) instrumentation.workers.stream()
+                    .filter(Thread::isAlive)
+                    .count();
+        }
+
+        int authorizationEntryCount(GameSession session) {
+            if (!(Objects.requireNonNull(session, "session")
+                    instanceof OwnedGameSession owned)) {
+                throw new IllegalArgumentException(
+                        "session is not owned by the production factory");
+            }
+            return owned.authorizationEntryCount();
+        }
+    }
+
+    static ProductionSessionTestAccess productionSessionTestAccess() {
+        return new ProductionSessionTestAccess();
+    }
+
+    private record ProductionTestAssets(
+            GaiaAssetCatalog catalog,
+            GaiaUiAssets uiAssets) {}
+
+    private static final class ProductionTestAssetsHolder {
+        private static final ProductionTestAssets ASSETS = load();
+
+        private static ProductionTestAssets load() {
+            AssetManager assets =
+                    new AssetManager(
+                            GameSessionFactory.class.getClassLoader());
+            return new ProductionTestAssets(
+                    new GaiaResourceLoader(assets).load(),
+                    new GaiaUiAssetLoader(assets).load());
+        }
+    }
+
+    static final class PersistenceAuthorizationTestAccess {
+        private final OwnedGameSession session;
+        private final AuthorizationRuntime runtime;
+
+        private PersistenceAuthorizationTestAccess(
+                OwnedGameSession session,
+                AuthorizationRuntime runtime) {
+            this.session = session;
+            this.runtime = runtime;
+        }
+
+        void makeReady() {
+            runtime.ready = true;
+            session.pollLoad();
+        }
+
+        GameSession session() {
+            return session;
+        }
+
+        void enqueueCapture(
+                SaveGameSnapshot snapshot, long revision) {
+            runtime.captures.addLast(
+                    new CapturePayload(
+                            Objects.requireNonNull(snapshot, "snapshot"),
+                            revision));
+        }
+
+        int authorizationEntryCount() {
+            return session.authorizationEntryCount();
+        }
+
+        List<Long> markedRevisions() {
+            return List.copyOf(runtime.markedRevisions);
+        }
+    }
+
+    static PersistenceAuthorizationTestAccess
+            persistenceAuthorizationTestAccess(
+                    GameSessionConfig config) {
+        Objects.requireNonNull(config, "config");
+        AuthorizationRuntime runtime = new AuthorizationRuntime();
+        OwnedGameSession session =
+                new OwnedGameSession(
+                        runtime, new ShutdownCoordinator());
+        return new PersistenceAuthorizationTestAccess(
+                session, runtime);
+    }
+
+    private static final class AuthorizationRuntime
+            implements SessionRuntime {
+        private final java.util.ArrayDeque<CapturePayload> captures =
+                new java.util.ArrayDeque<>();
+        private final List<Long> markedRevisions =
+                new java.util.ArrayList<>();
+        private final SessionPersistenceClock clock =
+                SessionPersistenceClock.restored(0L, 0L);
+        private boolean ready;
+
+        @Override
+        public boolean pollLoad() {
+            return ready;
+        }
+
+        @Override
+        public GameSessionFrame advancePlaying(
+                double frameDeltaSeconds,
+                MouseDelta look,
+                boolean focused) {
+            throw new AssertionError("advancePlaying was not expected");
+        }
+
+        @Override
+        public GameSessionFrame capturePaused() {
+            throw new AssertionError("capturePaused was not expected");
+        }
+
+        @Override
+        public SessionSaveCaptureResult captureSave() {
+            CapturePayload capture = captures.removeFirst();
+            return clock.captured(
+                    capture.snapshot(), capture.revision());
+        }
+
+        @Override
+        public void markSaved(
+                SessionPersistenceRevision revision) {
+            markedRevisions.add(revision.value());
+        }
+
+        @Override
+        public void discardGameplayEligibility() {}
+
+        @Override
+        public void discardFixedTime() {}
+    }
+
+    private record CapturePayload(
+            SaveGameSnapshot snapshot, long revision) {}
+
     @FunctionalInterface
     interface SessionAssembler {
         SessionRuntime assemble(
                 GameSessionConfig config,
+                World world,
+                ShutdownCoordinator shutdown);
+    }
+
+    @FunctionalInterface
+    private interface NamedSessionAssembler {
+        SessionRuntime assemble(
+                NewWorldRequest request,
+                GameSessionConfig config,
+                World world,
+                ShutdownCoordinator shutdown);
+    }
+
+    @FunctionalInterface
+    interface RestoreSessionAssembler {
+        SessionRuntime assemble(
+                SaveGameSnapshot snapshot,
                 World world,
                 ShutdownCoordinator shutdown);
     }
@@ -564,6 +1909,20 @@ public final class GameSessionFactory {
 
         GameSessionFrame capturePaused();
 
+        default SessionSaveCaptureResult captureSave() {
+            throw new UnsupportedOperationException(
+                    "This runtime does not provide persistence capture");
+        }
+
+        default void markSaved(SessionPersistenceRevision revision) {
+            throw new UnsupportedOperationException(
+                    "This runtime does not provide persistence checkpoints");
+        }
+
+        default long persistenceRevision() {
+            return -1L;
+        }
+
         void discardGameplayEligibility();
 
         void discardFixedTime();
@@ -573,13 +1932,19 @@ public final class GameSessionFactory {
             implements GameSession {
         private final SessionRuntime runtime;
         private final ShutdownCoordinator shutdown;
+        private final Thread ownerThread;
+        private SessionPersistenceRevision latestCapturedRevision;
+        private SessionPersistenceRevision lastSavedToken;
         private GameSessionState state = GameSessionState.LOADING;
+        private long lastCapturedRevision = -1L;
+        private long lastSavedRevision = -1L;
 
         private OwnedGameSession(
                 SessionRuntime runtime,
                 ShutdownCoordinator shutdown) {
             this.runtime = Objects.requireNonNull(runtime, "runtime");
             this.shutdown = Objects.requireNonNull(shutdown, "shutdown");
+            ownerThread = Thread.currentThread();
         }
 
         @Override
@@ -609,10 +1974,16 @@ public final class GameSessionFactory {
                 MouseDelta look,
                 boolean focused) {
             requireReady("advance playing");
-            return Objects.requireNonNull(
-                    runtime.advancePlaying(
-                            frameDeltaSeconds, look, focused),
-                    "session frame");
+            try {
+                return Objects.requireNonNull(
+                        runtime.advancePlaying(
+                                frameDeltaSeconds, look, focused),
+                        "session frame");
+            } catch (RuntimeException | Error failure) {
+                state = GameSessionState.FAILED;
+                closeWithSuppression(shutdown, failure);
+                throw failure;
+            }
         }
 
         @Override
@@ -627,6 +1998,83 @@ public final class GameSessionFactory {
         }
 
         @Override
+        public SessionSaveCaptureResult captureSave() {
+            requireOwnerThread("capture save");
+            requireReady("capture save");
+            SessionSaveCaptureResult result =
+                    Objects.requireNonNull(
+                            runtime.captureSave(), "session save capture result");
+            if (result.status()
+                    != SessionSaveCaptureResult.Status.CAPTURED) {
+                return result;
+            }
+            result.snapshot().orElseThrow();
+            SessionPersistenceRevision captured =
+                    result.persistenceRevision().orElseThrow(
+                            () -> new IllegalStateException(
+                                    "captured result requires a persistence revision"));
+            long revision = result.capturedRevision().orElseThrow();
+            if (captured.value() != revision) {
+                throw new IllegalStateException(
+                        "captured persistence revision does not match the numeric revision");
+            }
+            if (revision < lastCapturedRevision) {
+                return SessionSaveCaptureResult.inconsistentRevision();
+            }
+            lastCapturedRevision = revision;
+            latestCapturedRevision = captured;
+            return result;
+        }
+
+        @Override
+        public void markSaved(SessionPersistenceRevision revision) {
+            requireOwnerThread("mark saved");
+            requireReady("mark saved");
+            SessionPersistenceRevision captured =
+                    Objects.requireNonNull(revision, "revision");
+            long value = captured.value();
+            if (captured.equals(lastSavedToken)) {
+                return;
+            }
+            if (!captured.equals(latestCapturedRevision)) {
+                throw new IllegalArgumentException(
+                        "revision was not captured by this session: " + value);
+            }
+            if (value < lastSavedRevision) {
+                throw new IllegalArgumentException(
+                        "saved revisions must be monotonic");
+            }
+            if (value == lastSavedRevision) {
+                lastSavedToken = captured;
+                return;
+            }
+            runtime.markSaved(captured);
+            lastSavedRevision = value;
+            lastSavedToken = captured;
+        }
+
+        @Override
+        public boolean hasUnsavedChanges() {
+            requireOwnerThread("query unsaved changes");
+            requireReady("query unsaved changes");
+            long currentRevision = runtime.persistenceRevision();
+            if (currentRevision < 0L) {
+                currentRevision = lastCapturedRevision;
+            }
+            return currentRevision != lastSavedRevision;
+        }
+
+        private int authorizationEntryCount() {
+            if (latestCapturedRevision == null) {
+                return lastSavedToken == null ? 0 : 1;
+            }
+            return lastSavedToken == null
+                            || latestCapturedRevision.equals(lastSavedToken)
+                    ? 1
+                    : 2;
+        }
+
+        @Override
         public void discardFixedTime() {
             if (state == GameSessionState.LOADING
                     || state == GameSessionState.READY) {
@@ -637,6 +2085,7 @@ public final class GameSessionFactory {
 
         @Override
         public void close() {
+            requireOwnerThread("close");
             if (state == GameSessionState.CLOSED) {
                 return;
             }
@@ -652,11 +2101,20 @@ public final class GameSessionFactory {
                         "Cannot " + operation + " while session is " + state);
             }
         }
+
+        private void requireOwnerThread(String operation) {
+            if (Thread.currentThread() != ownerThread) {
+                throw new IllegalStateException(
+                        "Cannot "
+                                + operation
+                                + " outside the session owner thread");
+            }
+        }
     }
 
     private static final class ProductionSessionRuntime
             implements SessionRuntime {
-        private final Engine engine;
+        private final ProductionEnvironment environment;
         private final InputManager inputManager;
         private final World world;
         private final PlayerManager playerManager;
@@ -664,8 +2122,10 @@ public final class GameSessionFactory {
         private final PlayerController playerController;
         private final FixedStepClock fixedStepClock;
         private final ChunkMeshManager chunkMeshes;
-        private final WorldLoader worldLoader;
-        private final CompletableFuture<WorldLoadResult> worldLoad;
+        private final PendingCameraOrientation cameraOrientation;
+        private final Optional<WorldLoader> worldLoader;
+        private final Optional<CompletableFuture<WorldLoadResult>> worldLoad;
+        private final SaveGameSnapshot.StaticMetadata persistenceMetadata;
         private final EntityRef inventoryOwner;
         private final BodyInventoryService inventoryService;
         private final BodyInventoryInputController inventoryInput;
@@ -680,6 +2140,7 @@ public final class GameSessionFactory {
         private final InteractionFeedbackCoordinator feedback;
         private final InteractionBlockState interactionBlockState;
         private final HudFrameCoordinator hudFrames;
+        private final ProductionHooks hooks;
         private final Vector3f interpolationScratch = new Vector3f();
         private final Vector3f movementPositionScratch = new Vector3f();
         private final Vector3f movementVelocityScratch = new Vector3f();
@@ -687,13 +2148,15 @@ public final class GameSessionFactory {
         private final Vector3f dropVelocityScratch = new Vector3f();
         private final Vector3f feetScratch = new Vector3f();
         private WorldLoadResult loadResult;
-        private long inventoryTick;
+        private Set<ChunkKey> meshReadiness;
+        private final SessionPersistenceClock persistenceClock;
+        private long savedPersistenceRevision = -1L;
         private boolean hasAdvancedFrame;
         private boolean debugHudDefaultPending;
         private GameSessionFrame lastFrame;
 
         private ProductionSessionRuntime(
-                Engine engine,
+                ProductionEnvironment environment,
                 InputManager inputManager,
                 World world,
                 PlayerManager playerManager,
@@ -701,8 +2164,12 @@ public final class GameSessionFactory {
                 PlayerController playerController,
                 FixedStepClock fixedStepClock,
                 ChunkMeshManager chunkMeshes,
-                WorldLoader worldLoader,
-                CompletableFuture<WorldLoadResult> worldLoad,
+                PendingCameraOrientation cameraOrientation,
+                Optional<WorldLoader> worldLoader,
+                Optional<CompletableFuture<WorldLoadResult>> worldLoad,
+                Set<ChunkKey> meshReadiness,
+                long initialFixedTick,
+                SaveGameSnapshot.StaticMetadata persistenceMetadata,
                 EntityRef inventoryOwner,
                 BodyInventoryService inventoryService,
                 BodyInventoryInputController inventoryInput,
@@ -717,8 +2184,10 @@ public final class GameSessionFactory {
                 InteractionFeedbackCoordinator feedback,
                 InteractionBlockState interactionBlockState,
                 HudFrameCoordinator hudFrames,
-                boolean debugHudDefault) {
-            this.engine = engine;
+                boolean debugHudDefault,
+                ProductionHooks hooks) {
+            this.environment = Objects.requireNonNull(
+                    environment, "environment");
             this.inputManager = inputManager;
             this.world = world;
             this.playerManager = playerManager;
@@ -726,8 +2195,21 @@ public final class GameSessionFactory {
             this.playerController = playerController;
             this.fixedStepClock = fixedStepClock;
             this.chunkMeshes = chunkMeshes;
-            this.worldLoader = worldLoader;
-            this.worldLoad = worldLoad;
+            this.cameraOrientation = Objects.requireNonNull(
+                    cameraOrientation, "cameraOrientation");
+            this.worldLoader = Objects.requireNonNull(worldLoader, "worldLoader");
+            this.worldLoad = Objects.requireNonNull(worldLoad, "worldLoad");
+            this.meshReadiness =
+                    Set.copyOf(
+                            Objects.requireNonNull(
+                                    meshReadiness, "meshReadiness"));
+            persistenceClock =
+                    SessionPersistenceClock.restored(
+                            requireNonnegativeFixedTick(initialFixedTick),
+                            0L);
+            this.persistenceMetadata =
+                    Objects.requireNonNull(
+                            persistenceMetadata, "persistenceMetadata");
             this.inventoryOwner = inventoryOwner;
             this.inventoryService = inventoryService;
             this.inventoryInput = inventoryInput;
@@ -742,46 +2224,82 @@ public final class GameSessionFactory {
             this.feedback = feedback;
             this.interactionBlockState = interactionBlockState;
             this.hudFrames = hudFrames;
+            this.hooks = Objects.requireNonNull(hooks, "hooks");
             debugHudDefaultPending = debugHudDefault;
+            if (worldLoad.isEmpty()) {
+                updateRenderCamera();
+            }
+            hooks.before(ProductionFailurePoint.INITIAL_FRAME);
             lastFrame =
-                    captureFrame(
-                            FixedBatch.zeroSteps(),
-                            0.0,
-                            false,
-                            HudVisibility.Lifecycle.LOADING);
+                    cameraOrientation.beforeReady(
+                            () -> captureFrame(
+                                    FixedBatch.zeroSteps(),
+                                    0.0,
+                                    false,
+                                    HudVisibility.Lifecycle.LOADING));
         }
 
         @Override
         public boolean pollLoad() {
-            if (loadResult == null) {
-                if (!worldLoad.isDone()) {
+            if (worldLoad.isPresent() && loadResult == null) {
+                CompletableFuture<WorldLoadResult> pendingLoad =
+                        worldLoad.orElseThrow();
+                if (!pendingLoad.isDone()) {
                     return false;
                 }
                 loadResult = joinWorldLoad();
-                if (worldLoader.state() != WorldLoadState.SUCCEEDED) {
+                WorldLoader completedLoader = worldLoader.orElseThrow();
+                if (completedLoader.state()
+                        != WorldLoadState.SUCCEEDED) {
                     throw new IllegalStateException(
                             "World load future completed while loader state was "
-                                    + worldLoader.state());
+                                    + completedLoader.state());
+                }
+                if (!persistenceMetadata
+                        .generatorConfigFingerprint()
+                        .equals(loadResult.configFingerprint())) {
+                    throw new IllegalStateException(
+                            "World load configuration fingerprint did not match session metadata");
                 }
                 completePlayerLoading(loadResult);
                 updateRenderCamera();
-                engine.getCamera().setPitch(-30.0f);
+                cameraOrientation.stage(-90.0f, -30.0f);
+                meshReadiness = Set.copyOf(loadResult.initialChunks());
             }
 
-            pumpChunkMeshes();
-            if (!chunkMeshes.allRenderable(loadResult.initialChunks())) {
+            hooks.before(ProductionFailurePoint.MESH_PUMP);
+            cameraOrientation.beforeReady(
+                    () -> {
+                        pumpChunkMeshes();
+                        return Boolean.TRUE;
+                    });
+            if (!chunkMeshes.allRenderable(meshReadiness)) {
                 return false;
             }
-            if (worldLoader.state() != WorldLoadState.SUCCEEDED) {
+            if (worldLoader.isPresent()
+                    && worldLoader.orElseThrow().state()
+                            != WorldLoadState.SUCCEEDED) {
                 throw new IllegalStateException(
                         "World loader is not successful");
+            }
+            if (!cameraOrientation.isCommitted()) {
+                hooks.before(ProductionFailurePoint.READY_FRAME);
+                GameSessionFrame readyFrame =
+                        cameraOrientation.commitAfterReady(
+                                () -> captureFrame(
+                                        FixedBatch.zeroSteps(),
+                                        0.0,
+                                        false,
+                                        HudVisibility.Lifecycle.RUNNING));
+                lastFrame = readyFrame;
+                hooks.readyPublished();
             }
             return true;
         }
 
         private WorldLoadResult joinWorldLoad() {
             try {
-                return worldLoad.join();
+                return worldLoad.orElseThrow().join();
             } catch (CancellationException cancellation) {
                 throw cancellation;
             } catch (CompletionException failure) {
@@ -809,7 +2327,14 @@ public final class GameSessionFactory {
             }
             Objects.requireNonNull(look, "look");
             if (focused) {
-                playerManager.applyLook(look);
+                if (look.x() != 0.0 || look.y() != 0.0) {
+                    var reservation =
+                            persistenceClock.reserveRevisionMutation();
+                    playerManager.applyLook(look);
+                    reservation.commit();
+                } else {
+                    playerManager.applyLook(look);
+                }
             }
             int fixedSteps = fixedStepClock.advance(frameDeltaSeconds);
             FixedBatch fixedBatch = runFixedBatch(fixedSteps);
@@ -830,6 +2355,42 @@ public final class GameSessionFactory {
         @Override
         public GameSessionFrame capturePaused() {
             return lastFrame.copy();
+        }
+
+        @Override
+        public SessionSaveCaptureResult captureSave() {
+            return GameSessionFactory.captureSave(
+                    persistenceMetadata,
+                    persistenceClock::revision,
+                    persistenceClock::fixedTick,
+                    world,
+                    inventoryOwner,
+                    inventoryService,
+                    worldItems,
+                    playerController,
+                    environment.camera(),
+                    gameModes,
+                    persistenceClock);
+        }
+
+        @Override
+        public void markSaved(SessionPersistenceRevision revision) {
+            SessionPersistenceRevision validated =
+                    Objects.requireNonNull(revision, "revision");
+            if (validated.value() > persistenceClock.revision()) {
+                throw new IllegalArgumentException(
+                        "cannot save a future session revision");
+            }
+            if (validated.value() < savedPersistenceRevision) {
+                throw new IllegalArgumentException(
+                        "saved revisions must be monotonic");
+            }
+            savedPersistenceRevision = validated.value();
+        }
+
+        @Override
+        public long persistenceRevision() {
+            return persistenceClock.revision();
         }
 
         @Override
@@ -913,6 +2474,9 @@ public final class GameSessionFactory {
         }
 
         private void runFixedStep(InputSnapshot stepInput) {
+            var persistenceReservation =
+                    persistenceClock.reserveFixedStep();
+            long inventoryTick = persistenceClock.fixedTick();
             float fixedDelta = fixedStepClock.fixedStepSeconds();
             inventoryInput.handleSelection(stepInput);
             runInventoryDebugShortcut(stepInput);
@@ -967,7 +2531,7 @@ public final class GameSessionFactory {
                     inventoryTick);
             ModuleManager.getInstance().updateAll(fixedDelta);
             EventBus.getInstance().processAll();
-            inventoryTick++;
+            persistenceReservation.commit();
         }
 
         private void pumpChunkMeshes() {
@@ -1008,9 +2572,7 @@ public final class GameSessionFactory {
             Optional<RenderMetricsSnapshot> previousMetrics =
                     hasAdvancedFrame
                             ? Optional.of(
-                                    engine.getRenderer()
-                                            .metrics()
-                                            .snapshot())
+                                    environment.renderMetricsSnapshot())
                             : Optional.empty();
             HudDebugSnapshot.Counts counts =
                     new HudDebugSnapshot.Counts(
@@ -1034,8 +2596,7 @@ public final class GameSessionFactory {
                             feetScratch.x,
                             feetScratch.y,
                             feetScratch.z);
-            var surface =
-                    engine.getWindow().currentSurfaceMetrics();
+            var surface = environment.surfaceMetrics();
             if (debugHudDefaultPending
                     && lifecycle
                             == HudVisibility.Lifecycle.RUNNING) {
@@ -1070,7 +2631,7 @@ public final class GameSessionFactory {
                                     true,
                                     blocked,
                                     surface));
-            return new GameSessionFrame(
+            GameSessionFrame frame = new GameSessionFrame(
                     new RenderFrameInput(
                             running
                                     ? List.copyOf(
@@ -1080,6 +2641,8 @@ public final class GameSessionFactory {
                             chunkMeshes.meshQueueDepth(),
                             feedbackFrame,
                             hud.frame()));
+            hooks.frameCaptured(lifecycle, frame);
+            return frame;
         }
 
         private void updateRenderCamera() {
@@ -1092,16 +2655,16 @@ public final class GameSessionFactory {
                                                     .interpolationAlpha(),
                                     interpolationScratch);
             cameraFeet.y += GameConfig.Player.EYE_HEIGHT;
-            engine.getCamera().setPosition(cameraFeet);
+            environment.camera().setPosition(cameraFeet);
         }
 
         private InventoryDropLocation dropLocation(
                 long eventIdentity) {
             playerController.body().position(dropPositionScratch);
             dropPositionScratch.y += GameConfig.Player.EYE_HEIGHT;
-            engine.getCamera().getForward(dropVelocityScratch);
+            environment.camera().getForward(dropVelocityScratch);
             Vector3f right =
-                    engine.getCamera().getRight(new Vector3f());
+                    environment.camera().getRight(new Vector3f());
             return WorldItemDropKinematics.qDrop(
                     dropPositionScratch,
                     dropVelocityScratch,

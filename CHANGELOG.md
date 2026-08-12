@@ -1,5 +1,51 @@
 # Changelog
 
+## Phase 14 Save/Load v1 and World Slots - 2026-08-12
+
+### Added
+
+- Versioned Save/Load v1 for finite Chunk state, player transform/mode,
+  three-slot inventory, and stable-ID WorldItems.
+- Deterministic section codecs, bounded ZIP archives, atomic current/backup
+  replacement, closed corruption diagnostics, catalog discovery, explicit
+  recovery, and root-confined delete.
+- Unicode New World name/seed input, four-row World Slots paging, Load,
+  Recover, Delete, Pause Save, Save & Quit, and dirty-session confirmation.
+- Fresh-session typed restore that bypasses generation and reconstructs
+  presentation from canonical state.
+
+### Corrected during Windows acceptance
+
+- Loading sessions no longer call `capturePaused()` before they reach READY;
+  this fixes the `session is not ready` crash observed after creating `Test`.
+- Committed mining camera pitch/yaw peaks are reduced to 20% of the prior
+  values (`0.055` / `0.014` degrees) while preserving the 0.20-second envelope.
+
+### Verified
+
+- Fresh `clean test build`: 30/30 tasks; 2,664 total tests, 2,663 passed, one
+  pre-existing tools skip, zero failures/errors.
+- Forced packaged shader/resource/UI checks and installed Windows OpenAL 3.3.3
+  API/native audit passed.
+- Representative 81-Chunk archive: 7,819 bytes. Three-run medians were capture
+  119.667 ms, encode 44.502 ms, write 56.770 ms, read/decode 43.335 ms, and
+  restore-to-ready 422.213 ms.
+- Human Windows development runtime passed create/delete, player-position and
+  item-state save/load, reduced mining shake, and clean exit.
+- Human Windows installDist passed create/load, Save & Quit, relaunch,
+  restored-state verification, and normal exit. Exact duration and raw runtime
+  logs were not supplied.
+- The requested Apple Silicon macOS Gate 14E automated/native, development,
+  and installDist test is HUMAN-REPORTED PASS. Exact environment metadata,
+  automated totals, raw logs, durations, and performance measurements were not
+  supplied and are not claimed.
+- Phase 14 cross-platform acceptance is complete.
+
+### Deferred
+
+- No timed autosave, background save thread, cloud sync, migration UI,
+  infinite-world streaming, detail-block data, or Loading percentage.
+
 ## Phase 13 product shell, settings, and audio - 2026-08-10
 
 ### Added

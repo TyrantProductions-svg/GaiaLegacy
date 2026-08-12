@@ -10,8 +10,8 @@ public final class CameraImpulseController implements AutoCloseable {
     private static final double PLACEMENT_PITCH = 0.35;
     private static final double PLACEMENT_TRANSLATION_Y = -0.006;
     private static final double PLACEMENT_DURATION = 0.15;
-    private static final double BREAK_PITCH = 0.275;
-    private static final double BREAK_YAW = 0.07;
+    private static final double BREAK_PITCH = 0.055;
+    private static final double BREAK_YAW = 0.014;
     private static final double BREAK_DURATION = 0.20;
 
     private final EnvelopeAxis pitch = new EnvelopeAxis(-1.0, 1.0);

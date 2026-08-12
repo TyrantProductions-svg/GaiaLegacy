@@ -15,9 +15,11 @@ class ProductLoopApiSurfaceTest {
     void everyPublicProductionConstructorRequiresExplicitMusicManagerOwnership() {
         Constructor<?>[] publicConstructors = ProductLoop.class.getConstructors();
 
-        assertEquals(1, publicConstructors.length);
-        assertTrue(hasParameter(publicConstructors[0], MusicManager.class));
-        assertTrue(hasParameter(publicConstructors[0], Runnable.class));
+        assertEquals(2, publicConstructors.length);
+        assertTrue(Arrays.stream(publicConstructors)
+                .allMatch(constructor -> hasParameter(constructor, MusicManager.class)));
+        assertTrue(Arrays.stream(publicConstructors)
+                .allMatch(constructor -> hasParameter(constructor, Runnable.class)));
         assertFalse(
                 Arrays.stream(ProductLoop.class.getDeclaredConstructors())
                         .filter(constructor -> !hasParameter(constructor, MusicManager.class))

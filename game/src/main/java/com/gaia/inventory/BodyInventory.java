@@ -21,10 +21,26 @@ public final class BodyInventory {
             new EnumMap<>(BodySlot.class);
     private BodySlot activeSlot = BodySlot.LEFT_HAND;
     private boolean twoHandedHandsOccupied;
+    private boolean restoreEligible = true;
     private long revision;
 
     BodyInventory(EntityRef owner) {
         this.owner = Objects.requireNonNull(owner, "owner");
+    }
+
+    static BodyInventory restored(
+            EntityRef owner,
+            Map<BodySlot, ItemStack> directStacks,
+            BodySlot activeSlot,
+            boolean twoHandedHandsOccupied,
+            long revision) {
+        BodyInventory restored = new BodyInventory(owner);
+        restored.stacks.putAll(directStacks);
+        restored.activeSlot = Objects.requireNonNull(activeSlot, "activeSlot");
+        restored.twoHandedHandsOccupied = twoHandedHandsOccupied;
+        restored.restoreEligible = false;
+        restored.revision = revision;
+        return restored;
     }
 
     EntityRef owner() {
@@ -40,7 +56,15 @@ public final class BodyInventory {
     }
 
     void setActiveSlot(BodySlot activeSlot) {
-        this.activeSlot = Objects.requireNonNull(activeSlot, "activeSlot");
+        BodySlot selected = Objects.requireNonNull(activeSlot, "activeSlot");
+        if (this.activeSlot != selected) {
+            restoreEligible = false;
+            this.activeSlot = selected;
+        }
+    }
+
+    boolean restoreEligible() {
+        return restoreEligible;
     }
 
     boolean hasTwoHandedHandsOccupied() {
@@ -100,6 +124,7 @@ public final class BodyInventory {
         if (revision == Long.MAX_VALUE) {
             throw new IllegalStateException("inventory revision sequence exhausted");
         }
+        restoreEligible = false;
         revision++;
     }
 

@@ -2,13 +2,19 @@ package com.gaia.shell;
 
 import com.gaia.audio.MusicManager;
 import com.gaia.audio.MusicRoute;
+import com.gaia.save.format.SaveGameId;
+import com.gaia.save.store.SaveDeleteResult;
+import com.gaia.save.store.SaveRecoveryResult;
 import com.gaia.session.GameSession;
 import com.gaia.session.GameSessionFrame;
+import com.gaia.session.GameSessionLauncher;
+import com.gaia.session.GameSessionSaveResult;
 import com.gaia.session.GameSessionState;
-import com.gaia.shell.ProductShellController.LifecycleIntent;
 import com.gaia.shell.ui.ProductScreenInputController;
 import com.gaia.shell.ui.ProductScreenPresenter;
 import com.gaia.shell.ui.ProductUiLayout;
+import com.gaia.shell.world.NewWorldDraftController;
+import com.gaia.shell.world.WorldSlotsController;
 import com.overlord.core.input.InputManager;
 import com.overlord.core.input.UiInputSnapshot;
 import com.overlord.config.GameConfig;
@@ -25,6 +31,7 @@ public final class ProductLoop {
     private final ProductScreenInputController screenInput;
     private final ProductScreenPresenter presenter;
     private final Supplier<? extends GameSession> sessionLauncher;
+    private final Optional<PersistenceServices> persistenceServices;
     private final DoubleSupplier frameDeltaSource;
     private final FrameHost host;
     private final Optional<MusicManager> musicManager;
@@ -38,6 +45,7 @@ public final class ProductLoop {
     private boolean musicManagerCloseInvoked;
     private boolean closePolicyInvoked;
     private long nextUiSampleId;
+    private ProductLifecycleIntent.Save pendingSave;
 
     ProductLoop(
             InputManager inputManager,
@@ -53,6 +61,7 @@ public final class ProductLoop {
                 screenInput,
                 presenter,
                 sessionLauncher,
+                Optional.empty(),
                 frameDeltaSource,
                 host,
                 Optional.empty(),
@@ -74,6 +83,7 @@ public final class ProductLoop {
                 screenInput,
                 presenter,
                 sessionLauncher,
+                Optional.empty(),
                 frameDeltaSource,
                 host,
                 Optional.empty(),
@@ -96,6 +106,57 @@ public final class ProductLoop {
                 screenInput,
                 presenter,
                 sessionLauncher,
+                Optional.empty(),
+                frameDeltaSource,
+                host,
+                Optional.of(Objects.requireNonNull(musicManager, "musicManager")),
+                closePolicy);
+    }
+
+    ProductLoop(
+            InputManager inputManager,
+            ProductShellController shell,
+            ProductScreenInputController screenInput,
+            ProductScreenPresenter presenter,
+            PersistenceServices persistenceServices,
+            DoubleSupplier frameDeltaSource,
+            FrameHost host) {
+        this(
+                inputManager,
+                shell,
+                screenInput,
+                presenter,
+                () -> {
+                    throw new IllegalStateException("legacy session launcher is unavailable");
+                },
+                Optional.of(Objects.requireNonNull(
+                        persistenceServices, "persistenceServices")),
+                frameDeltaSource,
+                host,
+                Optional.empty(),
+                () -> {});
+    }
+
+    public ProductLoop(
+            InputManager inputManager,
+            ProductShellController shell,
+            ProductScreenInputController screenInput,
+            ProductScreenPresenter presenter,
+            PersistenceServices persistenceServices,
+            DoubleSupplier frameDeltaSource,
+            FrameHost host,
+            MusicManager musicManager,
+            Runnable closePolicy) {
+        this(
+                inputManager,
+                shell,
+                screenInput,
+                presenter,
+                () -> {
+                    throw new IllegalStateException("legacy session launcher is unavailable");
+                },
+                Optional.of(Objects.requireNonNull(
+                        persistenceServices, "persistenceServices")),
                 frameDeltaSource,
                 host,
                 Optional.of(Objects.requireNonNull(musicManager, "musicManager")),
@@ -108,6 +169,7 @@ public final class ProductLoop {
             ProductScreenInputController screenInput,
             ProductScreenPresenter presenter,
             Supplier<? extends GameSession> sessionLauncher,
+            Optional<PersistenceServices> persistenceServices,
             DoubleSupplier frameDeltaSource,
             FrameHost host,
             Optional<MusicManager> musicManager,
@@ -117,6 +179,8 @@ public final class ProductLoop {
         this.screenInput = Objects.requireNonNull(screenInput, "screenInput");
         this.presenter = Objects.requireNonNull(presenter, "presenter");
         this.sessionLauncher = Objects.requireNonNull(sessionLauncher, "sessionLauncher");
+        this.persistenceServices = Objects.requireNonNull(
+                persistenceServices, "persistenceServices");
         this.frameDeltaSource = Objects.requireNonNull(frameDeltaSource, "frameDeltaSource");
         this.host = Objects.requireNonNull(host, "host");
         this.musicManager = Objects.requireNonNull(musicManager, "musicManager");
@@ -157,13 +221,30 @@ public final class ProductLoop {
         boolean focusLostDuringPoll =
                 inputManager.consumeMouseInteractionInvalidation();
         UiInputSnapshot input = inputManager.captureUiInput(nextSampleId());
+        boolean executingQueuedSave = pendingSave != null;
+        if (executingQueuedSave) {
+            inputManager.invalidateGameplayInput();
+            inputManager.discardFixedInputEdges();
+            executePendingSave();
+        }
         ProductShellSnapshot routeBeforeInput = shell.snapshot();
         ProductUiLayout inputLayout = presenter.present(
                 routeBeforeInput, host.layoutContext());
-        Optional<ScreenCommand> command = screenInput.route(input, inputLayout);
+        Optional<ScreenCommand> command = executingQueuedSave
+                ? Optional.empty()
+                : routeProductInput(input, inputLayout, routeBeforeInput);
 
-        LifecycleIntent lifecycleIntent = command
-                .map(shell::handle)
+        if (persistenceServices.isEmpty()
+                && routeBeforeInput.screen() == ScreenId.MAIN_MENU
+                && command.orElse(null) instanceof ScreenCommand.OpenNewWorldSetup) {
+            shell.startLegacySession();
+            startSession(Objects.requireNonNull(
+                    sessionLauncher.get(), "launched game session"));
+            command = Optional.empty();
+        }
+
+        ProductLifecycleIntent lifecycleIntent = command
+                .map(value -> shell.handle(value, dirtyFor(value)))
                 .orElseGet(() -> routeShortcut(input, routeBeforeInput));
         applyLifecycleIntent(lifecycleIntent);
         pollActiveLoad();
@@ -193,8 +274,8 @@ public final class ProductLoop {
         GameSessionFrame sessionFrame = captureSessionFrame(
                 enteredPlayingThisFrame ? 0.0d : frameDeltaSeconds,
                 isPlayingEligible);
-        ProductUiLayout productPresentation = presenter.present(
-                shell.snapshot(), host.layoutContext(), screenInput.presentationHighlight());
+        ProductUiLayout productPresentation = presenter.presentFocused(
+                shell.snapshot(), host.layoutContext(), screenInput.highlightedControl());
         if (sessionFrame != null) {
             host.renderSession(sessionFrame);
         }
@@ -217,9 +298,9 @@ public final class ProductLoop {
 
     private static MusicRoute musicRoute(ProductShellSnapshot snapshot) {
         return switch (snapshot.screen()) {
-            case MAIN_MENU -> MusicRoute.MAIN_MENU;
+            case MAIN_MENU, NEW_WORLD_SETUP, WORLD_SLOTS -> MusicRoute.MAIN_MENU;
             case LOADING, PLAYING -> MusicRoute.GAMEPLAY;
-            case PAUSED -> MusicRoute.PAUSED;
+            case PAUSED, SAVING -> MusicRoute.PAUSED;
             case SETTINGS ->
                     snapshot.returnTarget().orElseThrow() == ScreenReturnTarget.PAUSED
                             ? MusicRoute.SETTINGS_FROM_PAUSE
@@ -231,7 +312,7 @@ public final class ProductLoop {
         };
     }
 
-    private LifecycleIntent routeShortcut(
+    private ProductLifecycleIntent routeShortcut(
             UiInputSnapshot input,
             ProductShellSnapshot beforeInput) {
         if (!input.focused()) {
@@ -239,10 +320,10 @@ public final class ProductLoop {
                     && beforeInput.modal().isEmpty()) {
                 shell.togglePlaying();
             }
-            return LifecycleIntent.NONE;
+            return ProductLifecycleIntent.none();
         }
         if (beforeInput.modal().isPresent()) {
-            return LifecycleIntent.NONE;
+            return ProductLifecycleIntent.none();
         }
         if (beforeInput.screen() == ScreenId.PLAYING
                 && (input.isKeyPressed(GameConfig.Input.KEY_CLOSE)
@@ -252,25 +333,121 @@ public final class ProductLoop {
                 && input.isKeyPressed(GameConfig.Input.KEY_CURSOR_CAPTURE)) {
             shell.togglePlaying();
         }
-        return LifecycleIntent.NONE;
+        return ProductLifecycleIntent.none();
     }
 
-    private void applyLifecycleIntent(LifecycleIntent intent) {
-        switch (intent) {
-            case NONE -> {
-                // Route-only command.
-            }
-            case START_NEW_SESSION -> {
-                if (session != null) {
-                    throw new IllegalStateException(
-                            "Cannot start a second active game session");
-                }
-                session = Objects.requireNonNull(
-                        sessionLauncher.get(), "launched game session");
-            }
-            case CLOSE_ACTIVE_SESSION -> closeActiveSession(null);
-            case EXIT_PRODUCT -> exitRequested = true;
+    private Optional<ScreenCommand> routeProductInput(
+            UiInputSnapshot input,
+            ProductUiLayout layout,
+            ProductShellSnapshot route) {
+        if (persistenceServices.isEmpty()) {
+            return screenInput.route(input, layout);
         }
+        PersistenceServices services = persistenceServices.orElseThrow();
+        return switch (route.screen()) {
+            case NEW_WORLD_SETUP -> screenInput.routeNewWorld(
+                    input,
+                    layout,
+                    services.newWorldDraft(),
+                    services.saveGameIds());
+            case WORLD_SLOTS -> screenInput.routeWorldSlots(
+                    input, layout, services.worldSlots());
+            default -> screenInput.route(input, layout);
+        };
+    }
+
+    private boolean dirtyFor(ScreenCommand command) {
+        if (!(command instanceof ScreenCommand.ReturnToMainMenu)
+                || persistenceServices.isEmpty()
+                || session == null) {
+            return true;
+        }
+        return session.hasUnsavedChanges();
+    }
+
+    private void applyLifecycleIntent(ProductLifecycleIntent intent) {
+        if (intent instanceof ProductLifecycleIntent.None) {
+            return;
+        }
+        if (intent instanceof ProductLifecycleIntent.StartNewWorld start) {
+            PersistenceServices services = requirePersistenceServices();
+            startSession(services.sessions().newWorld(start.request()));
+            services.newWorldDraft().reset();
+            return;
+        }
+        if (intent instanceof ProductLifecycleIntent.LoadWorld load) {
+            startSession(requirePersistenceServices().sessions().loadWorld(load.request()));
+            return;
+        }
+        if (intent instanceof ProductLifecycleIntent.Save save) {
+            if (session == null || pendingSave != null) {
+                throw new IllegalStateException("Cannot queue this session save");
+            }
+            pendingSave = save;
+            inputManager.invalidateGameplayInput();
+            inputManager.discardFixedInputEdges();
+            return;
+        }
+        if (intent instanceof ProductLifecycleIntent.DeleteWorld delete) {
+            PersistenceServices services = requirePersistenceServices();
+            SaveDeleteResult result = services.worldSlotOperations()
+                    .delete(delete.saveGameId());
+            services.worldSlots().refresh();
+            if (result.status() != SaveDeleteResult.Status.SUCCESS
+                    && result.status()
+                            != SaveDeleteResult.Status.DELETED_WITH_CLEANUP_WARNING) {
+                shell.operationFailed();
+            }
+            return;
+        }
+        if (intent instanceof ProductLifecycleIntent.RecoverBackup recover) {
+            PersistenceServices services = requirePersistenceServices();
+            SaveRecoveryResult result = services.worldSlotOperations()
+                    .recover(recover.saveGameId());
+            services.worldSlots().refresh();
+            if (result.status() != SaveRecoveryResult.Status.SUCCESS) {
+                shell.operationFailed();
+            }
+            return;
+        }
+        if (intent instanceof ProductLifecycleIntent.CloseActiveSession) {
+            closeActiveSession(null);
+            return;
+        }
+        if (intent instanceof ProductLifecycleIntent.ExitProduct) {
+            exitRequested = true;
+            return;
+        }
+        throw new IllegalStateException(
+                "Lifecycle intent is not wired into ProductLoop yet: " + intent);
+    }
+
+    private void startSession(GameSession launched) {
+        if (session != null) {
+            throw new IllegalStateException(
+                    "Cannot start a second active game session");
+        }
+        session = Objects.requireNonNull(launched, "launched game session");
+    }
+
+    private void executePendingSave() {
+        ProductLifecycleIntent.Save save = Objects.requireNonNull(
+                pendingSave, "pendingSave");
+        pendingSave = null;
+        if (session == null) {
+            throw new IllegalStateException("Cannot save without an active session");
+        }
+        GameSessionSaveResult result = session.save();
+        if (result.status() == GameSessionSaveResult.Status.SUCCESS) {
+            applyLifecycleIntent(shell.savingSucceeded(save.policy()));
+        } else {
+            shell.savingFailed();
+        }
+    }
+
+    private PersistenceServices requirePersistenceServices() {
+        return persistenceServices.orElseThrow(() ->
+                new IllegalStateException("Persistence services are unavailable"));
     }
 
     private void pollActiveLoad() {
@@ -310,6 +487,9 @@ public final class ProductLoop {
             double frameDeltaSeconds,
             boolean playingEligible) {
         if (session == null) {
+            return null;
+        }
+        if (session.state() != GameSessionState.READY) {
             return null;
         }
         if (playingEligible) {
@@ -362,6 +542,7 @@ public final class ProductLoop {
         try {
             current.close();
             session = null;
+            persistenceServices.ifPresent(services -> services.worldSlots().refresh());
         } catch (RuntimeException | Error cleanupFailure) {
             if (primaryFailure == null) {
                 throw cleanupFailure;
@@ -423,6 +604,29 @@ public final class ProductLoop {
             throw runtimeFailure;
         }
         throw (Error) failure;
+    }
+
+    /** Product persistence owners shared by input, presentation, and lifecycle orchestration. */
+    public record PersistenceServices(
+            GameSessionLauncher sessions,
+            NewWorldDraftController newWorldDraft,
+            WorldSlotsController worldSlots,
+            Supplier<SaveGameId> saveGameIds,
+            WorldSlotOperations worldSlotOperations) {
+        public PersistenceServices {
+            Objects.requireNonNull(sessions, "sessions");
+            Objects.requireNonNull(newWorldDraft, "newWorldDraft");
+            Objects.requireNonNull(worldSlots, "worldSlots");
+            Objects.requireNonNull(saveGameIds, "saveGameIds");
+            Objects.requireNonNull(worldSlotOperations, "worldSlotOperations");
+        }
+    }
+
+    /** Explicit root-confined mutations available to the World Slots route. */
+    public interface WorldSlotOperations {
+        SaveDeleteResult delete(SaveGameId saveGameId);
+
+        SaveRecoveryResult recover(SaveGameId saveGameId);
     }
 
     /** Owner-thread host for GLFW polling and immutable renderer presentation. */

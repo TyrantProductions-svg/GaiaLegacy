@@ -10,6 +10,7 @@ import com.gaia.shell.ProductShellSnapshot;
 import com.gaia.shell.ScreenId;
 import com.gaia.shell.ScreenReturnTarget;
 import com.gaia.shell.save.EmptySaveCatalog;
+import com.gaia.shell.save.SaveCatalog;
 import com.overlord.renderer.RenderSurfaceMetrics;
 import com.overlord.renderer.ui.BitmapFont;
 import com.overlord.renderer.ui.BitmapGlyph;
@@ -21,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -59,14 +61,33 @@ class ProductScreenPresenterTest {
     }
 
     @Test
-    void disabledLoadWorldVisiblyLabelsItsPhase14Availability() {
+    void repeatedPresentationDoesNotRediscoverSavesWhileLoadWorldIsDisabled() {
+        AtomicInteger discoveries = new AtomicInteger();
+        SaveCatalog catalog = () -> {
+            discoveries.incrementAndGet();
+            return List.of();
+        };
+        ProductScreenPresenter observed =
+                new ProductScreenPresenter(catalog, textRenderer());
+        discoveries.set(0);
+
+        observed.present(MAIN_MENU, CONTEXT);
+        observed.present(MAIN_MENU, CONTEXT);
+        observed.present(MAIN_MENU, CONTEXT);
+
+        assertEquals(0, discoveries.get(),
+                "presentation frames must consume a cached immutable snapshot");
+    }
+
+    @Test
+    void emptyCatalogLabelsLoadWorldWithoutEnablingIt() {
         ProductScreenPresenter capturingPresenter = new ProductScreenPresenter(
                 new EmptySaveCatalog(), capturingTextRenderer());
 
         ProductUiLayout layout = capturingPresenter.present(MAIN_MENU, CONTEXT);
 
         assertEquals(
-                "LOAD WORLD - AVAILABLE IN PHASE 14",
+                "LOAD WORLD",
                 textInside(layout, UiActionId.LOAD_WORLD));
         assertFalse(layout.region(UiActionId.LOAD_WORLD).enabled());
     }
@@ -78,6 +99,8 @@ class ProductScreenPresenterTest {
         assertEquals(
                 List.of(
                         UiActionId.RESUME,
+                        UiActionId.SAVE,
+                        UiActionId.SAVE_AND_QUIT,
                         UiActionId.SETTINGS,
                         UiActionId.CONTROLS,
                         UiActionId.RETURN_TO_MAIN_MENU),

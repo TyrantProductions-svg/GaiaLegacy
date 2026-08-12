@@ -230,20 +230,53 @@ class GameBootstrapStructureTest {
         String compact = source.replaceAll("\\s+", "");
 
         assertTrue(source.contains("new GameSessionFactory("));
-        assertTrue(
-                compact.contains(
-                        "()->sessionFactory.create("
-                                + "settingsLifecycle.newSessionConfig())"));
+        assertTrue(compact.contains("composeSaveLoad("));
+        assertTrue(compact.contains("sessionFactory::create"));
+        assertTrue(compact.contains("settingsLifecycle::newSessionConfig"));
+        assertTrue(compact.contains(
+                "returnnewGameSessionConfig(request.seed(),"
+                        + "defaults.chunkRadius(),"
+                        + "defaults.defaultGameMode(),"
+                        + "defaults.debugHudDefault())"));
         assertTrue(source.contains("ProductSettingsLifecycle.open("));
         assertTrue(source.contains("settingsLifecycle::close"));
         assertFalse(source.contains("InMemorySettingsStore"));
         assertFalse(compact.contains("initialSessionConfig"));
         assertTrue(source.contains("new ProductLoop("));
-        assertTrue(source.contains("new EmptySaveCatalog()"));
+        assertFalse(source.contains("EmptySaveCatalog"));
+        assertEquals(1, occurrences(compact, "SaveRepository.open("));
+        assertEquals(1, occurrences(compact, "newFileSaveCatalog("));
+        assertTrue(compact.contains("newDefaultSaveRootProvider().saveRoot()"));
+        assertTrue(compact.contains(
+                "newProductScreenPresenter(saveComposition.catalog(),"));
         assertFalse(source.contains("new GameLoop("));
         assertFalse(source.contains("worldLoader.loadAsync("));
         assertFalse(source.contains("new WorldLoader("));
         assertFalse(source.contains("new FixedStepClock("));
+    }
+
+    @Test
+    void ownsFilesystemSaveDiscoveryOnlyAtBootstrapComposition() throws IOException {
+        String presenter = Files.readString(Path.of(
+                "src/main/java/com/gaia/shell/ui/ProductScreenPresenter.java"));
+        String input = Files.readString(Path.of(
+                "src/main/java/com/gaia/shell/ui/ProductScreenInputController.java"));
+        String loop = Files.readString(Path.of(
+                "src/main/java/com/gaia/shell/ProductLoop.java"));
+
+        for (String source : java.util.List.of(presenter, input, loop)) {
+            assertFalse(source.contains("java.nio.file"));
+            assertFalse(source.contains("Files."));
+            assertFalse(source.contains("DefaultSaveRootProvider"));
+            assertFalse(source.contains("SaveRepository"));
+            assertFalse(source.contains("FileSaveCatalog"));
+        }
+        assertFalse(loop.contains(".summaries()"));
+        assertTrue(occurrences(presenter, ".summaries()") <= 1);
+        int summarySnapshot = presenter.indexOf(".summaries()");
+        int perFramePresentation = presenter.indexOf("public ProductUiLayout present(");
+        assertTrue(summarySnapshot < 0 || summarySnapshot < perFramePresentation,
+                "save discovery may occur only before the per-frame presentation boundary");
     }
 
     @Test

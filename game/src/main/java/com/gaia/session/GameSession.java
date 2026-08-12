@@ -14,6 +14,26 @@ public interface GameSession extends AutoCloseable {
 
     GameSessionFrame capturePaused();
 
+    default SessionSaveCaptureResult captureSave() {
+        throw new UnsupportedOperationException(
+                "This session does not provide persistence capture");
+    }
+
+    default void markSaved(SessionPersistenceRevision revision) {
+        throw new UnsupportedOperationException(
+                "This session does not provide persistence checkpoints");
+    }
+
+    default GameSessionSaveResult save() {
+        throw new UnsupportedOperationException(
+                "This session does not own a save coordinator");
+    }
+
+    default boolean hasUnsavedChanges() {
+        throw new UnsupportedOperationException(
+                "This session does not expose persistence dirty state");
+    }
+
     void discardFixedTime();
 
     @Override

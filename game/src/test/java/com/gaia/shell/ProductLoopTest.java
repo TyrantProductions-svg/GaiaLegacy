@@ -28,6 +28,7 @@ import com.gaia.session.GameSession;
 import com.gaia.session.GameSessionFrame;
 import com.gaia.session.GameSessionState;
 import com.gaia.shell.save.EmptySaveCatalog;
+import com.gaia.shell.save.SaveCatalog;
 import com.gaia.shell.ui.ProductScreenInputController;
 import com.gaia.shell.ui.ProductScreenPresenter;
 import com.gaia.shell.ui.ProductUiLayout;
@@ -55,6 +56,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -91,6 +93,24 @@ class ProductLoopTest {
         assertEquals(
                 List.of(),
                 fixture.host().lastProductLayout().frame().commands());
+    }
+
+    @Test
+    void repeatedMainMenuFramesDoNotRediscoverSavesWhileLoadIsDisabled() {
+        AtomicInteger discoveries = new AtomicInteger();
+        SaveCatalog catalog = () -> {
+            discoveries.incrementAndGet();
+            return List.of();
+        };
+        Fixture fixture = new Fixture(catalog);
+        discoveries.set(0);
+
+        fixture.frame();
+        fixture.frame();
+        fixture.frame();
+
+        assertEquals(0, discoveries.get(),
+                "the frame loop must consume a cached immutable catalog snapshot");
     }
 
     @Test
@@ -873,13 +893,25 @@ class ProductLoopTest {
         private final ProductLoop loop;
 
         private Fixture() {
-            this(false, 1.0f, 1.0f);
+            this(new EmptySaveCatalog());
+        }
+
+        private Fixture(SaveCatalog saveCatalog) {
+            this(false, 1.0f, 1.0f, saveCatalog);
         }
 
         private Fixture(
                 boolean cursorCaptured,
                 float scaleX,
                 float scaleY) {
+            this(cursorCaptured, scaleX, scaleY, new EmptySaveCatalog());
+        }
+
+        private Fixture(
+                boolean cursorCaptured,
+                float scaleX,
+                float scaleY,
+                SaveCatalog saveCatalog) {
             this(
                     cursorCaptured,
                     new RenderSurfaceMetrics(
@@ -888,19 +920,27 @@ class ProductLoopTest {
                             Math.round(1280 * scaleX),
                             Math.round(720 * scaleY),
                             scaleX,
-                            scaleY));
+                            scaleY),
+                    saveCatalog);
         }
 
         private Fixture(
                 boolean cursorCaptured,
                 RenderSurfaceMetrics surface) {
+            this(cursorCaptured, surface, new EmptySaveCatalog());
+        }
+
+        private Fixture(
+                boolean cursorCaptured,
+                RenderSurfaceMetrics surface,
+                SaveCatalog saveCatalog) {
             session = new RecordingGameSession(input, events);
             host = new RecordingHost(
                     events,
                     cursorCaptured,
                     new UiLayoutContext(surface));
             presenter = new ProductScreenPresenter(
-                    new EmptySaveCatalog(), textRenderer());
+                    saveCatalog, textRenderer());
             loop = new ProductLoop(
                     input,
                     shell,

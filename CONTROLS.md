@@ -9,18 +9,28 @@ receive held state only.
 
 | Action | Binding | Notes |
 | --- | --- | --- |
-| Point at an action | Mouse | Only enabled action rectangles highlight. Moving outside an enabled rectangle clears pointer highlight; disabled Load World does not highlight. |
+| Point at an action | Mouse | Only enabled action rectangles highlight. Moving outside an enabled rectangle clears pointer highlight. |
 | Activate pointed action | left mouse | Disabled actions do not activate. |
 | Move focus forward | `Tab` or down arrow | Wraps through enabled actions only. |
 | Move focus backward | up arrow | Wraps through enabled actions only. |
 | Activate focused action | `Enter` or `Space` | Opens the selected screen or confirmation action. |
 | Back, dismiss, pause, or resume | `Escape` | Dismisses the top modal first; otherwise returns from Settings or Controls, resumes from Pause, pauses Playing, or opens Quit confirmation from Main Menu. |
 
-Main Menu provides New World, disabled `Load World - Available in Phase 14`,
-Settings, Controls, and Quit. Settings uses an explicit draft with Apply and
-Back actions. Back on a dirty draft opens Apply, Discard, and Cancel choices.
-New World passes through Loading into a fresh gameplay session.
-Return to Main Menu and Quit require confirmation where applicable.
+Main Menu provides New World, World Slots when at least one save exists,
+Settings, Controls, and Quit. New World has editable Unicode name and signed
+64-bit seed fields; Create validates the draft and makes the initial atomic
+save before the session becomes playable. World Slots shows four saves per
+page, ordered by modified time, with Load, Recover, or Delete actions according
+to each slot's health. Delete and recovery require explicit confirmation.
+
+Pause provides Save and Save & Quit. Saving owns a no-input frame and completes
+before gameplay resumes or the session closes. Return to Main Menu closes a
+clean session directly and asks before discarding unsaved progress. There is no
+timed autosave or background save thread. Loading and Saving show truthful
+state text only; neither displays a fabricated percentage.
+
+Settings uses an explicit draft with Apply and Back actions. Back on a dirty
+draft opens Apply, Discard, and Cancel choices.
 
 ## Settings
 

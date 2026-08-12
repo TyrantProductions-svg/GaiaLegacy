@@ -2,24 +2,34 @@ package com.overlord.voxel;
 
 import com.overlord.config.GameConfig;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 
 public final class ChunkRepository {
     private final int worldHeight;
     private final ChunkDirtyTracker dirtyTracker;
-    private final ConcurrentHashMap<ChunkKey, Entry> entries =
+    private final BiConsumer<ChunkKey, ChunkMutationOutcome>
+            absentMutationPublicationProbe;
+    private final RestorePublicationProbe restorePublicationProbe;
+    private volatile ConcurrentHashMap<ChunkKey, Entry> entries =
             new ConcurrentHashMap<>();
+    private volatile boolean restoreEligible = true;
     private final AtomicLong revisionSequence = new AtomicLong();
+    private final AtomicInteger absentMutationPublications =
+            new AtomicInteger();
     private final AtomicLong generationAttemptSequence =
             new AtomicLong();
     private final GenerationAttempts generationAttempts =
@@ -29,8 +39,37 @@ public final class ChunkRepository {
         this(GameConfig.Chunk.MAX_HEIGHT, new ChunkDirtyTracker());
     }
 
+    public ChunkRepository(int worldHeight) {
+        this(worldHeight, new ChunkDirtyTracker());
+    }
+
     public ChunkRepository(
             int worldHeight, ChunkDirtyTracker dirtyTracker) {
+        this(
+                worldHeight,
+                dirtyTracker,
+                (key, outcome) -> {},
+                (detached, snapshot, result) -> {});
+    }
+
+    ChunkRepository(
+            int worldHeight,
+            ChunkDirtyTracker dirtyTracker,
+            BiConsumer<ChunkKey, ChunkMutationOutcome>
+                    absentMutationPublicationProbe) {
+        this(
+                worldHeight,
+                dirtyTracker,
+                absentMutationPublicationProbe,
+                (detached, snapshot, result) -> {});
+    }
+
+    ChunkRepository(
+            int worldHeight,
+            ChunkDirtyTracker dirtyTracker,
+            BiConsumer<ChunkKey, ChunkMutationOutcome>
+                    absentMutationPublicationProbe,
+            RestorePublicationProbe restorePublicationProbe) {
         if (worldHeight <= 0) {
             throw new IllegalArgumentException(
                     "worldHeight must be greater than zero");
@@ -38,6 +77,14 @@ public final class ChunkRepository {
         this.worldHeight = worldHeight;
         this.dirtyTracker =
                 Objects.requireNonNull(dirtyTracker, "dirtyTracker");
+        this.absentMutationPublicationProbe =
+                Objects.requireNonNull(
+                        absentMutationPublicationProbe,
+                        "absentMutationPublicationProbe");
+        this.restorePublicationProbe =
+                Objects.requireNonNull(
+                        restorePublicationProbe,
+                        "restorePublicationProbe");
     }
 
     public boolean contains(ChunkKey key) {
@@ -124,6 +171,7 @@ public final class ChunkRepository {
                             baseRevision);
             generationAttempts.byKey.put(
                     key, new GenerationAttempt(ticket));
+            restoreEligible = false;
             return ticket;
         }
     }
@@ -149,8 +197,7 @@ public final class ChunkRepository {
                 Chunk.fromCanonicalBytes(
                         data.worldHeight(), data.copyBlocks());
         long committedRevision;
-        ChangedMeshingBoundaries changedBoundaries =
-                ChangedMeshingBoundaries.NONE;
+        List<DirtyCandidate> neighborCandidates;
         synchronized (generationAttempts) {
             GenerationAttempt attempt =
                     liveAttempt(ticket);
@@ -164,23 +211,13 @@ public final class ChunkRepository {
                     return conflictResult(key);
                 }
 
-                Entry created = new Entry(detached);
-                Entry resolved =
-                        entries.compute(
-                                key,
-                                (ignored, current) -> {
-                                    if (current != null) {
-                                        return current;
-                                    }
-                                    created.revision = nextRevision();
-                                    created.state = ChunkState.GENERATED;
-                                    return created;
-                                });
-                if (resolved != created) {
+                committedRevision =
+                        publishInitialGeneration(key, detached);
+                if (committedRevision == 0) {
                     generationAttempts.byKey.remove(key, attempt);
                     return conflictResult(key);
                 }
-                committedRevision = created.revision;
+                neighborCandidates = null;
             } else {
                 Entry entry = entries.get(key);
                 if (entry == null) {
@@ -195,14 +232,21 @@ public final class ChunkRepository {
                         generationAttempts.byKey.remove(key, attempt);
                         return conflictResult(key);
                     }
-                    changedBoundaries =
+                    ChangedMeshingBoundaries changedBoundaries =
                             changedMeshingBoundaries(
                                     entry.chunk, detached);
+                    neighborCandidates =
+                            dirtyCandidates(
+                                    changedMeshingNeighborKeys(
+                                            key, changedBoundaries),
+                                    key);
+                    committedRevision =
+                            reserveRevisions(
+                                    1 + neighborCandidates.size());
                     entry.chunk = detached;
-                    entry.revision = nextRevision();
+                    entry.revision = committedRevision;
                     entry.failure = null;
                     entry.state = ChunkState.DIRTY;
-                    committedRevision = entry.revision;
                 }
             }
 
@@ -210,13 +254,9 @@ public final class ChunkRepository {
             attempt.failure = null;
         }
 
-        if (ticket.mode() == ChunkGenerationMode.INITIAL) {
-            for (ChunkKey neighbor :
-                    dirtyTracker.meshingNeighbors(key)) {
-                dirtyIfPresent(neighbor);
-            }
-        } else {
-            dirtyChangedLoadedNeighbors(key, changedBoundaries);
+        if (ticket.mode() == ChunkGenerationMode.REBUILD) {
+            dirtyChangedLoadedNeighbors(
+                    neighborCandidates, committedRevision);
         }
         return new ChunkGenerationResult(
                 ChunkGenerationResult.Status.COMMITTED,
@@ -297,6 +337,9 @@ public final class ChunkRepository {
             ChunkKey key, Consumer<Chunk> generator) {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(generator, "generator");
+        markRepositoryUsed();
+        List<DirtyCandidate> neighborCandidates;
+        long generatedRevision;
         Entry entry =
                 entries.computeIfAbsent(
                         key, this::newEntry);
@@ -308,7 +351,13 @@ public final class ChunkRepository {
                     ChunkState.GENERATING);
             try {
                 generator.accept(entry.chunk);
-                entry.revision = nextRevision();
+                neighborCandidates =
+                        dirtyCandidates(
+                                dirtyTracker.meshingNeighbors(key), key);
+                generatedRevision =
+                        reserveRevisions(
+                                1 + neighborCandidates.size());
+                entry.revision = generatedRevision;
                 entry.state = ChunkState.GENERATED;
             } catch (RuntimeException | Error failure) {
                 entry.failure = failure;
@@ -316,9 +365,8 @@ public final class ChunkRepository {
                 throw failure;
             }
         }
-        for (ChunkKey neighbor : dirtyTracker.meshingNeighbors(key)) {
-            dirtyIfPresent(neighbor);
-        }
+        dirtyReservedCandidates(
+                neighborCandidates, generatedRevision);
     }
 
     public boolean setBlock(
@@ -367,6 +415,11 @@ public final class ChunkRepository {
         int localZ = ChunkKey.localCoordinate(worldZ);
         while (true) {
             Entry entry = entries.get(key);
+            List<DirtyCandidate> affectedCandidates =
+                    dirtyCandidates(
+                            dirtyTracker.affectedByBlock(
+                                    key, localX, localZ),
+                            key);
             if (entry == null) {
                 if (compareExpected && expectedBlockId != 0) {
                     return unchangedOutcome(
@@ -378,9 +431,57 @@ public final class ChunkRepository {
                             ChunkMutationOutcome.Status.NO_CHANGE,
                             (byte) 0);
                 }
-                entry =
-                        entries.computeIfAbsent(
-                                key, this::newEntry);
+                markRepositoryUsed();
+                ChunkMutationOutcome outcome =
+                        withLockedCandidates(
+                                affectedCandidates,
+                                () -> {
+                                    if (entries.get(key) != null
+                                            || !areCurrentDirtyCandidates(
+                                                    affectedCandidates)) {
+                                        return null;
+                                    }
+                                    absentMutationPublications.incrementAndGet();
+                                    try {
+                                        long targetRevision =
+                                                reserveRevisions(
+                                                        1
+                                                                + affectedCandidates
+                                                                        .size());
+                                        Entry created =
+                                                new Entry(worldHeight);
+                                        created.chunk.setBlock(
+                                                localX,
+                                                y,
+                                                localZ,
+                                                replacementBlockId);
+                                        created.revision = targetRevision;
+                                        created.state = ChunkState.DIRTY;
+                                        ChunkMutationOutcome preparedOutcome =
+                                                prepareMutationOutcome(
+                                                        key,
+                                                        (byte) 0,
+                                                        targetRevision,
+                                                        affectedCandidates);
+                                        absentMutationPublicationProbe.accept(
+                                                key, preparedOutcome);
+                                        if (entries.putIfAbsent(
+                                                        key, created)
+                                                != null) {
+                                            return null;
+                                        }
+                                        dirtyReservedCandidates(
+                                                affectedCandidates,
+                                                targetRevision);
+                                        return preparedOutcome;
+                                    } finally {
+                                        absentMutationPublications.decrementAndGet();
+                                    }
+                                });
+                if (outcome == null) {
+                    continue;
+                }
+                return outcome;
             }
 
             byte observedBlock;
@@ -407,35 +508,69 @@ public final class ChunkRepository {
                             ChunkMutationOutcome.Status.NO_CHANGE,
                             observedBlock);
                 }
+                targetRevision =
+                        reserveRevisions(
+                                1 + affectedCandidates.size());
                 entry.chunk.setBlock(
                         localX, y, localZ, replacementBlockId);
-                targetRevision = nextRevision();
                 entry.revision = targetRevision;
                 entry.failure = null;
                 entry.state = ChunkState.DIRTY;
             }
-            List<DirtyChunkRevision> dirtiedChunks =
-                    new ArrayList<>();
-            dirtiedChunks.add(
-                    new DirtyChunkRevision(key, targetRevision));
-            for (ChunkKey affected :
-                    dirtyTracker.affectedByBlock(key, localX, localZ)) {
-                if (!affected.equals(key)) {
-                    OptionalLong revision =
-                            dirtyIfPresent(affected);
-                    if (revision.isPresent()) {
-                        dirtiedChunks.add(
-                                new DirtyChunkRevision(
-                                        affected,
-                                        revision.getAsLong()));
-                    }
-                }
-            }
-            return new ChunkMutationOutcome(
-                    ChunkMutationOutcome.Status.APPLIED,
+            return appliedMutationOutcome(
+                    key,
                     observedBlock,
-                    dirtiedChunks);
+                    targetRevision,
+                    affectedCandidates);
         }
+    }
+
+    private ChunkMutationOutcome appliedMutationOutcome(
+            ChunkKey key,
+            byte observedBlock,
+            long targetRevision,
+            List<DirtyCandidate> affectedCandidates) {
+        List<DirtyChunkRevision> dirtiedChunks = new ArrayList<>();
+        dirtiedChunks.add(
+                new DirtyChunkRevision(key, targetRevision));
+        for (int index = 0;
+                index < affectedCandidates.size();
+                index++) {
+            long reservedRevision = targetRevision + index + 1;
+            DirtyCandidate candidate = affectedCandidates.get(index);
+            if (dirtyIfCurrent(candidate, reservedRevision)) {
+                dirtiedChunks.add(
+                        new DirtyChunkRevision(
+                                candidate.key(), reservedRevision));
+            }
+        }
+        return new ChunkMutationOutcome(
+                ChunkMutationOutcome.Status.APPLIED,
+                observedBlock,
+                dirtiedChunks);
+    }
+
+    private ChunkMutationOutcome prepareMutationOutcome(
+            ChunkKey key,
+            byte observedBlock,
+            long targetRevision,
+            List<DirtyCandidate> affectedCandidates) {
+        List<DirtyChunkRevision> dirtiedChunks =
+                new ArrayList<>(1 + affectedCandidates.size());
+        dirtiedChunks.add(
+                new DirtyChunkRevision(key, targetRevision));
+        for (int index = 0;
+                index < affectedCandidates.size();
+                index++) {
+            dirtiedChunks.add(
+                    new DirtyChunkRevision(
+                            affectedCandidates.get(index).key(),
+                            targetRevision + index + 1));
+        }
+        return new ChunkMutationOutcome(
+                ChunkMutationOutcome.Status.APPLIED,
+                observedBlock,
+                dirtiedChunks);
     }
 
     private static ChunkMutationOutcome unchangedOutcome(
@@ -465,6 +600,101 @@ public final class ChunkRepository {
             return Optional.of(
                     ChunkSnapshot.of(
                             key, entry.revision, worldHeight, blocks));
+        }
+    }
+
+    public ChunkRepositorySnapshot canonicalSnapshot() {
+        synchronized (generationAttempts) {
+            if (hasActiveGenerationAttempts()) {
+                throw new IllegalStateException(
+                        "Cannot capture Chunks while generation is active");
+            }
+            if (absentMutationPublications.get() != 0) {
+                throw new IllegalStateException(
+                        "Cannot capture Chunks while absent mutation publication is active");
+            }
+
+            long revisionHighWater = revisionSequence.get();
+            List<ChunkKey> keys = new ArrayList<>(entries.keySet());
+            keys.sort(
+                    Comparator.comparingInt(ChunkKey::x)
+                            .thenComparingInt(ChunkKey::z));
+            List<ChunkSnapshot> chunks = new ArrayList<>(keys.size());
+            for (ChunkKey key : keys) {
+                Entry entry = entries.get(key);
+                if (entry == null) {
+                    throw changedDuringCanonicalCapture();
+                }
+                synchronized (entry) {
+                    if (entries.get(key) != entry
+                            || entry.state == ChunkState.EMPTY
+                            || entry.state == ChunkState.GENERATING
+                            || entry.state == ChunkState.UNLOADING
+                            || entry.revision <= 0) {
+                        throw changedDuringCanonicalCapture();
+                    }
+                    byte[] blocks = new byte[canonicalBlockCount()];
+                    entry.chunk.copyBlocksTo(blocks);
+                    chunks.add(
+                            ChunkSnapshot.of(
+                                    key,
+                                    entry.revision,
+                                    worldHeight,
+                                    blocks));
+                }
+            }
+
+            if (revisionSequence.get() != revisionHighWater
+                    || !entries.keySet().equals(new HashSet<>(keys))
+                    || absentMutationPublications.get() != 0) {
+                throw changedDuringCanonicalCapture();
+            }
+            return new ChunkRepositorySnapshot(
+                    worldHeight, revisionHighWater, chunks);
+        }
+    }
+
+    public ChunkRepositoryRestoreResult restoreCanonical(
+            ChunkRepositorySnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot");
+        List<RestoredChunk> restoredChunks =
+                validateCompleteSnapshot(snapshot);
+        if (restoredChunks == null) {
+            return ChunkRepositoryRestoreResult.rejected(
+                    ChunkRepositoryRestoreResult.Status.INVALID_SNAPSHOT);
+        }
+
+        synchronized (generationAttempts) {
+            if (hasActiveGenerationAttempts()) {
+                return ChunkRepositoryRestoreResult.rejected(
+                        ChunkRepositoryRestoreResult.Status.GENERATION_ACTIVE);
+            }
+            if (!entries.isEmpty()) {
+                return ChunkRepositoryRestoreResult.rejected(
+                        ChunkRepositoryRestoreResult.Status.TARGET_NOT_EMPTY);
+            }
+            if (!restoreEligible) {
+                return ChunkRepositoryRestoreResult.rejected(
+                        ChunkRepositoryRestoreResult.Status.TARGET_NOT_FRESH);
+            }
+
+            ConcurrentHashMap<ChunkKey, Entry> published =
+                    new ConcurrentHashMap<>();
+            for (RestoredChunk restored : restoredChunks) {
+                Entry entry = new Entry(restored.chunk());
+                entry.revision = restored.revision();
+                entry.state = ChunkState.DIRTY;
+                published.put(restored.key(), entry);
+            }
+            ChunkRepositoryRestoreResult result =
+                    ChunkRepositoryRestoreResult.restored(
+                            restoredChunks.size());
+            restorePublicationProbe.beforePublication(
+                    published, snapshot, result);
+            revisionSequence.set(snapshot.revisionHighWater());
+            entries = published;
+            restoreEligible = false;
+            return result;
         }
     }
 
@@ -648,23 +878,51 @@ public final class ChunkRepository {
 
     public boolean beginUnload(ChunkKey key) {
         Objects.requireNonNull(key, "key");
-        boolean generationCancelled =
-                beginGenerationUnload(key);
-        Entry entry = entries.get(key);
-        if (entry == null) {
-            return generationCancelled;
-        }
-        synchronized (entry) {
-            if (entries.get(key) != entry
-                    || entry.state == ChunkState.UNLOADING) {
+        List<DirtyCandidate> neighborCandidates;
+        long unloadRevision;
+        synchronized (generationAttempts) {
+            GenerationAttempt attempt =
+                    generationAttempts.byKey.get(key);
+            boolean generationCancelled =
+                    attempt != null
+                            && !attempt.unloading
+                            && attempt.status
+                                    == ChunkGenerationStatus.GENERATING;
+            Entry entry = entries.get(key);
+            if (entry == null) {
+                if (generationCancelled) {
+                    attempt.unloading = true;
+                }
                 return generationCancelled;
             }
-            entry.failure = null;
-            entry.revision = nextRevision();
-            entry.state = ChunkState.UNLOADING;
+            neighborCandidates =
+                    dirtyCandidates(
+                            dirtyTracker.meshingNeighbors(key), key);
+            synchronized (entry) {
+                if (entries.get(key) != entry
+                        || entry.state == ChunkState.UNLOADING) {
+                    if (generationCancelled) {
+                        attempt.unloading = true;
+                    }
+                    return generationCancelled;
+                }
+                unloadRevision =
+                        reserveRevisions(
+                                1 + neighborCandidates.size());
+                if (generationCancelled) {
+                    attempt.unloading = true;
+                }
+                entry.failure = null;
+                entry.revision = unloadRevision;
+                entry.state = ChunkState.UNLOADING;
+            }
         }
-        for (ChunkKey neighbor : dirtyTracker.meshingNeighbors(key)) {
-            dirtyIfPresent(neighbor);
+        for (int index = 0;
+                index < neighborCandidates.size();
+                index++) {
+            dirtyIfCurrent(
+                    neighborCandidates.get(index),
+                    unloadRevision + index + 1);
         }
         return true;
     }
@@ -744,23 +1002,173 @@ public final class ChunkRepository {
                         && entry.failure == null);
     }
 
-    private OptionalLong dirtyIfPresent(ChunkKey key) {
-        Entry entry = entries.get(key);
-        if (entry == null) {
-            return OptionalLong.empty();
+    private List<RestoredChunk> validateCompleteSnapshot(
+            ChunkRepositorySnapshot snapshot) {
+        if (snapshot.worldHeight() != worldHeight
+                || snapshot.revisionHighWater() < 0
+                || snapshot.revisionHighWater() == Long.MAX_VALUE) {
+            return null;
         }
-        synchronized (entry) {
-            if (entries.get(key) != entry
+
+        Set<ChunkKey> keys = new HashSet<>();
+        List<RestoredChunk> restored =
+                new ArrayList<>(snapshot.chunks().size());
+        try {
+            for (ChunkSnapshot chunkSnapshot : snapshot.chunks()) {
+                ChunkKey key = chunkSnapshot.key();
+                long revision = chunkSnapshot.revision();
+                if (chunkSnapshot.worldHeight() != worldHeight
+                        || revision <= 0
+                        || revision > snapshot.revisionHighWater()
+                        || !keys.add(key)) {
+                    return null;
+                }
+                byte[] blocks = chunkSnapshot.copyBlocks();
+                if (blocks.length != canonicalBlockCount()) {
+                    return null;
+                }
+                restored.add(
+                        new RestoredChunk(
+                                key,
+                                revision,
+                                Chunk.fromCanonicalBytes(
+                                        worldHeight, blocks)));
+            }
+        } catch (RuntimeException failure) {
+            return null;
+        }
+        return List.copyOf(restored);
+    }
+
+    private int canonicalBlockCount() {
+        return Math.multiplyExact(
+                Math.multiplyExact(
+                        GameConfig.Chunk.SIZE, worldHeight),
+                GameConfig.Chunk.SIZE);
+    }
+
+    private boolean hasActiveGenerationAttempts() {
+        for (GenerationAttempt attempt : generationAttempts.byKey.values()) {
+            if (attempt.status == ChunkGenerationStatus.GENERATING) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static IllegalStateException changedDuringCanonicalCapture() {
+        return new IllegalStateException(
+                "Chunk repository changed during canonical capture");
+    }
+
+    private List<DirtyCandidate> dirtyCandidates(
+            Iterable<ChunkKey> keys, ChunkKey excluded) {
+        List<DirtyCandidate> candidates = new ArrayList<>();
+        for (ChunkKey key : keys) {
+            if (key.equals(excluded)) {
+                continue;
+            }
+            Entry entry = entries.get(key);
+            if (entry != null) {
+                candidates.add(new DirtyCandidate(key, entry));
+            }
+        }
+        return List.copyOf(candidates);
+    }
+
+    private <T> T withLockedCandidates(
+            List<DirtyCandidate> candidates, Supplier<T> action) {
+        List<DirtyCandidate> lockOrder = new ArrayList<>(candidates);
+        lockOrder.sort(
+                Comparator.comparingInt(
+                                (DirtyCandidate candidate) ->
+                                        candidate.key().x())
+                        .thenComparingInt(
+                                candidate -> candidate.key().z()));
+        return withLockedCandidates(lockOrder, 0, action);
+    }
+
+    private <T> T withLockedCandidates(
+            List<DirtyCandidate> lockOrder,
+            int index,
+            Supplier<T> action) {
+        if (index == lockOrder.size()) {
+            return action.get();
+        }
+        synchronized (lockOrder.get(index).entry()) {
+            return withLockedCandidates(
+                    lockOrder, index + 1, action);
+        }
+    }
+
+    private long withLockedCandidatesLong(
+            List<DirtyCandidate> candidates, LongSupplier action) {
+        List<DirtyCandidate> lockOrder = new ArrayList<>(candidates);
+        lockOrder.sort(
+                Comparator.comparingInt(
+                                (DirtyCandidate candidate) ->
+                                        candidate.key().x())
+                        .thenComparingInt(
+                                candidate -> candidate.key().z()));
+        return withLockedCandidatesLong(lockOrder, 0, action);
+    }
+
+    private long withLockedCandidatesLong(
+            List<DirtyCandidate> lockOrder,
+            int index,
+            LongSupplier action) {
+        if (index == lockOrder.size()) {
+            return action.getAsLong();
+        }
+        synchronized (lockOrder.get(index).entry()) {
+            return withLockedCandidatesLong(
+                    lockOrder, index + 1, action);
+        }
+    }
+
+    private boolean areCurrentDirtyCandidates(
+            List<DirtyCandidate> candidates) {
+        for (DirtyCandidate candidate : candidates) {
+            Entry entry = candidate.entry();
+            if (entries.get(candidate.key()) != entry
                     || entry.state == ChunkState.UNLOADING
                     || entry.state == ChunkState.EMPTY) {
-                return OptionalLong.empty();
+                return false;
             }
-            entry.revision = nextRevision();
+        }
+        return true;
+    }
+
+    private void dirtyReservedCandidates(
+            List<DirtyCandidate> candidates, long primaryRevision) {
+        for (int index = 0; index < candidates.size(); index++) {
+            dirtyIfCurrent(
+                    candidates.get(index),
+                    primaryRevision + index + 1);
+        }
+    }
+
+    private void dirtyChangedLoadedNeighbors(
+            List<DirtyCandidate> candidates, long primaryRevision) {
+        dirtyReservedCandidates(candidates, primaryRevision);
+    }
+
+    private boolean dirtyIfCurrent(
+            DirtyCandidate candidate, long reservedRevision) {
+        Entry entry = candidate.entry();
+        synchronized (entry) {
+            if (entries.get(candidate.key()) != entry
+                    || entry.state == ChunkState.UNLOADING
+                    || entry.state == ChunkState.EMPTY
+                    || entry.revision >= reservedRevision) {
+                return false;
+            }
+            entry.revision = reservedRevision;
             entry.failure = null;
             if (entry.state != ChunkState.GENERATING) {
                 entry.state = ChunkState.DIRTY;
             }
-            return OptionalLong.of(entry.revision);
+            return true;
         }
     }
 
@@ -820,34 +1228,6 @@ public final class ChunkRepository {
                 northWestChanged);
     }
 
-    private void dirtyChangedLoadedNeighbors(
-            ChunkKey key, ChangedMeshingBoundaries changed) {
-        if (changed.north()) {
-            dirtyIfPresent(key.north());
-        }
-        if (changed.northEast()) {
-            dirtyIfPresent(key.northEast());
-        }
-        if (changed.east()) {
-            dirtyIfPresent(key.east());
-        }
-        if (changed.southEast()) {
-            dirtyIfPresent(key.southEast());
-        }
-        if (changed.south()) {
-            dirtyIfPresent(key.south());
-        }
-        if (changed.southWest()) {
-            dirtyIfPresent(key.southWest());
-        }
-        if (changed.west()) {
-            dirtyIfPresent(key.west());
-        }
-        if (changed.northWest()) {
-            dirtyIfPresent(key.northWest());
-        }
-    }
-
     private static void transition(
             Entry entry,
             ChunkKey key,
@@ -863,6 +1243,46 @@ public final class ChunkRepository {
                             + requested);
         }
         entry.state = requested;
+    }
+
+    private long publishInitialGeneration(
+            ChunkKey key, Chunk detached) {
+        while (true) {
+            List<DirtyCandidate> neighborCandidates =
+                    dirtyCandidates(
+                            dirtyTracker.meshingNeighbors(key), key);
+            long result =
+                    withLockedCandidatesLong(
+                            neighborCandidates,
+                            () -> {
+                                if (!areCurrentDirtyCandidates(
+                                        neighborCandidates)) {
+                                    return -1L;
+                                }
+                                if (entries.get(key) != null) {
+                                    return 0L;
+                                }
+                                long committedRevision =
+                                        reserveRevisions(
+                                                1
+                                                        + neighborCandidates
+                                                                .size());
+                                Entry created = new Entry(detached);
+                                created.revision = committedRevision;
+                                created.state = ChunkState.GENERATED;
+                                if (entries.putIfAbsent(key, created)
+                                        != null) {
+                                    return 0L;
+                                }
+                                dirtyReservedCandidates(
+                                        neighborCandidates,
+                                        committedRevision);
+                                return committedRevision;
+                            });
+            if (result != -1L) {
+                return result;
+            }
+        }
     }
 
     private Entry newEntry(ChunkKey key) {
@@ -904,21 +1324,6 @@ public final class ChunkRepository {
         return attempt;
     }
 
-    private boolean beginGenerationUnload(ChunkKey key) {
-        synchronized (generationAttempts) {
-            GenerationAttempt attempt =
-                    generationAttempts.byKey.get(key);
-            if (attempt == null
-                    || attempt.unloading
-                    || attempt.status
-                            != ChunkGenerationStatus.GENERATING) {
-                return false;
-            }
-            attempt.unloading = true;
-            return true;
-        }
-    }
-
     private GenerationAttempt generationAttempt(ChunkKey key) {
         synchronized (generationAttempts) {
             return generationAttempts.byKey.get(key);
@@ -949,8 +1354,26 @@ public final class ChunkRepository {
                 Optional.empty());
     }
 
-    private long nextRevision() {
-        return revisionSequence.incrementAndGet();
+    private long reserveRevisions(int count) {
+        if (count <= 0) {
+            throw new IllegalArgumentException(
+                    "count must be greater than zero");
+        }
+        while (true) {
+            long current = revisionSequence.get();
+            long reservedHighWater;
+            try {
+                reservedHighWater = Math.addExact(current, count);
+            } catch (ArithmeticException failure) {
+                throw new IllegalStateException(
+                        "Chunk revision sequence is exhausted",
+                        failure);
+            }
+            if (revisionSequence.compareAndSet(
+                    current, reservedHighWater)) {
+                return current + 1;
+            }
+        }
     }
 
     private static final class GenerationAttempts {
@@ -985,6 +1408,58 @@ public final class ChunkRepository {
         }
     }
 
+    private void markRepositoryUsed() {
+        if (!restoreEligible) {
+            return;
+        }
+        synchronized (generationAttempts) {
+            restoreEligible = false;
+        }
+    }
+
+    @FunctionalInterface
+    interface RestorePublicationProbe {
+        void beforePublication(
+                Object detachedEntries,
+                ChunkRepositorySnapshot snapshot,
+                ChunkRepositoryRestoreResult result);
+    }
+
+    private static List<ChunkKey> changedMeshingNeighborKeys(
+            ChunkKey key, ChangedMeshingBoundaries changed) {
+        List<ChunkKey> keys = new ArrayList<>();
+        if (changed.north()) {
+            keys.add(key.north());
+        }
+        if (changed.northEast()) {
+            keys.add(key.northEast());
+        }
+        if (changed.east()) {
+            keys.add(key.east());
+        }
+        if (changed.southEast()) {
+            keys.add(key.southEast());
+        }
+        if (changed.south()) {
+            keys.add(key.south());
+        }
+        if (changed.southWest()) {
+            keys.add(key.southWest());
+        }
+        if (changed.west()) {
+            keys.add(key.west());
+        }
+        if (changed.northWest()) {
+            keys.add(key.northWest());
+        }
+        return List.copyOf(keys);
+    }
+
+    private record RestoredChunk(
+            ChunkKey key, long revision, Chunk chunk) {}
+
+    private record DirtyCandidate(ChunkKey key, Entry entry) {}
+
     private record ChangedMeshingBoundaries(
             boolean north,
             boolean northEast,
@@ -994,15 +1469,5 @@ public final class ChunkRepository {
             boolean southWest,
             boolean west,
             boolean northWest) {
-        private static final ChangedMeshingBoundaries NONE =
-                new ChangedMeshingBoundaries(
-                        false,
-                        false,
-                        false,
-                        false,
-                        false,
-                        false,
-                        false,
-                        false);
     }
 }

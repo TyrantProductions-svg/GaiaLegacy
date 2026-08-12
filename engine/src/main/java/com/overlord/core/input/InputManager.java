@@ -7,6 +7,7 @@ import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_RIGHT;
 import static org.lwjgl.glfw.GLFW.GLFW_PRESS;
 import static org.lwjgl.glfw.GLFW.GLFW_RELEASE;
 import static org.lwjgl.glfw.GLFW.glfwSetCursorPosCallback;
+import static org.lwjgl.glfw.GLFW.glfwSetCharCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetKeyCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetMouseButtonCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetScrollCallback;
@@ -21,6 +22,8 @@ import java.util.Objects;
 import java.util.Set;
 
 public final class InputManager {
+    public static final int MAX_TYPED_CODE_POINTS_PER_SAMPLE = 64;
+
     private final MainThreadGuard mainThreadGuard;
     private final boolean[] downKeys = new boolean[GLFW_KEY_LAST + 1];
     private final boolean[] pressedKeys = new boolean[GLFW_KEY_LAST + 1];
@@ -40,6 +43,7 @@ public final class InputManager {
     private double accumulatedMouseX;
     private double accumulatedMouseY;
     private final List<Integer> accumulatedScrollDeltas = new ArrayList<>();
+    private final List<Integer> typedCodePoints = new ArrayList<>();
     private int accumulatedScrollMagnitude;
     private boolean mouseInteractionInvalidated;
     private boolean windowFocused = true;
@@ -56,6 +60,7 @@ public final class InputManager {
     public void install(long window) {
         mainThreadGuard.assertMainThread("GLFW input callback installation");
         glfwSetKeyCallback(window, (ignored, key, scancode, action, mods) -> onKey(key, action));
+        glfwSetCharCallback(window, (ignored, codePoint) -> onCharacter(codePoint));
         glfwSetMouseButtonCallback(
                 window,
                 (ignored, button, action, mods) ->
@@ -89,12 +94,15 @@ public final class InputManager {
      */
     public UiInputSnapshot captureUiInput(long sampleId) {
         mainThreadGuard.assertMainThread("UI input capture");
+        List<Integer> capturedCodePoints = List.copyOf(typedCodePoints);
+        clearTypedCodePoints();
         return new UiInputSnapshot(
                 copySetBits(downKeys),
                 copySetBits(pressedKeys),
                 copySetBits(downMouseButtons),
                 copySetBits(pressedMouseButtons),
                 accumulatedScrollDeltas,
+                capturedCodePoints,
                 pointerX,
                 pointerY,
                 windowFocused,
@@ -109,6 +117,7 @@ public final class InputManager {
         Arrays.fill(pressedKeys, false);
         Arrays.fill(pressedMouseButtons, false);
         clearScrollEdges();
+        clearTypedCodePoints();
         resetMouseState();
     }
 
@@ -118,6 +127,7 @@ public final class InputManager {
         Arrays.fill(pressedKeys, false);
         Arrays.fill(pressedMouseButtons, false);
         clearScrollEdges();
+        clearTypedCodePoints();
     }
 
     public boolean isKeyDown(int key) {
@@ -237,6 +247,16 @@ public final class InputManager {
         accumulatedScrollMagnitude += acceptedMagnitude;
     }
 
+    void onCharacter(int codePoint) {
+        mainThreadGuard.assertMainThread("GLFW character callback");
+        if (!windowFocused
+                || !isUnicodeScalarValue(codePoint)
+                || typedCodePoints.size() >= MAX_TYPED_CODE_POINTS_PER_SAMPLE) {
+            return;
+        }
+        typedCodePoints.add(codePoint);
+    }
+
     void onWindowFocus(boolean focused) {
         mainThreadGuard.assertMainThread("GLFW focus callback");
         windowFocused = focused;
@@ -248,6 +268,7 @@ public final class InputManager {
             Arrays.fill(downMouseButtons, false);
             Arrays.fill(pressedMouseButtons, false);
             clearScrollEdges();
+            clearTypedCodePoints();
             mouseInteractionInvalidated = true;
         }
     }
@@ -255,6 +276,16 @@ public final class InputManager {
     private void clearScrollEdges() {
         accumulatedScrollDeltas.clear();
         accumulatedScrollMagnitude = 0;
+    }
+
+    private void clearTypedCodePoints() {
+        typedCodePoints.clear();
+    }
+
+    private static boolean isUnicodeScalarValue(int codePoint) {
+        return Character.isValidCodePoint(codePoint)
+                && (codePoint < Character.MIN_SURROGATE
+                        || codePoint > Character.MAX_SURROGATE);
     }
 
     private void resetMouseState() {

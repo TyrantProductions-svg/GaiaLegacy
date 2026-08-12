@@ -1,13 +1,20 @@
 package com.gaia.shell.ui;
 
 /** Stable product-screen actions used by layout, focus, and hit testing. */
-public enum UiActionId {
+public enum UiActionId implements UiControlId {
     NEW_WORLD,
     LOAD_WORLD,
+    NEW_WORLD_NAME,
+    NEW_WORLD_SEED,
+    CREATE_WORLD,
+    WORLD_SLOTS_PREVIOUS,
+    WORLD_SLOTS_NEXT,
     SETTINGS,
     CONTROLS,
     QUIT,
     RESUME,
+    SAVE,
+    SAVE_AND_QUIT,
     RETURN_TO_MAIN_MENU,
     BACK,
     CONFIRM,
