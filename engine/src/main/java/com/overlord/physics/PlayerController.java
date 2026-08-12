@@ -61,6 +61,58 @@ public final class PlayerController {
         grounded = false;
     }
 
+    /**
+     * Restores detached motion inside a saved world's exact vertical bounds.
+     * Collision recovery is planned completely before authoritative state is
+     * mutated and never changes the saved velocity.
+     */
+    public void restoreCanonical(
+            Vector3fc feetPosition,
+            Vector3fc linearVelocity,
+            boolean restoredNoclip,
+            int worldHeight) {
+        Vector3f validatedPosition =
+                new Vector3f(
+                        Objects.requireNonNull(
+                                feetPosition, "feetPosition"));
+        Vector3f validatedVelocity =
+                new Vector3f(
+                        Objects.requireNonNull(
+                                linearVelocity, "linearVelocity"));
+        requireFinite(validatedPosition, "feetPosition");
+        requireFinite(validatedVelocity, "linearVelocity");
+        if (worldHeight <= 0) {
+            throw new IllegalArgumentException(
+                    "worldHeight must be positive");
+        }
+
+        float minimumFeetY = -body.collider().minY();
+        float maximumFeetY = worldHeight - body.collider().maxY();
+        if (validatedPosition.y < minimumFeetY
+                || validatedPosition.y > maximumFeetY) {
+            throw new IllegalArgumentException(
+                    "feetPosition is outside the saved world height");
+        }
+
+        Vector3f restoredPosition = validatedPosition;
+        if (!restoredNoclip
+                && collisionWorld.overlapsSolid(
+                        body.collider().translated(validatedPosition))) {
+            restoredPosition = recoveryPosition(
+                            validatedPosition,
+                            minimumFeetY,
+                            maximumFeetY)
+                    .orElseThrow(
+                            () -> new IllegalStateException(
+                                    "restored player penetration recovery failed"));
+        }
+
+        body.teleport(restoredPosition);
+        body.setLinearVelocity(validatedVelocity);
+        noclip = restoredNoclip;
+        grounded = false;
+    }
+
     public void fixedUpdate(
             float fixedDeltaSeconds,
             float moveX,
@@ -168,6 +220,23 @@ public final class PlayerController {
 
     public boolean recoverFromPenetration() {
         Vector3f position = body.position(new Vector3f());
+        float minimumFeetY = -body.collider().minY();
+        float maximumFeetY =
+                GameConfig.Chunk.MAX_HEIGHT
+                        - body.collider().maxY();
+        Optional<Vector3f> recovered = recoveryPosition(
+                position, minimumFeetY, maximumFeetY);
+        if (recovered.isPresent()) {
+            applyRecoveredPosition(recovered.orElseThrow());
+            return true;
+        }
+        return false;
+    }
+
+    private Optional<Vector3f> recoveryPosition(
+            Vector3fc position,
+            float minimumFeetY,
+            float maximumFeetY) {
         Optional<Vector3f> local =
                 collisionWorld.depenetrate(
                         body.collider(),
@@ -175,25 +244,26 @@ public final class PlayerController {
                         GameConfig.Physics
                                 .MAX_DEPENETRATION_ITERATIONS);
         if (local.isPresent()) {
-            applyRecoveredPosition(local.orElseThrow());
-            return true;
+            Vector3f candidate = local.orElseThrow();
+            if (candidate.y >= minimumFeetY
+                    && candidate.y <= maximumFeetY
+                    && !collisionWorld.overlapsSolid(
+                            body.collider().translated(candidate))) {
+                return Optional.of(candidate);
+            }
         }
 
-        float maximumFeetY =
-                GameConfig.Chunk.MAX_HEIGHT
-                        - body.collider().maxY();
         for (int offset = 1;
-                position.y + offset <= maximumFeetY;
+                position.y() + offset <= maximumFeetY;
                 offset++) {
             Vector3f candidate =
                     new Vector3f(position).add(0, offset, 0);
             if (!collisionWorld.overlapsSolid(
                     body.collider().translated(candidate))) {
-                applyRecoveredPosition(candidate);
-                return true;
+                return Optional.of(candidate);
             }
         }
-        return false;
+        return Optional.empty();
     }
 
     private void updateNoclip(

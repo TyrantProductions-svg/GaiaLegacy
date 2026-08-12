@@ -169,7 +169,11 @@ class ScreenRouterTest {
             case QUIT_CONFIRMATION -> screen == ScreenId.MAIN_MENU;
             case UNSAVED_PROGRESS_CONFIRMATION -> screen == ScreenId.PAUSED;
             case DIRTY_SETTINGS_CONFIRMATION -> screen == ScreenId.SETTINGS;
-            case ERROR_ACKNOWLEDGEMENT -> screen == ScreenId.MAIN_MENU;
+            case DELETE_WORLD_CONFIRMATION, RECOVER_BACKUP_CONFIRMATION -> false;
+            case ERROR_ACKNOWLEDGEMENT ->
+                    screen == ScreenId.MAIN_MENU
+                            || screen == ScreenId.WORLD_SLOTS
+                            || screen == ScreenId.PAUSED;
         };
     }
 
@@ -179,6 +183,8 @@ class ScreenRouterTest {
             case MAIN_MENU -> {
                 return router;
             }
+            case NEW_WORLD_SETUP -> router.openNewWorldSetup();
+            case WORLD_SLOTS -> router.openWorldSlots();
             case LOADING -> router.beginLoading();
             case PLAYING -> {
                 router.beginLoading();
@@ -187,6 +193,10 @@ class ScreenRouterTest {
             case PAUSED -> preparePaused(router);
             case SETTINGS -> router.openSettings(ScreenReturnTarget.MAIN_MENU);
             case CONTROLS -> router.openControls(ScreenReturnTarget.MAIN_MENU);
+            case SAVING -> {
+                preparePaused(router);
+                router.beginSaving();
+            }
         }
         return router;
     }

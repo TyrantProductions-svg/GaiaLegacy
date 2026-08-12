@@ -420,7 +420,7 @@ class SettingsShellIntegrationTest {
 
         private void handle(ScreenCommand command) {
             assertEquals(
-                    ProductShellController.LifecycleIntent.NONE,
+                    ProductLifecycleIntent.none(),
                     shell.handle(command));
         }
 

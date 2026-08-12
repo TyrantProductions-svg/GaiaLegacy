@@ -71,7 +71,7 @@ class ProductScreenInputControllerTest {
         assertTrue(controller.route(
                 clickAt(load.centerX(), load.centerY(), 4L), layout).isEmpty());
         assertEquals(
-                new ScreenCommand.NewWorld(),
+                new ScreenCommand.OpenNewWorldSetup(),
                 controller.route(keyAt(GLFW_KEY_ENTER, -1.0d, -1.0d, 5L), layout).orElseThrow());
     }
 
@@ -80,7 +80,7 @@ class ProductScreenInputControllerTest {
         ProductUiLayout layout = presenter.present(MAIN_MENU, CONTEXT);
 
         assertEquals(
-                new ScreenCommand.NewWorld(),
+                new ScreenCommand.OpenNewWorldSetup(),
                 new ProductScreenInputController()
                         .route(keyAt(GLFW_KEY_ENTER, -1.0d, -1.0d, 6L), layout)
                         .orElseThrow());
@@ -125,7 +125,7 @@ class ProductScreenInputControllerTest {
         assertClickCommands(
                 presenter.present(MAIN_MENU, CONTEXT),
                 Map.of(
-                        UiActionId.NEW_WORLD, new ScreenCommand.NewWorld(),
+                        UiActionId.NEW_WORLD, new ScreenCommand.OpenNewWorldSetup(),
                         UiActionId.SETTINGS, new ScreenCommand.OpenSettings(),
                         UiActionId.CONTROLS, new ScreenCommand.OpenControls(),
                         UiActionId.QUIT, new ScreenCommand.Quit()));
@@ -216,7 +216,7 @@ class ProductScreenInputControllerTest {
                 30L);
 
         assertEquals(
-                new ScreenCommand.NewWorld(),
+                new ScreenCommand.OpenNewWorldSetup(),
                 controller.route(combined, layout).orElseThrow());
         assertTrue(controller.route(combined, layout).isEmpty());
     }
@@ -228,7 +228,7 @@ class ProductScreenInputControllerTest {
         assertTrue(controller.route(clickAt(-0.01d, 10.0d, 31L), layout).isEmpty());
         assertTrue(controller.route(clickAt(1280.01d, 10.0d, 32L), layout).isEmpty());
         assertEquals(
-                new ScreenCommand.NewWorld(),
+                new ScreenCommand.OpenNewWorldSetup(),
                 controller.route(keyAt(GLFW_KEY_ENTER, -1.0d, -1.0d, 33L), layout)
                         .orElseThrow());
     }

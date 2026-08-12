@@ -5,8 +5,14 @@ import com.gaia.settings.SettingsDraftSnapshot;
 import com.gaia.settings.SettingsSnapshot;
 import com.gaia.shell.ModalId;
 import com.gaia.shell.ProductShellSnapshot;
+import com.gaia.shell.ScreenCommand;
 import com.gaia.shell.ScreenId;
 import com.gaia.shell.save.SaveCatalog;
+import com.gaia.shell.save.SaveSummary;
+import com.gaia.shell.world.NewWorldDraftController;
+import com.gaia.shell.world.NewWorldDraftSnapshot;
+import com.gaia.shell.world.WorldSlotsController;
+import com.gaia.shell.world.WorldSlotsSnapshot;
 import com.overlord.renderer.ui.TextRenderer;
 import com.overlord.renderer.ui.UiColor;
 import com.overlord.renderer.ui.UiDrawCommand;
@@ -41,34 +47,70 @@ public final class ProductScreenPresenter {
     private static final double SETTINGS_CONTROL_WIDTH = 42.0d;
     private static final double SETTINGS_CONTROL_GAP = 6.0d;
 
-    private final SaveCatalog saves;
     private final TextRenderer text;
     private final Supplier<SettingsDraftSnapshot> settings;
+    private final NewWorldDraftController newWorldDraft;
+    private final WorldSlotsController worldSlots;
 
     public ProductScreenPresenter(SaveCatalog saves, TextRenderer text) {
-        this(saves, text, ProductScreenPresenter::defaultSettings);
+        this(
+                saves,
+                text,
+                ProductScreenPresenter::defaultSettings,
+                new NewWorldDraftController(saves),
+                new WorldSlotsController(saves, 4));
     }
 
     public ProductScreenPresenter(
             SaveCatalog saves,
             TextRenderer text,
             Supplier<SettingsDraftSnapshot> settings) {
-        this.saves = Objects.requireNonNull(saves, "saves");
+        this(
+                saves,
+                text,
+                settings,
+                new NewWorldDraftController(saves),
+                new WorldSlotsController(saves, 4));
+    }
+
+    public ProductScreenPresenter(
+            SaveCatalog saves,
+            TextRenderer text,
+            Supplier<SettingsDraftSnapshot> settings,
+            NewWorldDraftController newWorldDraft,
+            WorldSlotsController worldSlots) {
+        Objects.requireNonNull(saves, "saves");
         this.text = Objects.requireNonNull(text, "text");
         this.settings = Objects.requireNonNull(settings, "settings");
+        this.newWorldDraft = Objects.requireNonNull(newWorldDraft, "newWorldDraft");
+        this.worldSlots = Objects.requireNonNull(worldSlots, "worldSlots");
     }
 
     public ProductUiLayout present(ProductShellSnapshot snapshot, UiLayoutContext context) {
-        return present(snapshot, context, Optional.empty());
+        return presentFocused(snapshot, context, Optional.empty());
     }
 
     public ProductUiLayout present(
             ProductShellSnapshot snapshot,
             UiLayoutContext context,
             Optional<UiActionId> focusedAction) {
+        Objects.requireNonNull(focusedAction, "focusedAction");
+        return presentFocused(
+                snapshot,
+                context,
+                focusedAction.map(action -> (UiControlId) action));
+    }
+
+    public ProductUiLayout presentFocused(
+            ProductShellSnapshot snapshot,
+            UiLayoutContext context,
+            Optional<UiControlId> focusedControl) {
         Objects.requireNonNull(snapshot, "snapshot");
         Objects.requireNonNull(context, "context");
-        Objects.requireNonNull(focusedAction, "focusedAction");
+        Objects.requireNonNull(focusedControl, "focusedControl");
+        Optional<UiActionId> focusedAction = focusedControl
+                .filter(UiActionId.class::isInstance)
+                .map(UiActionId.class::cast);
 
         if (snapshot.screen() == ScreenId.PLAYING && snapshot.modal().isEmpty()) {
             return new ProductUiLayout(UiFrame.empty(), List.of(), context);
@@ -86,7 +128,13 @@ public final class ProductScreenPresenter {
                     draw,
                     hitRegions);
         } else {
-            presentScreen(snapshot.screen(), focusedAction, context, draw, hitRegions);
+            presentScreen(
+                    snapshot.screen(),
+                    focusedAction,
+                    focusedControl,
+                    context,
+                    draw,
+                    hitRegions);
         }
         return new ProductUiLayout(draw.seal(), hitRegions, context);
     }
@@ -94,11 +142,16 @@ public final class ProductScreenPresenter {
     private void presentScreen(
             ScreenId screen,
             Optional<UiActionId> focusedAction,
+            Optional<UiControlId> focusedControl,
             UiLayoutContext context,
             UiDrawList draw,
             List<UiHitRegion> hitRegions) {
         switch (screen) {
             case MAIN_MENU -> presentMainMenu(focusedAction, context, draw, hitRegions);
+            case NEW_WORLD_SETUP -> presentNewWorld(
+                    newWorldDraft.snapshot(), focusedAction, context, draw, hitRegions);
+            case WORLD_SLOTS -> presentWorldSlots(
+                    worldSlots.snapshot(), focusedControl, context, draw, hitRegions);
             case PAUSED -> presentPause(focusedAction, context, draw, hitRegions);
             case CONTROLS -> presentControls(focusedAction, context, draw, hitRegions);
             case SETTINGS -> presentSettings(
@@ -108,10 +161,191 @@ public final class ProductScreenPresenter {
                     draw,
                     hitRegions);
             case LOADING -> presentLoading(focusedAction, context, draw, hitRegions);
+            case SAVING -> {
+                // Static no-input frame; Task 5 supplies its final presentation timing.
+            }
             case PLAYING -> {
                 // Gameplay and its HUD are composed by the session rather than the product shell.
             }
         }
+    }
+
+    private void presentNewWorld(
+            NewWorldDraftSnapshot draft,
+            Optional<UiActionId> focusedAction,
+            UiLayoutContext context,
+            UiDrawList draw,
+            List<UiHitRegion> hitRegions) {
+        appendTitle("NEW WORLD", context, draw);
+        double left = context.logicalWidth() / 2.0d - BUTTON_WIDTH / 2.0d;
+        appendField(
+                UiActionId.NEW_WORLD_NAME,
+                "NAME  " + draft.name(),
+                new UiRect(left, 220.0d, left + BUTTON_WIDTH, 262.0d),
+                draft.focusedField() == NewWorldDraftSnapshot.Field.NAME,
+                context,
+                draw,
+                hitRegions);
+        appendField(
+                UiActionId.NEW_WORLD_SEED,
+                "SEED  " + draft.seedText(),
+                new UiRect(left, 278.0d, left + BUTTON_WIDTH, 320.0d),
+                draft.focusedField() == NewWorldDraftSnapshot.Field.SEED,
+                context,
+                draw,
+                hitRegions);
+        draft.diagnostic().ifPresent(value -> appendCenteredText(
+                switch (value) {
+                    case INVALID_NAME -> "WORLD NAME IS INVALID";
+                    case DUPLICATE_NAME -> "WORLD NAME ALREADY EXISTS";
+                    case INVALID_SEED -> "SEED MUST BE A SIGNED 64-BIT INTEGER";
+                },
+                350.0d,
+                DISABLED_TEXT,
+                context,
+                draw));
+        appendButtons(
+                List.of(
+                        new Button(UiActionId.CREATE_WORLD, "CREATE", true),
+                        new Button(UiActionId.BACK, "BACK", true)),
+                390.0d,
+                focusedAction,
+                context,
+                draw,
+                hitRegions);
+    }
+
+    private void presentWorldSlots(
+            WorldSlotsSnapshot slots,
+            Optional<UiControlId> focusedControl,
+            UiLayoutContext context,
+            UiDrawList draw,
+            List<UiHitRegion> hitRegions) {
+        appendTitle("WORLD SLOTS", context, draw);
+        if (slots.rows().isEmpty()) {
+            appendCenteredText("NO SAVED WORLDS", 300.0d, DISABLED_TEXT, context, draw);
+        }
+        double rowTop = 190.0d;
+        for (SaveSummary row : slots.rows()) {
+            appendCenteredText(
+                    row.name()
+                            + "  "
+                            + row.health().name()
+                            + row.worldSeed().map(seed -> "  SEED " + seed).orElse(""),
+                    rowTop,
+                    TEXT,
+                    context,
+                    draw);
+            Optional<ScreenCommand> primary = worldSlots.primaryCommand(row.id());
+            if (primary.isPresent()) {
+                WorldSlotControlId.WorldSlotAction action =
+                        primary.orElseThrow() instanceof ScreenCommand.LoadWorld
+                                ? WorldSlotControlId.WorldSlotAction.LOAD
+                                : WorldSlotControlId.WorldSlotAction.RECOVER;
+                appendDynamicButton(
+                        new WorldSlotControlId(row.id(), action),
+                        primary.orElseThrow(),
+                        action == WorldSlotControlId.WorldSlotAction.LOAD ? "LOAD" : "RECOVER",
+                        new UiRect(
+                                context.logicalWidth() / 2.0d - 150.0d,
+                                rowTop + 12.0d,
+                                context.logicalWidth() / 2.0d - 6.0d,
+                                rowTop + 50.0d),
+                        true,
+                        focusedControl.filter(id -> id.equals(new WorldSlotControlId(
+                                row.id(), action))).isPresent(),
+                        context,
+                        draw,
+                        hitRegions);
+            }
+            appendDynamicButton(
+                    new WorldSlotControlId(
+                            row.id(), WorldSlotControlId.WorldSlotAction.DELETE),
+                    worldSlots.deleteCommand(row.id()),
+                    "DELETE",
+                    new UiRect(
+                            context.logicalWidth() / 2.0d + 6.0d,
+                            rowTop + 12.0d,
+                            context.logicalWidth() / 2.0d + 150.0d,
+                            rowTop + 50.0d),
+                    true,
+                    focusedControl.filter(id -> id.equals(new WorldSlotControlId(
+                            row.id(), WorldSlotControlId.WorldSlotAction.DELETE))).isPresent(),
+                    context,
+                    draw,
+                    hitRegions);
+            rowTop += 92.0d;
+        }
+        if (slots.pageCount() > 1) {
+            appendButtons(
+                    List.of(
+                            new Button(
+                                    UiActionId.WORLD_SLOTS_PREVIOUS,
+                                    "PREVIOUS",
+                                    slots.hasPreviousPage()),
+                            new Button(
+                                    UiActionId.WORLD_SLOTS_NEXT,
+                                    "NEXT",
+                                    slots.hasNextPage())),
+                    context.logicalHeight() - 196.0d,
+                    Optional.empty(),
+                    context,
+                    draw,
+                    hitRegions);
+        }
+        appendButtons(
+                List.of(new Button(UiActionId.BACK, "BACK", true)),
+                context.logicalHeight() - 92.0d,
+                Optional.empty(),
+                context,
+                draw,
+                hitRegions);
+    }
+
+    private void appendField(
+            UiActionId id,
+            String label,
+            UiRect bounds,
+            boolean selected,
+            UiLayoutContext context,
+            UiDrawList draw,
+            List<UiHitRegion> hitRegions) {
+        appendSolid(bounds, selected ? SELECTED_BUTTON : BUTTON, context, draw);
+        appendButtonText(label, bounds, TEXT, context, draw);
+        hitRegions.add(new UiHitRegion(
+                id,
+                ScreenCommand.none(),
+                bounds,
+                context.safeArea(),
+                true,
+                context.contentScaleX(),
+                context.contentScaleY()));
+    }
+
+    private void appendDynamicButton(
+            WorldSlotControlId id,
+            ScreenCommand command,
+            String label,
+            UiRect bounds,
+            boolean enabled,
+            boolean selected,
+            UiLayoutContext context,
+            UiDrawList draw,
+            List<UiHitRegion> hitRegions) {
+        appendSolid(
+                bounds,
+                enabled ? (selected ? SELECTED_BUTTON : BUTTON) : DISABLED_BUTTON,
+                context,
+                draw);
+        appendButtonText(label, bounds, enabled ? TEXT : DISABLED_TEXT, context, draw);
+        hitRegions.add(new UiHitRegion(
+                id,
+                command,
+                bounds,
+                context.safeArea(),
+                enabled,
+                context.contentScaleX(),
+                context.contentScaleY()));
     }
 
     private void presentMainMenu(
@@ -119,15 +353,14 @@ public final class ProductScreenPresenter {
             UiLayoutContext context,
             UiDrawList draw,
             List<UiHitRegion> hitRegions) {
-        List.copyOf(Objects.requireNonNull(saves.summaries(), "save summaries"));
         appendTitle("GAIA LEGACY", context, draw);
         appendButtons(
                 List.of(
                         new Button(UiActionId.NEW_WORLD, "NEW WORLD", true),
                         new Button(
                                 UiActionId.LOAD_WORLD,
-                                "LOAD WORLD - AVAILABLE IN PHASE 14",
-                                false),
+                                worldSlots.hasRows() ? "WORLD SLOTS" : "LOAD WORLD",
+                                worldSlots.hasRows()),
                         new Button(UiActionId.SETTINGS, "SETTINGS", true),
                         new Button(UiActionId.CONTROLS, "CONTROLS", true),
                         new Button(UiActionId.QUIT, "QUIT", true)),
@@ -147,10 +380,12 @@ public final class ProductScreenPresenter {
         appendButtons(
                 List.of(
                         new Button(UiActionId.RESUME, "RESUME", true),
+                        new Button(UiActionId.SAVE, "SAVE", true),
+                        new Button(UiActionId.SAVE_AND_QUIT, "SAVE & QUIT", true),
                         new Button(UiActionId.SETTINGS, "SETTINGS", true),
                         new Button(UiActionId.CONTROLS, "CONTROLS", true),
                         new Button(UiActionId.RETURN_TO_MAIN_MENU, "RETURN TO MAIN MENU", true)),
-                250.0d,
+                178.0d,
                 focusedAction,
                 context,
                 draw,
@@ -546,6 +781,8 @@ public final class ProductScreenPresenter {
             case UNSAVED_PROGRESS_CONFIRMATION -> "DISCARD UNSAVED PROGRESS?";
             case DIRTY_SETTINGS_CONFIRMATION -> throw new IllegalStateException(
                     "Dirty settings use their typed modal");
+            case DELETE_WORLD_CONFIRMATION -> "DELETE THIS WORLD?";
+            case RECOVER_BACKUP_CONFIRMATION -> "RECOVER THIS BACKUP?";
             case ERROR_ACKNOWLEDGEMENT -> "AN ERROR OCCURRED";
         };
         appendCenteredText(message, centerY - 42.0d, TEXT, context, draw);

@@ -297,6 +297,103 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
         }
     }
 
+    /** Rebuilds the physical projection of freshly restored logical state. */
+    public void reconcileRestoredCanonicalState(long tick) {
+        assertMainThread("physical world-item restore reconciliation");
+        ensureOpen();
+        if (tick < 0) {
+            throw new IllegalArgumentException("tick must be non-negative");
+        }
+        if (prepared) {
+            throw new IllegalStateException(
+                    "cannot reconcile restored projections during a prepared step");
+        }
+
+        List<WorldItemPhysicalSnapshot> snapshots = orderedSnapshots();
+        snapshots = List.copyOf(indexSnapshots(snapshots).values());
+        List<WorldItemPhysicalSnapshot> candidates = snapshots.stream()
+                .filter(snapshot -> chunks == null
+                        || collisionDataAvailable(snapshot, false))
+                .toList();
+        int admittedCount = Math.min(config.maxProjections(), candidates.size());
+        List<WorldItemPhysicalSnapshot> admitted =
+                candidates.subList(0, admittedCount);
+        Map<WorldItemId, WorldItemPhysicalSnapshot> desired =
+                indexSnapshots(admitted);
+        List<WorldItemId> skipped = candidates.subList(
+                        admittedCount, candidates.size()).stream()
+                .map(WorldItemPhysicalSnapshot::id)
+                .toList();
+
+        List<Projection> replacements = new ArrayList<>();
+        long nextCreated = created;
+        for (WorldItemPhysicalSnapshot snapshot : admitted) {
+            Projection existing = projections.get(snapshot.id());
+            if (existing == null
+                    || !existing.runtime.equals(snapshot)
+                    || !physicsWorld.containsBody(existing.body)) {
+                nextCreated = Math.addExact(nextCreated, 1L);
+            }
+        }
+        long nextCapacitySkipped = Math.addExact(capacitySkipped, skipped.size());
+
+        try {
+            for (WorldItemPhysicalSnapshot snapshot : admitted) {
+                Projection existing = projections.get(snapshot.id());
+                if (existing != null
+                        && existing.runtime.equals(snapshot)
+                        && physicsWorld.containsBody(existing.body)) {
+                    continue;
+                }
+
+                PhysicsBody body = Objects.requireNonNull(
+                        projectionFactory.create(snapshot),
+                        "projection factory result");
+                Projection replacement = new Projection(snapshot, body);
+                if (!recoverRestoredProjection(replacement)) {
+                    throw new IllegalStateException(
+                            "restored projection overlap recovery failed for "
+                                    + snapshot.id());
+                }
+                if (!physicsWorld.addBody(body)) {
+                    throw new IllegalStateException(
+                            "restored projection body was already registered for "
+                                    + snapshot.id());
+                }
+                replacements.add(replacement);
+            }
+
+            Set<WorldItemId> replacementIds = replacements.stream()
+                    .map(projection -> projection.id)
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            for (WorldItemId id : new ArrayList<>(projections.keySet())) {
+                if (!desired.containsKey(id) || replacementIds.contains(id)) {
+                    removeProjection(id);
+                }
+            }
+            for (Projection replacement : replacements) {
+                Projection previous = projections.putIfAbsent(
+                        replacement.id, replacement);
+                if (previous != null) {
+                    throw new IllegalStateException(
+                            "restored projection already exists for "
+                                    + replacement.id);
+                }
+            }
+
+            created = nextCreated;
+            capacitySkippedIds = List.copyOf(skipped);
+            capacitySkipped = nextCapacitySkipped;
+        } catch (RuntimeException | Error failure) {
+            for (int index = replacements.size() - 1; index >= 0; index--) {
+                Projection replacement = replacements.get(index);
+                projections.remove(replacement.id, replacement);
+                physicsWorld.removeBody(replacement.body);
+            }
+            throw failure;
+        }
+    }
+
     /** Runs one complete deterministic world-item fixed step at 1/60 second. */
     public void step(long tick) {
         assertMainThread("physical world-item step");
@@ -531,6 +628,27 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
         return false;
     }
 
+    private boolean recoverRestoredProjection(Projection projection) {
+        if (!recoverPosition(projection)) {
+            return false;
+        }
+        Vector3f position = projection.body.position(new Vector3f());
+        Aabb bounds = projection.body.collider().translated(position);
+        if (!collisionBoundsRepresentable(bounds)
+                || (chunks != null
+                        && !collisionDataAvailable(projection.body, false))
+                || physicsWorld.collisionWorld().overlapsSolid(bounds)) {
+            return false;
+        }
+        projection.previousX = position.x;
+        projection.previousY = position.y;
+        projection.previousZ = position.z;
+        projection.currentX = position.x;
+        projection.currentY = position.y;
+        projection.currentZ = position.z;
+        return true;
+    }
+
     private boolean recoverPosition(Projection projection) {
         Vector3f position = projection.body.position(new Vector3f());
         float half = config.edgeLength() * 0.5f;
@@ -553,10 +671,12 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
                     config.depenetrationIterations());
             if (recovered.isPresent()) {
                 Vector3f candidate = recovered.orElseThrow();
+                Aabb candidateBounds =
+                        projection.body.collider().translated(candidate);
                 if (candidate.y >= half
                         && candidate.y <= topCenter
-                        && collisionBoundsRepresentable(
-                                projection.body.collider().translated(candidate))) {
+                        && collisionBoundsRepresentable(candidateBounds)
+                        && !collisions.overlapsSolid(candidateBounds)) {
                     projection.body.setPosition(candidate);
                     return true;
                 }

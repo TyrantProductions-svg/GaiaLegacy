@@ -2,11 +2,17 @@
 
 ## Snapshot
 
-The current snapshot is Phase 13 product-shell, settings, and audio integration
-on `feat/product-shell-audio`, based on
-`origin/main@80ea67bf9a41e467dbd17ba81876ab870c41407d`. The exact implementation
-candidate is `a16855c19082a09f21bd53389cd24f711bd13f0e`. Gates 13A-13D pass and
-cross-platform acceptance is complete for human-created PR review.
+The current snapshot is Phase 14 Save/Load v1 and World Slots integration on
+`feat/save-load-v1`, based on
+`origin/main@076f9f490fa97db3ecfc0b7e44ac666c5a61df28`. The branch currently has
+uncommitted Phase 14 work, so no implementation candidate SHA is claimed yet.
+Gates 14A-14E pass and Phase 14 cross-platform acceptance is complete. Windows
+automation, development runtime, and the installed create/load, Save & Quit,
+relaunch, restored-state, and normal-exit cycle pass; exact installDist
+duration/raw logs were not supplied. The requested Apple Silicon macOS Gate
+14E test is HUMAN-REPORTED PASS; exact environment metadata, automated totals,
+raw logs, durations, and macOS performance measurements were not supplied and
+are not claimed.
 
 The protected product graph is `GameBootstrap -> ProductLoop -> optional
 GameSession`. `ProductLoop` is the sole outer owner-thread loop; each New World
@@ -55,8 +61,8 @@ item performs no automatic pickup or attraction. Committed placement, break,
 drop, and pickup receipts drive render-only held-item animation, a copied-view
 camera spring, bounded transient block proxies, and deterministic mixed debris
 and astral particles; these presentation systems never decide gameplay state.
-Phase 12 halves the committed break camera impulse to `0.275` degree pitch and
-deterministic `+/-0.07` degree yaw. Each rapid break restarts this reduced
+Phase 14D acceptance reduces the committed break camera impulse to `0.055`
+degree pitch and deterministic `+/-0.014` degree yaw. Each rapid break restarts this reduced
 0.20-second envelope instead of accumulating unfinished impulses toward the
 `+/-1.0` degree clamp. The held-item break swing remains independent.
 

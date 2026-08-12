@@ -42,6 +42,10 @@ public final class ChunkSnapshot {
         return worldHeight;
     }
 
+    public byte[] copyBlocks() {
+        return Arrays.copyOf(blocks, blocks.length);
+    }
+
     public byte getBlock(int localX, int y, int localZ) {
         if (localX < 0
                 || localX >= GameConfig.Chunk.SIZE
@@ -56,6 +60,26 @@ public final class ChunkSnapshot {
                         + y * GameConfig.Chunk.SIZE
                         + localZ * GameConfig.Chunk.SIZE * worldHeight;
         return blocks[index];
+    }
+
+    @Override
+    public boolean equals(Object object) {
+        if (this == object) {
+            return true;
+        }
+        if (!(object instanceof ChunkSnapshot other)) {
+            return false;
+        }
+        return revision == other.revision
+                && worldHeight == other.worldHeight
+                && key.equals(other.key)
+                && Arrays.equals(blocks, other.blocks);
+    }
+
+    @Override
+    public int hashCode() {
+        int result = Objects.hash(key, revision, worldHeight);
+        return 31 * result + Arrays.hashCode(blocks);
     }
 
     public static ChunkSnapshot of(

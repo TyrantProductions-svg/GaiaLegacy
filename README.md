@@ -7,9 +7,9 @@
 GaiaLegacy is an experimental physical voxel survival project focused on
 embodied choices, deterministic exploration, and systems with explicit
 technical ownership. Milestone 1 is a pre-alpha vertical slice rather than a
-finished game. The current Phase 13 working branch adds a product shell,
-persistent user settings, and the first cross-platform audio foundation around
-that vertical slice.
+finished game. The current Phase 14 working branch adds versioned local
+Save/Load v1 and world slots around the Phase 13 product shell, settings, and
+audio foundation.
 
 ## Milestone 1 vertical slice
 
@@ -28,10 +28,25 @@ The current release-candidate branch integrates:
   impulses, and a depth-correct held-block viewmodel;
 - OpenGL 4.1 / GLSL 410 rendering with VSync enabled by default.
 
-World/save persistence, crafting, mobs, and the broader survival economy are
-not implemented. The application now launches to a Main Menu with New World,
-disabled `Load World - Available in Phase 14`, Settings, Controls, and Quit.
-Gameplay has an explicit Pause Menu and return-to-menu confirmation.
+Cloud saves, crafting, mobs, and the broader survival economy are not
+implemented. The application launches to a Main Menu with New World, World
+Slots when saves exist, Settings, Controls, and Quit. Gameplay has Pause Save,
+Save & Quit, and dirty return-to-menu confirmation.
+
+## Save/Load v1
+
+- New World accepts a Unicode name and signed 64-bit seed, then commits an
+  initial atomic save before publishing the playable session.
+- World Slots shows four saves per page with stable-ID Load, explicit backup
+  recovery, and confirmed delete actions.
+- The versioned archive preserves finite-world Chunk bytes/revisions, player
+  transform/mode, three-slot inventory, and stable-ID WorldItems.
+- Pause Save writes and checkpoints before resuming; Save & Quit closes only
+  after a successful write/checkpoint.
+- Save roots are `%APPDATA%/GaiaLegacy/saves` on Windows and
+  `~/Library/Application Support/GaiaLegacy/saves` on macOS.
+- v1 has no timed autosave, background writer, cloud sync, infinite streaming,
+  or fabricated Loading/Saving percentage.
 
 ## Product shell and audio
 
@@ -173,6 +188,7 @@ See [CONTROLS.md](CONTROLS.md) for mode rules and developer-only inputs.
 | HUD / debug HUD | `F2` / `F3` |
 | Survival / Creative | `F4` |
 | Pause/resume / route back | `F1` / `Escape` |
+| Pause Save / Save & Quit | Pause Menu buttons |
 
 ## Platform acceptance
 
@@ -203,6 +219,20 @@ version, JUnit totals, raw logs, runtime durations, and audio-device details
 were not supplied and are not claimed. See the
 [Phase 13 acceptance matrix](docs/testing/phase-13-product-shell-audio-acceptance.md).
 
+Phase 14 Windows automation and development runtime are PASS on
+`feat/save-load-v1`. The fresh clean build executed 30/30 tasks with 2,664
+tests: 2,663 passed, one pre-existing tools skip, and zero failures/errors.
+The human development smoke passed New World `Test`, save/load player position
+and item state, slot deletion, clean exit, and the reduced mining-camera
+impulse. The requested Apple Silicon macOS Gate 14E test is HUMAN-REPORTED
+PASS. Exact Mac model, macOS version, Java version, automated totals, raw logs,
+runtime durations, and macOS performance measurements were not supplied and
+are not claimed. The Windows installDist create/load, Save & Quit, relaunch,
+restored-state verification, and normal-exit cycle is also HUMAN-REPORTED PASS;
+its exact duration and raw runtime log were not supplied. Phase 14
+cross-platform acceptance is complete. See the
+[Phase 14 acceptance matrix](docs/testing/phase-14-save-load-acceptance.md).
+
 ## Architecture map
 
 - `engine/`: reusable window/context, rendering, input, audio/OpenAL, physics,
@@ -221,9 +251,10 @@ through the established revisioned boundaries. See
 
 ## Known issues and deferred work
 
-See [KNOWN_ISSUES.md](KNOWN_ISSUES.md). Phase 14 owns real save discovery and
-world persistence. Crafting, mobs, expanded content, key rebinding, and broader
-accessibility remain later Milestone 2 work. Gaia and Legacy are authored
+See [KNOWN_ISSUES.md](KNOWN_ISSUES.md). Phase 15 owns infinite-world streaming
+extensions on the existing ChunkKey-addressed save authority. Crafting, mobs,
+expanded content, key rebinding, and broader accessibility remain later
+Milestone 2 work. Gaia and Legacy are authored
 source assets with verified runtime OGG derivatives; source MP3s are excluded
 from runtime packaging.
 

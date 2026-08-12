@@ -39,10 +39,14 @@ import java.util.function.Consumer;
  * source supplied at construction time.
  */
 public final class BodyInventoryService implements InventoryService, InventoryReservationAudit {
-    private final BodyInventory inventory;
+    private static final RestorePublicationProbe NOOP_RESTORE_PUBLICATION_PROBE =
+            (detached, success) -> { };
+
+    private BodyInventory inventory;
     private final ItemFormLookup itemForms;
     private final MainThreadGuard mainThreadGuard;
     private final Consumer<Event> eventSink;
+    private final RestorePublicationProbe restorePublicationProbe;
     private final Map<InventoryReservationId, ReservationState> reservations =
             new HashMap<>();
     private final EnumMap<BodySlot, InventoryReservationId> locks =
@@ -72,10 +76,22 @@ public final class BodyInventoryService implements InventoryService, InventoryRe
             ItemFormLookup itemForms,
             MainThreadGuard mainThreadGuard,
             Consumer<Event> eventSink) {
+        this(owner, itemForms, mainThreadGuard, eventSink,
+                NOOP_RESTORE_PUBLICATION_PROBE);
+    }
+
+    BodyInventoryService(
+            EntityRef owner,
+            ItemFormLookup itemForms,
+            MainThreadGuard mainThreadGuard,
+            Consumer<Event> eventSink,
+            RestorePublicationProbe restorePublicationProbe) {
         inventory = new BodyInventory(Objects.requireNonNull(owner, "owner"));
         this.itemForms = Objects.requireNonNull(itemForms, "itemForms");
         this.mainThreadGuard = Objects.requireNonNull(mainThreadGuard, "mainThreadGuard");
         this.eventSink = Objects.requireNonNull(eventSink, "eventSink");
+        this.restorePublicationProbe = Objects.requireNonNull(
+                restorePublicationProbe, "restorePublicationProbe");
     }
 
     @Override
@@ -95,6 +111,62 @@ public final class BodyInventoryService implements InventoryService, InventoryRe
             return Optional.empty();
         }
         return Optional.of(inventory.viewModel());
+    }
+
+    public BodyInventoryCanonicalSnapshot canonicalSnapshot(EntityRef owner) {
+        assertMainThread("body inventory canonical snapshot");
+        Objects.requireNonNull(owner, "owner");
+        if (!owns(owner)) {
+            throw new IllegalArgumentException(
+                    "body inventory canonical snapshot owner does not match service owner");
+        }
+        if (hasPendingReservations()) {
+            throw new IllegalStateException(
+                    "body inventory canonical snapshot cannot include a pending inventory reservation");
+        }
+
+        EnumMap<BodySlot, ItemStack> directStacks = new EnumMap<>(BodySlot.class);
+        for (BodySlot slot : BodySlot.values()) {
+            ItemStack stack = inventory.directStack(slot);
+            if (stack != null) {
+                directStacks.put(slot, stack);
+            }
+        }
+        return new BodyInventoryCanonicalSnapshot(
+                inventory.owner(),
+                directStacks,
+                inventory.activeSlot(),
+                inventory.hasTwoHandedHandsOccupied(),
+                inventory.revision());
+    }
+
+    public BodyInventoryRestoreResult restoreCanonical(
+            EntityRef owner, BodyInventoryCanonicalSnapshot snapshot) {
+        assertMainThread("body inventory canonical restore");
+        Objects.requireNonNull(owner, "owner");
+        Objects.requireNonNull(snapshot, "snapshot");
+
+        ValidatedInventory validated = validateRestore(owner, snapshot);
+        if (validated == null) {
+            return new BodyInventoryRestoreResult(
+                    BodyInventoryRestoreResult.Status.INVALID_SNAPSHOT);
+        }
+        if (!isFreshTarget()) {
+            return new BodyInventoryRestoreResult(
+                    BodyInventoryRestoreResult.Status.TARGET_NOT_FRESH);
+        }
+
+        BodyInventory detached = BodyInventory.restored(
+                inventory.owner(),
+                validated.stacks,
+                validated.activeSlot,
+                validated.twoHandedHandsOccupied,
+                validated.revision);
+        BodyInventoryRestoreResult success = new BodyInventoryRestoreResult(
+                BodyInventoryRestoreResult.Status.RESTORED);
+        restorePublicationProbe.beforePublication(detached, success);
+        inventory = detached;
+        return success;
     }
 
     public int totalCount(EntityRef owner, com.overlord.assets.ResourceLocation itemId) {
@@ -687,6 +759,85 @@ public final class BodyInventoryService implements InventoryService, InventoryRe
         return Objects.requireNonNull(form, "item form lookup result");
     }
 
+    private ValidatedInventory validateRestore(
+            EntityRef requestedOwner, BodyInventoryCanonicalSnapshot snapshot) {
+        if (!owns(requestedOwner)
+                || !snapshot.owner().equals(requestedOwner)
+                || snapshot.revision() < 0) {
+            return null;
+        }
+
+        EnumMap<BodySlot, ItemStack> stacks = new EnumMap<>(BodySlot.class);
+        EnumMap<BodySlot, ItemFormDefinition> forms = new EnumMap<>(BodySlot.class);
+        for (Map.Entry<BodySlot, ItemStack> entry : snapshot.stacks().entrySet()) {
+            BodySlot slot = entry.getKey();
+            ItemStack stack = entry.getValue();
+            ItemFormDefinition form = itemForm(stack).orElse(null);
+            if (form == null
+                    || !form.id().equals(stack.itemId())
+                    || stack.count() > form.maxStackSize()
+                    || (slot == BodySlot.MOUTH
+                            && (form.twoHanded() || !form.mouthHoldable()))) {
+                return null;
+            }
+            stacks.put(slot, stack);
+            forms.put(slot, form);
+        }
+
+        ItemStack left = stacks.get(BodySlot.LEFT_HAND);
+        ItemStack right = stacks.get(BodySlot.RIGHT_HAND);
+        if (snapshot.twoHandedHandsOccupied()) {
+            ItemFormDefinition leftForm = forms.get(BodySlot.LEFT_HAND);
+            if (left == null || right != null || leftForm == null || !leftForm.twoHanded()) {
+                return null;
+            }
+        } else {
+            ItemFormDefinition leftForm = forms.get(BodySlot.LEFT_HAND);
+            ItemFormDefinition rightForm = forms.get(BodySlot.RIGHT_HAND);
+            if ((leftForm != null && leftForm.twoHanded())
+                    || (rightForm != null && rightForm.twoHanded())) {
+                return null;
+            }
+        }
+
+        return new ValidatedInventory(
+                stacks,
+                snapshot.activeSlot(),
+                snapshot.twoHandedHandsOccupied(),
+                snapshot.revision());
+    }
+
+    private boolean isFreshTarget() {
+        if (inventory.revision() != 0
+                || inventory.activeSlot() != BodySlot.LEFT_HAND
+                || inventory.hasTwoHandedHandsOccupied()
+                || !inventory.restoreEligible()
+                || !reservations.isEmpty()
+                || !locks.isEmpty()
+                || nextReservationId != 0
+                || reservationIdsExhausted) {
+            return false;
+        }
+        for (BodySlot slot : BodySlot.values()) {
+            if (inventory.directStack(slot) != null) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean hasPendingReservations() {
+        if (!locks.isEmpty()) {
+            return true;
+        }
+        for (ReservationState state : reservations.values()) {
+            if (state.terminal == null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean owns(EntityRef owner) {
         return inventory.owner().equals(owner);
     }
@@ -810,5 +961,18 @@ public final class BodyInventoryService implements InventoryService, InventoryRe
     private enum Terminal {
         COMMITTED,
         ROLLED_BACK
+    }
+
+    private record ValidatedInventory(
+            Map<BodySlot, ItemStack> stacks,
+            BodySlot activeSlot,
+            boolean twoHandedHandsOccupied,
+            long revision) {
+    }
+
+    @FunctionalInterface
+    interface RestorePublicationProbe {
+        void beforePublication(
+                BodyInventory detached, BodyInventoryRestoreResult success);
     }
 }

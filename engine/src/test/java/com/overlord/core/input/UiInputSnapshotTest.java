@@ -20,21 +20,26 @@ class UiInputSnapshotTest {
         Set<Integer> downButtons = new HashSet<>(Set.of(GLFW_MOUSE_BUTTON_LEFT));
         Set<Integer> pressedButtons = new HashSet<>(Set.of(GLFW_MOUSE_BUTTON_LEFT));
         List<Integer> scroll = new java.util.ArrayList<>(List.of(-2));
+        List<Integer> typedCodePoints = new java.util.ArrayList<>(
+                List.of((int) 'G', 0x4E16));
 
         UiInputSnapshot snapshot = new UiInputSnapshot(
                 downKeys, pressedKeys, downButtons, pressedButtons, scroll,
+                typedCodePoints,
                 320.0, 180.0, true, 7L);
         downKeys.clear();
         pressedKeys.clear();
         downButtons.clear();
         pressedButtons.clear();
         scroll.clear();
+        typedCodePoints.clear();
 
         assertTrue(snapshot.isKeyDown(GLFW_KEY_ENTER));
         assertTrue(snapshot.isKeyPressed(GLFW_KEY_ENTER));
         assertTrue(snapshot.isMouseDown(GLFW_MOUSE_BUTTON_LEFT));
         assertTrue(snapshot.isMousePressed(GLFW_MOUSE_BUTTON_LEFT));
         assertEquals(List.of(-2), snapshot.scrollDeltas());
+        assertEquals(List.of((int) 'G', 0x4E16), snapshot.typedCodePoints());
         assertEquals(320.0, snapshot.pointerX());
         assertEquals(180.0, snapshot.pointerY());
         assertTrue(snapshot.focused());
@@ -44,21 +49,35 @@ class UiInputSnapshotTest {
                 () -> snapshot.downKeys().clear());
         assertThrows(UnsupportedOperationException.class,
                 () -> snapshot.scrollDeltas().clear());
+        assertThrows(UnsupportedOperationException.class,
+                () -> snapshot.typedCodePoints().clear());
     }
 
     @Test
     void snapshotRejectsNonFinitePointersAndNegativeSampleIds() {
         assertThrows(IllegalArgumentException.class,
                 () -> new UiInputSnapshot(
-                        Set.of(), Set.of(), Set.of(), Set.of(), List.of(),
+                        Set.of(), Set.of(), Set.of(), Set.of(), List.of(), List.of(),
                         Double.NaN, 0.0, true, 0L));
         assertThrows(IllegalArgumentException.class,
                 () -> new UiInputSnapshot(
-                        Set.of(), Set.of(), Set.of(), Set.of(), List.of(),
+                        Set.of(), Set.of(), Set.of(), Set.of(), List.of(), List.of(),
                         0.0, Double.POSITIVE_INFINITY, false, 0L));
         assertThrows(IllegalArgumentException.class,
                 () -> new UiInputSnapshot(
-                        Set.of(), Set.of(), Set.of(), Set.of(), List.of(),
+                        Set.of(), Set.of(), Set.of(), Set.of(), List.of(), List.of(),
                         0.0, 0.0, false, -1L));
+    }
+
+    @Test
+    void snapshotRejectsInvalidTypedCodePoints() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new UiInputSnapshot(
+                        Set.of(), Set.of(), Set.of(), Set.of(), List.of(),
+                        List.of(0xD800), 0.0, 0.0, true, 0L));
+        assertThrows(IllegalArgumentException.class,
+                () -> new UiInputSnapshot(
+                        Set.of(), Set.of(), Set.of(), Set.of(), List.of(),
+                        List.of(0x110000), 0.0, 0.0, true, 0L));
     }
 }

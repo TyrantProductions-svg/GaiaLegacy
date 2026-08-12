@@ -1,10 +1,15 @@
 package com.gaia.shell.ui;
 
 import com.gaia.shell.ScreenCommand;
+import com.gaia.save.format.SaveGameId;
+import com.gaia.shell.world.NewWorldDraftController;
+import com.gaia.shell.world.NewWorldDraftSnapshot;
+import com.gaia.shell.world.WorldSlotsController;
 import com.overlord.core.input.UiInputSnapshot;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /** Routes immutable UI samples while retaining only product-screen focus state. */
 public final class ProductScreenInputController {
@@ -12,12 +17,13 @@ public final class ProductScreenInputController {
     private static final int KEY_ESCAPE = 256;
     private static final int KEY_ENTER = 257;
     private static final int KEY_TAB = 258;
+    private static final int KEY_BACKSPACE = 259;
     private static final int KEY_DOWN = 264;
     private static final int KEY_UP = 265;
     private static final int MOUSE_BUTTON_LEFT = 0;
 
-    private UiActionId focusedAction;
-    private UiActionId presentationHighlight;
+    private UiControlId focusedControl;
+    private UiControlId presentationHighlight;
     private InputModality modality = InputModality.POINTER;
     private double lastPointerX;
     private double lastPointerY;
@@ -49,7 +55,7 @@ public final class ProductScreenInputController {
                 .filter(UiHitRegion::enabled)
                 .toList();
         if (enabled.isEmpty()) {
-            focusedAction = null;
+            focusedControl = null;
             presentationHighlight = null;
             return Optional.empty();
         }
@@ -67,14 +73,14 @@ public final class ProductScreenInputController {
                         .findFirst()
                 : Optional.empty();
         if (modality == InputModality.POINTER) {
-            presentationHighlight = hovered.map(UiHitRegion::action).orElse(null);
-            hovered.ifPresent(region -> focusedAction = region.action());
+            presentationHighlight = hovered.map(UiHitRegion::id).orElse(null);
+            hovered.ifPresent(region -> focusedControl = region.id());
         } else {
-            presentationHighlight = focusedAction;
+            presentationHighlight = focusedControl;
         }
 
         if (hovered.isPresent() && input.isMousePressed(MOUSE_BUTTON_LEFT)) {
-            return commandFor(hovered.orElseThrow().action());
+            return activated(hovered.orElseThrow(), logicalPointerX, logicalPointerY);
         }
         if (input.isKeyPressed(KEY_ESCAPE)) {
             return escapeCommand(enabled);
@@ -88,36 +94,112 @@ public final class ProductScreenInputController {
         }
         if (input.isKeyPressed(KEY_ENTER) || input.isKeyPressed(KEY_SPACE)) {
             selectKeyboardFocus();
-            return commandFor(focusedAction);
+            return commandFor(enabled, focusedControl);
         }
         return Optional.empty();
     }
 
     /** Immutable presentation value captured after routing the current UI sample. */
     public Optional<UiActionId> presentationHighlight() {
+        return presentationHighlight instanceof UiActionId action
+                ? Optional.of(action)
+                : Optional.empty();
+    }
+
+    /** Routes one New World form sample and applies its text editing atomically. */
+    public Optional<ScreenCommand> routeNewWorld(
+            UiInputSnapshot input,
+            ProductUiLayout layout,
+            NewWorldDraftController draft,
+            Supplier<SaveGameId> ids) {
+        Objects.requireNonNull(draft, "draft");
+        Objects.requireNonNull(ids, "ids");
+        long previouslyProcessed = lastProcessedSampleId;
+        Optional<ScreenCommand> command = route(input, layout);
+        if (input.sampleId() <= previouslyProcessed || !input.focused()) {
+            return Optional.empty();
+        }
+        if (focusedControl == UiActionId.NEW_WORLD_NAME) {
+            draft.selectField(NewWorldDraftSnapshot.Field.NAME);
+        } else if (focusedControl == UiActionId.NEW_WORLD_SEED) {
+            draft.selectField(NewWorldDraftSnapshot.Field.SEED);
+        }
+        if (input.isKeyPressed(KEY_ESCAPE)
+                || command.orElse(null) instanceof ScreenCommand.Back) {
+            draft.reset();
+            return Optional.of(new ScreenCommand.Back());
+        }
+        if (input.isKeyPressed(KEY_BACKSPACE)) {
+            draft.backspace();
+        }
+        if (!input.typedCodePoints().isEmpty()) {
+            draft.acceptCodePoints(input.typedCodePoints());
+        }
+        if (command.orElse(null) instanceof ScreenCommand.NewWorld
+                && focusedControl == UiActionId.CREATE_WORLD) {
+            return draft.createRequest(ids).map(ScreenCommand.CreateWorld::new);
+        }
+        return command;
+    }
+
+    /** Routes one World Slots sample while keeping paging and row identity authoritative. */
+    public Optional<ScreenCommand> routeWorldSlots(
+            UiInputSnapshot input,
+            ProductUiLayout layout,
+            WorldSlotsController slots) {
+        Objects.requireNonNull(slots, "slots");
+        long previouslyProcessed = lastProcessedSampleId;
+        Optional<ScreenCommand> command = route(input, layout);
+        if (input.sampleId() <= previouslyProcessed || !input.focused()) {
+            return Optional.empty();
+        }
+        if (command.orElse(null) instanceof ScreenCommand.PreviousWorldSlotsPage) {
+            slots.previousPage();
+            return Optional.empty();
+        }
+        if (command.orElse(null) instanceof ScreenCommand.NextWorldSlotsPage) {
+            slots.nextPage();
+            return Optional.empty();
+        }
+        if (focusedControl instanceof WorldSlotControlId worldSlot) {
+            slots.select(worldSlot.saveGameId());
+        }
+        return command;
+    }
+
+    public Optional<UiControlId> highlightedControl() {
         return Optional.ofNullable(presentationHighlight);
     }
 
     private void selectKeyboardFocus() {
         modality = InputModality.KEYBOARD;
-        presentationHighlight = focusedAction;
+        presentationHighlight = focusedControl;
     }
 
     private void reconcileFocus(List<UiHitRegion> enabled) {
-        if (enabled.stream().noneMatch(region -> region.action() == focusedAction)) {
-            focusedAction = enabled.get(0).action();
+        if (focusedControl == null) {
+            focusedControl = enabled.get(0).id();
+            return;
+        }
+        if (enabled.stream().noneMatch(region -> region.id().equals(focusedControl))) {
+            if (focusedControl instanceof WorldSlotControlId) {
+                focusedControl = null;
+                presentationHighlight = null;
+            } else {
+                focusedControl = enabled.get(0).id();
+            }
         }
     }
 
     private void moveFocus(List<UiHitRegion> enabled, int delta) {
         int current = 0;
         for (int index = 0; index < enabled.size(); index++) {
-            if (enabled.get(index).action() == focusedAction) {
+            if (enabled.get(index).id().equals(focusedControl)) {
                 current = index;
                 break;
             }
         }
-        focusedAction = enabled.get(Math.floorMod(current + delta, enabled.size())).action();
+        focusedControl = enabled.get(Math.floorMod(current + delta, enabled.size())).id();
     }
 
     private static Optional<ScreenCommand> escapeCommand(List<UiHitRegion> enabled) {
@@ -140,80 +222,31 @@ public final class ProductScreenInputController {
     }
 
     private static boolean hasAction(List<UiHitRegion> regions, UiActionId action) {
-        return regions.stream().anyMatch(region -> region.action() == action);
+        return regions.stream().anyMatch(region -> region.id() == action);
     }
 
-    private static Optional<ScreenCommand> commandFor(UiActionId action) {
-        return switch (action) {
-            case NEW_WORLD -> Optional.of(new ScreenCommand.NewWorld());
-            case SETTINGS -> Optional.of(new ScreenCommand.OpenSettings());
-            case CONTROLS -> Optional.of(new ScreenCommand.OpenControls());
-            case QUIT -> Optional.of(new ScreenCommand.Quit());
-            case RESUME -> Optional.of(new ScreenCommand.Resume());
-            case RETURN_TO_MAIN_MENU -> Optional.of(new ScreenCommand.ReturnToMainMenu());
-            case BACK -> Optional.of(new ScreenCommand.Back());
-            case CONFIRM -> Optional.of(new ScreenCommand.Confirm());
-            case DISMISS -> Optional.of(new ScreenCommand.Dismiss());
-            case LOAD_WORLD -> Optional.empty();
-            case VSYNC_TOGGLE -> Optional.of(new ScreenCommand.ToggleSetting(
-                    ScreenCommand.ToggleTarget.VSYNC));
-            case FOV_DECREMENT -> adjustment(
-                    ScreenCommand.AdjustmentTarget.FOV,
-                    ScreenCommand.AdjustmentDirection.DECREMENT);
-            case FOV_INCREMENT -> adjustment(
-                    ScreenCommand.AdjustmentTarget.FOV,
-                    ScreenCommand.AdjustmentDirection.INCREMENT);
-            case MOUSE_SENSITIVITY_DECREMENT -> adjustment(
-                    ScreenCommand.AdjustmentTarget.MOUSE_SENSITIVITY,
-                    ScreenCommand.AdjustmentDirection.DECREMENT);
-            case MOUSE_SENSITIVITY_INCREMENT -> adjustment(
-                    ScreenCommand.AdjustmentTarget.MOUSE_SENSITIVITY,
-                    ScreenCommand.AdjustmentDirection.INCREMENT);
-            case INVERT_Y_TOGGLE -> Optional.of(new ScreenCommand.ToggleSetting(
-                    ScreenCommand.ToggleTarget.INVERT_Y));
-            case CHUNK_RADIUS_DECREMENT -> adjustment(
-                    ScreenCommand.AdjustmentTarget.CHUNK_RADIUS,
-                    ScreenCommand.AdjustmentDirection.DECREMENT);
-            case CHUNK_RADIUS_INCREMENT -> adjustment(
-                    ScreenCommand.AdjustmentTarget.CHUNK_RADIUS,
-                    ScreenCommand.AdjustmentDirection.INCREMENT);
-            case MASTER_VOLUME_DECREMENT -> adjustment(
-                    ScreenCommand.AdjustmentTarget.MASTER_VOLUME,
-                    ScreenCommand.AdjustmentDirection.DECREMENT);
-            case MASTER_VOLUME_INCREMENT -> adjustment(
-                    ScreenCommand.AdjustmentTarget.MASTER_VOLUME,
-                    ScreenCommand.AdjustmentDirection.INCREMENT);
-            case MUSIC_VOLUME_DECREMENT -> adjustment(
-                    ScreenCommand.AdjustmentTarget.MUSIC_VOLUME,
-                    ScreenCommand.AdjustmentDirection.DECREMENT);
-            case MUSIC_VOLUME_INCREMENT -> adjustment(
-                    ScreenCommand.AdjustmentTarget.MUSIC_VOLUME,
-                    ScreenCommand.AdjustmentDirection.INCREMENT);
-            case SFX_VOLUME_DECREMENT -> adjustment(
-                    ScreenCommand.AdjustmentTarget.SFX_VOLUME,
-                    ScreenCommand.AdjustmentDirection.DECREMENT);
-            case SFX_VOLUME_INCREMENT -> adjustment(
-                    ScreenCommand.AdjustmentTarget.SFX_VOLUME,
-                    ScreenCommand.AdjustmentDirection.INCREMENT);
-            case MUTE_WHEN_UNFOCUSED_TOGGLE -> Optional.of(
-                    new ScreenCommand.ToggleSetting(
-                            ScreenCommand.ToggleTarget.MUTE_WHEN_UNFOCUSED));
-            case DEFAULT_GAME_MODE_TOGGLE -> Optional.of(
-                    new ScreenCommand.ToggleSetting(
-                            ScreenCommand.ToggleTarget.DEFAULT_GAME_MODE));
-            case DEBUG_HUD_DEFAULT_TOGGLE -> Optional.of(
-                    new ScreenCommand.ToggleSetting(
-                            ScreenCommand.ToggleTarget.DEBUG_HUD_DEFAULT));
-            case APPLY_SETTINGS -> Optional.of(new ScreenCommand.ApplySettings());
-            case DISCARD_SETTINGS -> Optional.of(new ScreenCommand.DiscardSettings());
-            case CANCEL_SETTINGS -> Optional.of(new ScreenCommand.CancelSettings());
-        };
+    private static Optional<ScreenCommand> activated(
+            UiHitRegion region,
+            double logicalX,
+            double logicalY) {
+        ScreenCommand command = region.activate(logicalX, logicalY);
+        return command instanceof ScreenCommand.None
+                ? Optional.empty()
+                : Optional.of(command);
     }
 
-    private static Optional<ScreenCommand> adjustment(
-            ScreenCommand.AdjustmentTarget target,
-            ScreenCommand.AdjustmentDirection direction) {
-        return Optional.of(new ScreenCommand.AdjustSetting(target, direction));
+    private static Optional<ScreenCommand> commandFor(
+            List<UiHitRegion> enabled,
+            UiControlId focusedControl) {
+        if (focusedControl == null) {
+            return Optional.empty();
+        }
+        return enabled.stream()
+                .filter(region -> region.id().equals(focusedControl))
+                .findFirst()
+                .flatMap(region -> region.command() instanceof ScreenCommand.None
+                        ? Optional.empty()
+                        : Optional.of(region.command()));
     }
 
     private enum InputModality {

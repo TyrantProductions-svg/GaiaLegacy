@@ -13,9 +13,14 @@ public final class LogicalWorldItemTestAccess {
     public static void forceRevision(
             LogicalWorldItemService service, WorldItemId itemId, long revision) {
         try {
-            Field itemsField = LogicalWorldItemService.class.getDeclaredField("items");
+            Field liveStateField =
+                    LogicalWorldItemService.class.getDeclaredField("liveState");
+            liveStateField.setAccessible(true);
+            Object liveState = liveStateField.get(service);
+
+            Field itemsField = liveState.getClass().getDeclaredField("items");
             itemsField.setAccessible(true);
-            Map<?, ?> items = (Map<?, ?>) itemsField.get(service);
+            Map<?, ?> items = (Map<?, ?>) itemsField.get(liveState);
             Object state = items.get(itemId);
             if (state == null) {
                 throw new AssertionError("missing logical world item " + itemId);

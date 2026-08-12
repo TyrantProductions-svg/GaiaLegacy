@@ -3,6 +3,7 @@ package com.overlord.worlditem;
 import com.overlord.core.thread.MainThreadGuard;
 import com.overlord.core.transaction.ReservationTerminalState;
 import com.overlord.inventory.api.ItemStack;
+import com.overlord.worlditem.api.LogicalWorldItemSnapshot;
 import com.overlord.worlditem.api.WorldItemId;
 import com.overlord.worlditem.api.WorldItemMotionUpdate;
 import com.overlord.worlditem.api.WorldItemMotionUpdateResult;
@@ -13,6 +14,8 @@ import com.overlord.worlditem.api.WorldItemReservationAudit;
 import com.overlord.worlditem.api.WorldItemReservationAuditSnapshot;
 import com.overlord.worlditem.api.WorldItemReservationId;
 import com.overlord.worlditem.api.WorldItemReservationResult;
+import com.overlord.worlditem.api.WorldItemRestoreEntry;
+import com.overlord.worlditem.api.WorldItemRestoreResult;
 import com.overlord.worlditem.api.WorldItemRuntimeSnapshot;
 import com.overlord.worlditem.api.WorldItemRuntimeAccess;
 import com.overlord.worlditem.api.WorldItemService;
@@ -40,25 +43,36 @@ import java.util.OptionalLong;
 public final class LogicalWorldItemService
         implements WorldItemService, WorldItemSpawnReservations, WorldItemRuntimeAccess,
                 WorldItemReservationAudit, WorldItemSpawnReservationAudit {
+    private static final RestorePublicationProbe NOOP_RESTORE_PUBLICATION_PROBE =
+            (detached, snapshot, success) -> { };
+
     private final MainThreadGuard mainThreadGuard;
     private final int capacity;
     private final long pickupDelayTicks;
-    private final Map<WorldItemId, ItemState> items = new LinkedHashMap<>();
+    private final RestorePublicationProbe restorePublicationProbe;
+    private LiveState liveState = LiveState.fresh();
     private final Map<WorldItemReservationId, ExtractionState> extractionReservations =
             new HashMap<>();
     private final Map<WorldItemId, WorldItemReservationId> activeExtractions =
             new HashMap<>();
     private final Map<WorldItemSpawnReservationId, SpawnState> spawnReservations =
             new HashMap<>();
-    private long nextItemId;
     private long nextExtractionReservationId;
     private long nextSpawnReservationId;
-    private boolean itemIdsExhausted;
     private boolean extractionIdsExhausted;
     private boolean spawnIdsExhausted;
 
     public LogicalWorldItemService(
             MainThreadGuard mainThreadGuard, int capacity, long pickupDelayTicks) {
+        this(mainThreadGuard, capacity, pickupDelayTicks,
+                NOOP_RESTORE_PUBLICATION_PROBE);
+    }
+
+    LogicalWorldItemService(
+            MainThreadGuard mainThreadGuard,
+            int capacity,
+            long pickupDelayTicks,
+            RestorePublicationProbe restorePublicationProbe) {
         this.mainThreadGuard = Objects.requireNonNull(mainThreadGuard, "mainThreadGuard");
         if (capacity <= 0) {
             throw new IllegalArgumentException("capacity must be positive");
@@ -68,6 +82,8 @@ public final class LogicalWorldItemService
         }
         this.capacity = capacity;
         this.pickupDelayTicks = pickupDelayTicks;
+        this.restorePublicationProbe = Objects.requireNonNull(
+                restorePublicationProbe, "restorePublicationProbe");
     }
 
     @Override
@@ -97,20 +113,20 @@ public final class LogicalWorldItemService
     @Override
     public Optional<WorldItemSnapshot> snapshot(WorldItemId itemId) {
         assertMainThread("world item snapshot");
-        ItemState state = items.get(Objects.requireNonNull(itemId, "itemId"));
+        ItemState state = liveState.items.get(Objects.requireNonNull(itemId, "itemId"));
         return state == null ? Optional.empty() : Optional.of(state.item);
     }
 
     public Optional<WorldItemRuntimeSnapshot> runtimeSnapshot(WorldItemId itemId) {
         assertMainThread("world item runtime snapshot");
-        ItemState state = items.get(Objects.requireNonNull(itemId, "itemId"));
+        ItemState state = liveState.items.get(Objects.requireNonNull(itemId, "itemId"));
         return state == null ? Optional.empty() : Optional.of(state.runtimeSnapshot());
     }
 
     @Override
     public List<WorldItemPhysicalSnapshot> physicalSnapshots() {
         assertMainThread("world item physical snapshots");
-        return items.values().stream()
+        return liveState.items.values().stream()
                 .map(state -> state.physicalSnapshot(
                         activeExtractions.containsKey(state.item.id())))
                 .sorted(Comparator.comparingLong(snapshot -> snapshot.id().value()))
@@ -121,7 +137,7 @@ public final class LogicalWorldItemService
     public Optional<WorldItemPhysicalSnapshot> physicalSnapshot(WorldItemId itemId) {
         assertMainThread("world item physical snapshot");
         Objects.requireNonNull(itemId, "itemId");
-        ItemState state = items.get(itemId);
+        ItemState state = liveState.items.get(itemId);
         return state == null
                 ? Optional.empty()
                 : Optional.of(state.physicalSnapshot(
@@ -132,7 +148,7 @@ public final class LogicalWorldItemService
     public WorldItemMotionUpdateResult updateMotion(WorldItemMotionUpdate update) {
         assertMainThread("world item motion update");
         Objects.requireNonNull(update, "update");
-        ItemState state = items.get(update.itemId());
+        ItemState state = liveState.items.get(update.itemId());
         if (state == null) {
             return new WorldItemMotionUpdateResult(
                     WorldItemMotionUpdateResult.Status.UNKNOWN_ITEM,
@@ -184,10 +200,50 @@ public final class LogicalWorldItemService
     public List<WorldItemSnapshot> snapshots() {
         assertMainThread("world item snapshots");
         List<WorldItemSnapshot> snapshots = new ArrayList<>();
-        for (ItemState state : items.values()) {
+        for (ItemState state : liveState.items.values()) {
             snapshots.add(state.item);
         }
         return List.copyOf(snapshots);
+    }
+
+    public LogicalWorldItemSnapshot canonicalSnapshot() {
+        assertMainThread("world item canonical snapshot");
+        if (hasPendingSpawnReservations()) {
+            throw new IllegalStateException(
+                    "world item canonical snapshot cannot include a pending spawn reservation");
+        }
+        if (hasPendingExtractionReservations()) {
+            throw new IllegalStateException(
+                    "world item canonical snapshot cannot include a pending extraction reservation");
+        }
+
+        List<WorldItemRestoreEntry> entries = new ArrayList<>(liveState.items.size());
+        for (ItemState state : liveState.items.values()) {
+            entries.add(new WorldItemRestoreEntry(
+                    state.runtimeSnapshot(), state.physicalState));
+        }
+        return new LogicalWorldItemSnapshot(
+                entries, liveState.nextItemId, liveState.itemIdsExhausted);
+    }
+
+    public WorldItemRestoreResult restoreCanonical(LogicalWorldItemSnapshot snapshot) {
+        assertMainThread("world item canonical restore");
+        Objects.requireNonNull(snapshot, "snapshot");
+
+        RestoreValidation validation = validateRestore(snapshot);
+        if (validation.status != WorldItemRestoreResult.Status.RESTORED) {
+            return restoreResult(validation.status, 0);
+        }
+        if (!isFreshTarget()) {
+            return restoreResult(WorldItemRestoreResult.Status.TARGET_NOT_FRESH, 0);
+        }
+
+        LiveState detached = validation.liveState;
+        WorldItemRestoreResult success = restoreResult(
+                WorldItemRestoreResult.Status.RESTORED, detached.items.size());
+        restorePublicationProbe.beforePublication(detached, snapshot, success);
+        liveState = detached;
+        return success;
     }
 
     @Override
@@ -295,7 +351,7 @@ public final class LogicalWorldItemService
                 request.tick(),
                 state.reservation.pickupAvailableTick());
         state.committedRuntime = committedRuntime;
-        items.put(item.id(), new ItemState(
+        liveState.items.put(item.id(), new ItemState(
                 item, request.source(), request.tick(),
                 state.reservation.pickupAvailableTick()));
         return spawnResult(
@@ -307,7 +363,7 @@ public final class LogicalWorldItemService
     public WorldItemReservationResult reserve(WorldItemId itemId, int count) {
         assertMainThread("world item extraction reservation");
         Objects.requireNonNull(itemId, "itemId");
-        ItemState state = items.get(itemId);
+        ItemState state = liveState.items.get(itemId);
         if (state == null) {
             return extractionResult(
                     WorldItemReservationResult.Status.UNKNOWN_ITEM,
@@ -398,7 +454,7 @@ public final class LogicalWorldItemService
         int remainder = 0;
         long advancedRevision = -1;
         if (requested == ExtractionTerminal.COMMITTED) {
-            current = items.get(state.reservation.itemId());
+            current = liveState.items.get(state.reservation.itemId());
             if (current == null
                     || current.item.stack().count()
                             < state.reservation.reserved().count()) {
@@ -435,7 +491,7 @@ public final class LogicalWorldItemService
     private void applyExtraction(
             ItemState current, int remainder, long advancedRevision) {
         if (remainder == 0) {
-            items.remove(current.item.id());
+            liveState.items.remove(current.item.id());
             return;
         }
         current.item = new WorldItemSnapshot(
@@ -456,7 +512,7 @@ public final class LogicalWorldItemService
     }
 
     private Optional<WorldItemSnapshot> itemSnapshot(WorldItemId itemId) {
-        ItemState state = items.get(itemId);
+        ItemState state = liveState.items.get(itemId);
         return state == null ? Optional.empty() : Optional.of(state.item);
     }
 
@@ -467,7 +523,89 @@ public final class LogicalWorldItemService
                 pending++;
             }
         }
-        return Math.addExact(items.size(), pending);
+        return Math.addExact(liveState.items.size(), pending);
+    }
+
+    private RestoreValidation validateRestore(LogicalWorldItemSnapshot snapshot) {
+        if (snapshot.entries().size() > capacity) {
+            return RestoreValidation.failed(
+                    WorldItemRestoreResult.Status.CAPACITY_EXCEEDED);
+        }
+        if (snapshot.nextItemId() < 0
+                || (snapshot.itemIdsExhausted()
+                        && snapshot.nextItemId() != Long.MAX_VALUE)) {
+            return RestoreValidation.failed(
+                    WorldItemRestoreResult.Status.INVALID_SNAPSHOT);
+        }
+
+        Map<WorldItemId, ItemState> restoredItems = new LinkedHashMap<>();
+        for (WorldItemRestoreEntry entry : snapshot.entries()) {
+            WorldItemRuntimeSnapshot runtime = entry.runtime();
+            WorldItemSnapshot item = runtime.item();
+            if (!validRuntime(runtime)
+                    || (!snapshot.itemIdsExhausted()
+                            && item.id().value() >= snapshot.nextItemId())
+                    || restoredItems.containsKey(item.id())) {
+                return RestoreValidation.failed(
+                        WorldItemRestoreResult.Status.INVALID_SNAPSHOT);
+            }
+            restoredItems.put(item.id(), new ItemState(
+                    item,
+                    runtime.source(),
+                    runtime.spawnTick(),
+                    runtime.pickupAvailableTick(),
+                    entry.physicalState()));
+        }
+        return RestoreValidation.restored(
+                restoredItems, snapshot.nextItemId(), snapshot.itemIdsExhausted());
+    }
+
+    private static boolean validRuntime(WorldItemRuntimeSnapshot runtime) {
+        WorldItemSnapshot item = runtime.item();
+        return item.revision() >= 0
+                && finite(item.positionX())
+                && finite(item.positionY())
+                && finite(item.positionZ())
+                && finite(item.velocityX())
+                && finite(item.velocityY())
+                && finite(item.velocityZ())
+                && runtime.spawnTick() >= 0
+                && runtime.pickupAvailableTick() >= runtime.spawnTick();
+    }
+
+    private boolean isFreshTarget() {
+        return liveState.restoreEligible
+                && liveState.items.isEmpty()
+                && extractionReservations.isEmpty()
+                && activeExtractions.isEmpty()
+                && spawnReservations.isEmpty()
+                && liveState.nextItemId == 0
+                && nextExtractionReservationId == 0
+                && nextSpawnReservationId == 0
+                && !liveState.itemIdsExhausted
+                && !extractionIdsExhausted
+                && !spawnIdsExhausted;
+    }
+
+    private boolean hasPendingSpawnReservations() {
+        for (SpawnState state : spawnReservations.values()) {
+            if (state.terminal == null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasPendingExtractionReservations() {
+        if (!activeExtractions.isEmpty()) {
+            return true;
+        }
+        for (ExtractionState state : extractionReservations.values()) {
+            if (state.terminal == null) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private long saturatedPickupTick(long spawnTick) {
@@ -477,14 +615,14 @@ public final class LogicalWorldItemService
     }
 
     private WorldItemId nextItemId() {
-        if (itemIdsExhausted) {
+        if (liveState.itemIdsExhausted) {
             throw new IllegalStateException("world item ID sequence exhausted");
         }
-        WorldItemId id = new WorldItemId(nextItemId);
-        if (nextItemId == Long.MAX_VALUE) {
-            itemIdsExhausted = true;
+        WorldItemId id = new WorldItemId(liveState.nextItemId);
+        if (liveState.nextItemId == Long.MAX_VALUE) {
+            liveState.itemIdsExhausted = true;
         } else {
-            nextItemId++;
+            liveState.nextItemId++;
         }
         return id;
     }
@@ -534,6 +672,11 @@ public final class LogicalWorldItemService
         return new WorldItemReservationResult(status, reservation, item, remainder);
     }
 
+    private static WorldItemRestoreResult restoreResult(
+            WorldItemRestoreResult.Status status, int restoredCount) {
+        return new WorldItemRestoreResult(status, restoredCount);
+    }
+
     private void assertMainThread(String operation) {
         mainThreadGuard.assertMainThread(operation);
     }
@@ -560,10 +703,20 @@ public final class LogicalWorldItemService
                 Optional<com.overlord.interaction.api.EntityRef> source,
                 long spawnTick,
                 long pickupAvailableTick) {
+            this(item, source, spawnTick, pickupAvailableTick, WorldItemPhysicalState.ACTIVE);
+        }
+
+        private ItemState(
+                WorldItemSnapshot item,
+                Optional<com.overlord.interaction.api.EntityRef> source,
+                long spawnTick,
+                long pickupAvailableTick,
+                WorldItemPhysicalState physicalState) {
             this.item = item;
             this.source = source;
             this.spawnTick = spawnTick;
             this.pickupAvailableTick = pickupAvailableTick;
+            this.physicalState = physicalState;
         }
 
         private WorldItemRuntimeSnapshot runtimeSnapshot() {
@@ -605,5 +758,63 @@ public final class LogicalWorldItemService
     private enum ExtractionTerminal {
         COMMITTED,
         ROLLED_BACK
+    }
+
+    private record RestoreValidation(
+            WorldItemRestoreResult.Status status,
+            LiveState liveState) {
+        private static RestoreValidation failed(WorldItemRestoreResult.Status status) {
+            return new RestoreValidation(status, null);
+        }
+
+        private static RestoreValidation restored(
+                Map<WorldItemId, ItemState> items,
+                long nextItemId,
+                boolean itemIdsExhausted) {
+            return new RestoreValidation(
+                    WorldItemRestoreResult.Status.RESTORED,
+                    LiveState.restored(items, nextItemId, itemIdsExhausted));
+        }
+    }
+
+    private static final class LiveState {
+        private final Map<WorldItemId, ItemState> items;
+        private long nextItemId;
+        private boolean itemIdsExhausted;
+        private final boolean restoreEligible;
+
+        private LiveState(
+                Map<WorldItemId, ItemState> items,
+                long nextItemId,
+                boolean itemIdsExhausted,
+                boolean restoreEligible) {
+            this.items = items;
+            this.nextItemId = nextItemId;
+            this.itemIdsExhausted = itemIdsExhausted;
+            this.restoreEligible = restoreEligible;
+        }
+
+        private static LiveState fresh() {
+            return new LiveState(new LinkedHashMap<>(), 0, false, true);
+        }
+
+        private static LiveState restored(
+                Map<WorldItemId, ItemState> items,
+                long nextItemId,
+                boolean itemIdsExhausted) {
+            return new LiveState(
+                    new LinkedHashMap<>(items),
+                    nextItemId,
+                    itemIdsExhausted,
+                    false);
+        }
+    }
+
+    @FunctionalInterface
+    interface RestorePublicationProbe {
+        void beforePublication(
+                Object detachedAggregate,
+                LogicalWorldItemSnapshot validatedSnapshot,
+                WorldItemRestoreResult success);
     }
 }

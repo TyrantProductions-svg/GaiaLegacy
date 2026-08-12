@@ -37,11 +37,15 @@ public record ProductUiLayout(
     }
 
     public UiHitRegion region(UiActionId action) {
-        Objects.requireNonNull(action, "action");
+        return region((UiControlId) action);
+    }
+
+    public UiHitRegion region(UiControlId id) {
+        Objects.requireNonNull(id, "id");
         return hitRegions.stream()
-                .filter(region -> region.action() == action)
+                .filter(region -> region.id().equals(id))
                 .findFirst()
-                .orElseThrow(() -> new NoSuchElementException("No UI region for " + action));
+                .orElseThrow(() -> new NoSuchElementException("No UI region for " + id));
     }
 
     public float contentScaleX() {

@@ -2,6 +2,7 @@ package com.gaia.shell;
 
 import com.gaia.settings.SettingsController;
 import com.gaia.settings.SettingsPersistenceException;
+import com.gaia.session.LoadWorldRequest;
 import java.math.BigDecimal;
 import java.util.Objects;
 import java.util.Optional;
@@ -27,7 +28,12 @@ public final class ProductShellController {
         return router.snapshot();
     }
 
-    public LifecycleIntent handle(ScreenCommand command) {
+    public ProductLifecycleIntent handle(ScreenCommand command) {
+        return handle(command, true);
+    }
+
+    public ProductLifecycleIntent handle(
+            ScreenCommand command, boolean activeSessionDirty) {
         Objects.requireNonNull(command, "command");
         ProductShellSnapshot current = snapshot();
         if (current.modal().isPresent()) {
@@ -36,22 +42,66 @@ public final class ProductShellController {
         if (command instanceof ScreenCommand.Dismiss
                 && current.screen() == ScreenId.LOADING) {
             router.loadingCancelled();
-            return LifecycleIntent.CLOSE_ACTIVE_SESSION;
+            return new ProductLifecycleIntent.CloseActiveSession();
         }
         if (command instanceof ScreenCommand.Confirm
                 || command instanceof ScreenCommand.Dismiss) {
-            return LifecycleIntent.NONE;
+            return ProductLifecycleIntent.none();
         }
         if (isSettingsCommand(command)) {
             handleSettingsCommand(command, current.screen());
-            return LifecycleIntent.NONE;
+            return ProductLifecycleIntent.none();
         }
-        if (command instanceof ScreenCommand.NewWorld) {
+        if (command instanceof ScreenCommand.OpenNewWorldSetup) {
             if (current.screen() != ScreenId.MAIN_MENU) {
-                return LifecycleIntent.NONE;
+                return ProductLifecycleIntent.none();
+            }
+            router.openNewWorldSetup();
+            return ProductLifecycleIntent.none();
+        }
+        if (command instanceof ScreenCommand.OpenWorldSlots) {
+            if (current.screen() == ScreenId.MAIN_MENU) {
+                router.openWorldSlots();
+            }
+            return ProductLifecycleIntent.none();
+        }
+        if (command instanceof ScreenCommand.CreateWorld create) {
+            if (current.screen() != ScreenId.NEW_WORLD_SETUP) {
+                return ProductLifecycleIntent.none();
             }
             router.beginLoading();
-            return LifecycleIntent.START_NEW_SESSION;
+            return new ProductLifecycleIntent.StartNewWorld(create.request());
+        }
+        if (command instanceof ScreenCommand.LoadWorld load) {
+            if (current.screen() != ScreenId.WORLD_SLOTS) {
+                return ProductLifecycleIntent.none();
+            }
+            router.beginLoading();
+            return new ProductLifecycleIntent.LoadWorld(
+                    new LoadWorldRequest(load.saveGameId()));
+        }
+        if (command instanceof ScreenCommand.DeleteWorld delete) {
+            if (current.screen() == ScreenId.WORLD_SLOTS) {
+                router.openDeleteWorldConfirmation(delete.saveGameId());
+            }
+            return ProductLifecycleIntent.none();
+        }
+        if (command instanceof ScreenCommand.RecoverBackup recover) {
+            if (current.screen() == ScreenId.WORLD_SLOTS) {
+                router.openRecoverBackupConfirmation(recover.saveGameId());
+            }
+            return ProductLifecycleIntent.none();
+        }
+        if (command instanceof ScreenCommand.Save
+                || command instanceof ScreenCommand.SaveAndQuit) {
+            if (current.screen() != ScreenId.PAUSED) {
+                return ProductLifecycleIntent.none();
+            }
+            router.beginSaving();
+            return new ProductLifecycleIntent.Save(
+                    command instanceof ScreenCommand.Save
+                            ? ProductLifecycleIntent.SavePolicy.SAVE_AND_STAY
+                            : ProductLifecycleIntent.SavePolicy.SAVE_AND_QUIT);
         }
         if (command instanceof ScreenCommand.OpenSettings) {
             openSettings(current.screen());
@@ -63,7 +113,12 @@ public final class ProductShellController {
             }
         } else if (command instanceof ScreenCommand.ReturnToMainMenu) {
             if (current.screen() == ScreenId.PAUSED) {
-                router.openModal(ModalId.UNSAVED_PROGRESS_CONFIRMATION);
+                if (activeSessionDirty) {
+                    router.openModal(ModalId.UNSAVED_PROGRESS_CONFIRMATION);
+                } else {
+                    router.returnedToMainMenu();
+                    return new ProductLifecycleIntent.CloseActiveSession();
+                }
             }
         } else if (command instanceof ScreenCommand.Quit) {
             if (current.screen() == ScreenId.MAIN_MENU) {
@@ -72,11 +127,38 @@ public final class ProductShellController {
         } else if (command instanceof ScreenCommand.Back) {
             if (current.screen() == ScreenId.SETTINGS) {
                 handleSettingsBack();
-            } else if (current.screen() == ScreenId.CONTROLS) {
+            } else if (current.screen() == ScreenId.CONTROLS
+                    || current.screen() == ScreenId.NEW_WORLD_SETUP
+                    || current.screen() == ScreenId.WORLD_SLOTS) {
                 router.back();
             }
         }
-        return LifecycleIntent.NONE;
+        return ProductLifecycleIntent.none();
+    }
+
+    public ProductLifecycleIntent savingSucceeded(
+            ProductLifecycleIntent.SavePolicy policy) {
+        Objects.requireNonNull(policy, "policy");
+        if (policy == ProductLifecycleIntent.SavePolicy.SAVE_AND_STAY) {
+            router.savingReturnedToPause();
+            return ProductLifecycleIntent.none();
+        }
+        router.savingReturnedToMainMenu();
+        return new ProductLifecycleIntent.CloseActiveSession();
+    }
+
+    public void savingFailed() {
+        router.savingReturnedToPause();
+        router.openModal(ModalId.ERROR_ACKNOWLEDGEMENT);
+    }
+
+    public void operationFailed() {
+        router.openModal(ModalId.ERROR_ACKNOWLEDGEMENT);
+    }
+
+    ProductLifecycleIntent startLegacySession() {
+        router.beginLoading();
+        return ProductLifecycleIntent.none();
     }
 
     public void loadingSucceeded() {
@@ -105,7 +187,7 @@ public final class ProductShellController {
         }
     }
 
-    private LifecycleIntent handleModal(
+    private ProductLifecycleIntent handleModal(
             ScreenCommand command,
             ModalId modal) {
         if (modal == ModalId.DIRTY_SETTINGS_CONFIRMATION
@@ -114,32 +196,38 @@ public final class ProductShellController {
         }
         if (command instanceof ScreenCommand.Dismiss) {
             router.dismissModal();
-            return LifecycleIntent.NONE;
+            return ProductLifecycleIntent.none();
         }
         if (!(command instanceof ScreenCommand.Confirm)) {
-            return LifecycleIntent.NONE;
+            return ProductLifecycleIntent.none();
         }
 
+        Optional<com.gaia.save.format.SaveGameId> modalSaveGameId =
+                router.modalSaveGameId();
         router.dismissModal();
         return switch (modal) {
-            case QUIT_CONFIRMATION -> LifecycleIntent.EXIT_PRODUCT;
+            case QUIT_CONFIRMATION -> new ProductLifecycleIntent.ExitProduct();
             case UNSAVED_PROGRESS_CONFIRMATION -> {
                 router.returnedToMainMenu();
-                yield LifecycleIntent.CLOSE_ACTIVE_SESSION;
+                yield new ProductLifecycleIntent.CloseActiveSession();
             }
             case DIRTY_SETTINGS_CONFIRMATION -> {
                 router.back();
-                yield LifecycleIntent.NONE;
+                yield ProductLifecycleIntent.none();
             }
-            case ERROR_ACKNOWLEDGEMENT -> LifecycleIntent.NONE;
+            case DELETE_WORLD_CONFIRMATION -> new ProductLifecycleIntent.DeleteWorld(
+                    modalSaveGameId.orElseThrow());
+            case RECOVER_BACKUP_CONFIRMATION -> new ProductLifecycleIntent.RecoverBackup(
+                    modalSaveGameId.orElseThrow());
+            case ERROR_ACKNOWLEDGEMENT -> ProductLifecycleIntent.none();
         };
     }
 
-    private LifecycleIntent handleDirtySettingsModal(ScreenCommand command) {
+    private ProductLifecycleIntent handleDirtySettingsModal(ScreenCommand command) {
         if (command instanceof ScreenCommand.CancelSettings
                 || command instanceof ScreenCommand.Dismiss) {
             router.dismissModal();
-            return LifecycleIntent.NONE;
+            return ProductLifecycleIntent.none();
         }
         if (command instanceof ScreenCommand.ApplySettings) {
             if (tryApplySettings(settings.orElseThrow())) {
@@ -151,7 +239,7 @@ public final class ProductShellController {
             router.dismissModal();
             router.back();
         }
-        return LifecycleIntent.NONE;
+        return ProductLifecycleIntent.none();
     }
 
     private void handleSettingsCommand(
@@ -254,11 +342,4 @@ public final class ProductShellController {
         }
     }
 
-    /** External product-lifecycle work requested by one routed UI command. */
-    public enum LifecycleIntent {
-        NONE,
-        START_NEW_SESSION,
-        CLOSE_ACTIVE_SESSION,
-        EXIT_PRODUCT
-    }
 }
