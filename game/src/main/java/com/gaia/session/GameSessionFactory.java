@@ -17,6 +17,7 @@ import com.gaia.interaction.BlockPlacementTransaction;
 import com.gaia.interaction.CreativeSelection;
 import com.gaia.interaction.GaiaBlockRaycastService;
 import com.gaia.interaction.GaiaBlockWorldAccess;
+import com.gaia.interaction.GameMode;
 import com.gaia.interaction.GameModeManager;
 import com.gaia.interaction.PlayerBlockTargeting;
 import com.gaia.interaction.feedback.CommittedBreakVisualAdapter;
@@ -538,8 +539,6 @@ public final class GameSessionFactory {
                 new PhysicsWorld(
                         collisionWorld,
                         new Vector3f(0, GameConfig.Physics.GRAVITY, 0));
-        PlayerManager playerManager =
-                new PlayerManager(environment.camera(), playerController);
         FixedStepClock fixedStepClock =
                 new FixedStepClock(
                         FIXED_STEP_SECONDS,
@@ -678,6 +677,11 @@ public final class GameSessionFactory {
                 new GameModeManager(
                         config.defaultGameMode(),
                         EventBus.getInstance()::publish);
+        PlayerManager playerManager =
+                new PlayerManager(
+                        environment.camera(),
+                        playerController,
+                        () -> gameModes.mode() == GameMode.CREATIVE);
         WorldInteractionInputRouter worldInteractionInput =
                 new WorldInteractionInputRouter();
         WorldItemPickupTransaction worldItemPickupTransaction =

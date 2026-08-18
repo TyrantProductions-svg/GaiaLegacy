@@ -33,18 +33,18 @@ public record TextureRegion(
     }
 
     public float uMin() {
-        return (x + 0.5f) / atlasWidth;
+        return (x + 0.1f) / atlasWidth;
     }
 
     public float uMax() {
-        return (x + width - 0.5f) / atlasWidth;
+        return (x + width - 0.1f) / atlasWidth;
     }
 
     public float vMin() {
-        return (y + 0.5f) / atlasHeight;
+        return (y + 0.1f) / atlasHeight;
     }
 
     public float vMax() {
-        return (y + height - 0.5f) / atlasHeight;
+        return (y + height - 0.1f) / atlasHeight;
     }
 }

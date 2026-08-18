@@ -6,11 +6,13 @@ import com.overlord.core.input.MouseDelta;
 import com.overlord.physics.PlayerController;
 import com.overlord.renderer.Camera;
 import java.util.Objects;
+import java.util.function.BooleanSupplier;
 import org.joml.Vector3f;
 
 public class PlayerManager {
     private final Camera camera;
     private final PlayerController playerController;
+    private final BooleanSupplier noclipToggleAllowed;
     private final Vector3f forward = new Vector3f();
     private final Vector3f right = new Vector3f();
     private final Vector3f horizontalForward = new Vector3f();
@@ -19,11 +21,14 @@ public class PlayerManager {
     private int remainingNoclipTapSteps;
 
     public PlayerManager(
-            Camera camera, PlayerController playerController) {
+            Camera camera,
+            PlayerController playerController,
+            BooleanSupplier noclipToggleAllowed) {
         this.camera = Objects.requireNonNull(camera, "camera");
         this.playerController =
                 Objects.requireNonNull(
                         playerController, "playerController");
+        this.noclipToggleAllowed = Objects.requireNonNull(noclipToggleAllowed, "noclipToggleAllowed");
     }
 
     public void applyLook(MouseDelta delta) {
@@ -70,7 +75,8 @@ public class PlayerManager {
         boolean jumpPressed = false;
         boolean togglePressed = false;
         if (input.isKeyPressed(GameConfig.Input.KEY_JUMP)) {
-            if (remainingNoclipTapSteps > 0) {
+            if (remainingNoclipTapSteps > 0
+                    && noclipToggleAllowed.getAsBoolean()) {
                 togglePressed = true;
                 remainingNoclipTapSteps = 0;
                 playerController.setNoclip(

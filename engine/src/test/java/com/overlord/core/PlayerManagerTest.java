@@ -131,6 +131,36 @@ class PlayerManagerTest {
     }
 
     @Test
+    void doubleTapSpaceDoesNotToggleNoclipInSurvivalMode() {
+        World world = new World();
+        fillFloor(world, -1, 1, -1, 1);
+        Camera camera = new Camera();
+        PhysicsBody body =
+                new PhysicsBody(
+                        PLAYER_COLLIDER,
+                        MassProperties.dynamic(1.0f));
+        PlayerController controller =
+                new PlayerController(
+                        body,
+                        new CollisionWorld(world, BlockCollisionShapeResolver.fullCubesForNonAir()),
+                        GameConfig.Player.MOVEMENT_SPEED,
+                        GameConfig.Player.NOCLIP_SPEED,
+                        GameConfig.Player.JUMP_VELOCITY,
+                        GameConfig.Physics.GRAVITY,
+                        GameConfig.Physics.TERMINAL_VELOCITY);
+        PlayerManager player =
+                new PlayerManager(camera, controller, () -> false);
+        controller.teleport(new Vector3f(0.5f, 1.0f, 0.5f));
+        controller.fixedUpdate(FIXED_STEP, 0, 0, false, false, false);
+
+        player.fixedUpdate(FIXED_STEP, spacePressed());
+        repeat(14, () -> player.fixedUpdate(FIXED_STEP, noInput()));
+        player.fixedUpdate(FIXED_STEP, spacePressed());
+
+        assertFalse(controller.isNoclip());
+    }
+
+    @Test
     void catchUpUsesOnePressedEdgeAcrossFullAndHeldOnlySnapshots() {
         PlayerFixture fixture = playerFixtureOnGround();
         InputSnapshot fullSnapshot = spacePressed();
@@ -294,7 +324,7 @@ class PlayerManagerTest {
         return new PlayerFixture(
                 camera,
                 controller,
-                new PlayerManager(camera, controller));
+                new PlayerManager(camera, controller, () -> true));
     }
 
     private static InputSnapshot spacePressed() {
