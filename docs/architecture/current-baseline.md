@@ -2,17 +2,14 @@
 
 ## Snapshot
 
-The current snapshot is Phase 14 Save/Load v1 and World Slots integration on
-`feat/save-load-v1`, based on
-`origin/main@076f9f490fa97db3ecfc0b7e44ac666c5a61df28`. The branch currently has
-uncommitted Phase 14 work, so no implementation candidate SHA is claimed yet.
-Gates 14A-14E pass and Phase 14 cross-platform acceptance is complete. Windows
-automation, development runtime, and the installed create/load, Save & Quit,
-relaunch, restored-state, and normal-exit cycle pass; exact installDist
-duration/raw logs were not supplied. The requested Apple Silicon macOS Gate
-14E test is HUMAN-REPORTED PASS; exact environment metadata, automated totals,
-raw logs, durations, and macOS performance measurements were not supplied and
-are not claimed.
+The current snapshot is the cumulative unstaged Phase 15 bounded
+infinite-world streaming candidate on `feat/infinite-world-streaming`. Phase14
+v1 read compatibility remains, while Save v2 adds modified-only streamed Chunk
+authority, authoritative world tick/allocator restore, and live WorldItem
+paging under the existing save root. Task 12 Windows automation, development
+runtime, and the full installDist create/modify/save/fresh-process-load/visual-
+restore/resave workflow are complete; native Apple Silicon macOS Phase 15 evidence is pending/not
+supplied and is not inferred from historical Phase 12-14 results.
 
 The protected product graph is `GameBootstrap -> ProductLoop -> optional
 GameSession`. `ProductLoop` is the sole outer owner-thread loop; each New World
@@ -33,8 +30,8 @@ acceptance passed at 10 and 7 minutes. Apple Silicon MacBook Air / native arm64
 candidate. Exact macOS version, macOS test totals, raw logs, runtime durations,
 and audio-device details were not supplied and are not claimed.
 
-The release defaults are seed `12345`, world-generation algorithm `2`, finite
-radius `4` (81 loaded Chunks), vertical FOV `70.0`, mouse sensitivity `0.1`,
+The release defaults are seed `12345`, world-generation algorithm `2`, fixed
+streaming radii `2/4/5/7`, vertical FOV `70.0`, mouse sensitivity `0.1`,
 VSync enabled, debug HUD disabled, and Survival startup. Radius `4` is the
 finite demo load boundary, not a new streaming/render-distance system. Window
 initialization makes the GLFW context current and then explicitly applies swap
@@ -86,7 +83,19 @@ geometry, UVs, world rendering, and gameplay are unchanged. The live
 exclusion-mask uniform-array path is also closed and no longer crashes during
 break/place rendering.
 
-Canonical world-item automatic expiry is deferred. Phase 11 defines physical projection, pickup, unloaded-Chunk freezing and runtime cleanup, but does not define despawn duration or timeout-based stable-ID termination.
+Phase 15 supersedes the old no-expiry rule. Ground WorldItems have canonical
+`expiresAtWorldTick` lifetime with `WORLD_ITEM_TTL_TICKS = 18_000L`; unload does
+not freeze TTL, pause/process downtime does not advance world tick, semantic
+death is exact-tick and non-resurrecting, and expired stable IDs are never
+reused.
+
+The final Phase 15 Windows clean build passed **3,351 total / 3,350 passed /
+one platform-conditional tools skip / zero failures or errors** in 1h58m01s
+(engine 1,309; game 2,015; tools 27). Gate 15F is **3/3 GREEN** and recorded
+530.65 seconds for its production performance case without using time as a
+pass threshold. The installDist process visibly restored an exact placed dirt
+block across Save & Quit and a fresh JVM; both accepted JVMs exited 0. Task 12
+adds no Task4 root or payload wire-format change.
 
 Human Windows development acceptance is **PASS** for the Phase 12 candidate's
 VSync path, movement/jump, break/place, Q and Ctrl+Q drops, Shift+right manual

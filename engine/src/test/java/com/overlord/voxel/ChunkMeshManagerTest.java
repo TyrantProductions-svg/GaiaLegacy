@@ -11,6 +11,7 @@ import com.overlord.core.thread.MainThreadGuard;
 import com.overlord.renderer.ChunkGpuMesh;
 import com.overlord.renderer.ChunkRenderBackend;
 import com.overlord.renderer.ChunkRenderObject;
+import com.overlord.renderer.RenderOrigin;
 import java.lang.reflect.Field;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -27,6 +28,38 @@ import org.junit.jupiter.api.Test;
 
 class ChunkMeshManagerTest {
     private static final ChunkKey KEY = new ChunkKey(0, 0);
+
+    @Test
+    void preparedRenderOriginRebasePublishesAllInstalledReplacementsWithoutGpuWork() {
+        UploadFixture fixture = readyFixture(2, 2);
+        assertEquals(2, fixture.manager.processMainThreadWork());
+        Map<ChunkKey, ChunkRenderObject> before = fixture.manager.renderObjects().stream()
+                .collect(java.util.stream.Collectors.toMap(ChunkRenderObject::key, object -> object));
+        RenderOrigin zero = new RenderOrigin(new ChunkKey(0, 0));
+        RenderOrigin next = new RenderOrigin(new ChunkKey(1, 0));
+
+        ChunkMeshManager.PreparedOriginRebase prepared =
+                fixture.manager.prepareOriginRebase(zero, next);
+
+        assertEquals(Set.copyOf(before.values()), Set.copyOf(fixture.manager.renderObjects()));
+        assertEquals(2, fixture.backend.uploadCalls);
+        assertTrue(fixture.backend.released.isEmpty());
+        prepared.commit();
+
+        Map<ChunkKey, ChunkRenderObject> after = fixture.manager.renderObjects().stream()
+                .collect(java.util.stream.Collectors.toMap(ChunkRenderObject::key, object -> object));
+        assertEquals(before.keySet(), after.keySet());
+        for (ChunkKey key : before.keySet()) {
+            assertSame(before.get(key).mesh(), after.get(key).mesh());
+            assertEquals(before.get(key).revision(), after.get(key).revision());
+            assertEquals((key.x() - 1) * 16.0f, after.get(key).modelMatrix().m30());
+        }
+        assertEquals(2, fixture.backend.uploadCalls);
+        assertTrue(fixture.backend.released.isEmpty());
+        assertThrows(IllegalStateException.class, () ->
+                fixture.manager.prepareOriginRebase(zero, next));
+        assertEquals(Set.copyOf(after.values()), Set.copyOf(fixture.manager.renderObjects()));
+    }
 
     @Test
     void oneBlockVerticesMetadataMatchesSouthFacingTriangle() {
@@ -751,6 +784,46 @@ class ChunkMeshManagerTest {
         assertEquals(3, fixture.backend.uploadCalls);
         assertEquals(List.of(previous), fixture.backend.released);
         assertEquals(ChunkState.RENDERABLE, fixture.repository.state(KEY));
+    }
+
+    @Test
+    void postUploadOriginLocalizationFailureReleasesEveryReturnedGpuObject() {
+        int edge = ChunkCoordinatePolicy.MAX_SAFE_CHUNK_COORDINATE;
+        ChunkKey meshKey = new ChunkKey(edge - 1, 0);
+        ChunkRepository repository = new ChunkRepository();
+        repository.generate(
+                meshKey,
+                chunk -> chunk.setBlock(1, 1, 1, (byte) 1));
+        ManualExecutor executor = new ManualExecutor();
+        FakeRenderBackend backend = new FakeRenderBackend();
+        ChunkMeshManager manager = new ChunkMeshManager(
+                repository,
+                ChunkMeshManagerTest::meshFor,
+                executor,
+                backend,
+                MainThreadGuard.captureCurrentThread(),
+                2);
+        assertEquals(1, manager.scheduleEligible());
+        executor.runAll();
+        assertEquals(1, manager.drainCompletedCpuWork());
+        manager.prepareOriginRebase(
+                        new RenderOrigin(new ChunkKey(0, 0)),
+                        new RenderOrigin(new ChunkKey(-edge + 1, 0)))
+                .commit();
+
+        assertEquals(1, manager.processMainThreadWork());
+        ChunkRenderObject first = backend.uploaded.get(0);
+        assertEquals(List.of(first), backend.released);
+        assertTrue(manager.pollFailure().orElseThrow()
+                instanceof IllegalArgumentException);
+
+        manager.retry(meshKey);
+        manager.processMainThreadWork();
+        ChunkRenderObject second = backend.uploaded.get(1);
+        assertEquals(List.of(first, second), backend.released);
+        manager.close();
+        assertEquals(backend.uploaded, backend.released,
+                "every backend-returned object must have one owner or release");
     }
 
     @Test

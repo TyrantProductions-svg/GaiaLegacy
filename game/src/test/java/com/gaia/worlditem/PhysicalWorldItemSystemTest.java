@@ -18,6 +18,7 @@ import com.overlord.physics.CollisionWorld;
 import com.overlord.physics.MassProperties;
 import com.overlord.physics.PhysicsBody;
 import com.overlord.physics.PhysicsWorld;
+import com.overlord.physics.SimulationOrigin;
 import com.overlord.voxel.World;
 import com.overlord.voxel.ChunkDirtyTracker;
 import com.overlord.voxel.ChunkKey;
@@ -25,6 +26,7 @@ import com.overlord.voxel.ChunkRepository;
 import com.overlord.worlditem.LogicalWorldItemService;
 import com.overlord.worlditem.LogicalWorldItemTestAccess;
 import com.overlord.worlditem.api.WorldItemMotionUpdate;
+import com.overlord.worlditem.api.WorldItemMotionUpdateResult;
 import com.overlord.worlditem.api.WorldItemId;
 import com.overlord.worlditem.api.WorldItemPhysicalSnapshot;
 import com.overlord.worlditem.api.WorldItemPhysicalState;
@@ -45,6 +47,191 @@ import org.junit.jupiter.params.provider.ValueSource;
 class PhysicalWorldItemSystemTest {
     private static final ItemStack DIRT =
             new ItemStack(ResourceLocation.parse("gaia:dirt"), 1);
+
+    @Test
+    void preparedOriginRebaseKeepsCanonicalItemStateAndWritesBackThroughCommittedOrigin() {
+        Fixture fixture = fixture(4);
+        WorldItemSnapshot spawned = fixture.spawn(17.5, 4.0, 1.5);
+        fixture.system.prepareStep(1);
+        PhysicsBody body = fixture.physics.bodies().get(0);
+        WorldItemSnapshot canonicalBefore = fixture.logical.snapshot(spawned.id()).orElseThrow();
+        WorldItemPresentationSnapshot presentationBefore =
+                fixture.system.presentationSnapshots().get(0);
+        SimulationOrigin oldOrigin = new SimulationOrigin(new ChunkKey(0, 0));
+        SimulationOrigin newOrigin = new SimulationOrigin(new ChunkKey(1, 0));
+
+        var prepared = fixture.system.prepareOriginRebase(oldOrigin, newOrigin);
+
+        assertEquals(canonicalBefore, fixture.logical.snapshot(spawned.id()).orElseThrow());
+        assertEquals(new Vector3f(17.5f, 4.0f, 1.5f), body.position(new Vector3f()));
+        assertEquals(new Vector3f(17.5f, 4.0f, 1.5f), body.previousPosition(new Vector3f()));
+        assertEquals(presentationBefore, fixture.system.presentationSnapshots().get(0));
+
+        prepared.commit();
+
+        assertEquals(canonicalBefore, fixture.logical.snapshot(spawned.id()).orElseThrow());
+        assertEquals(spawned.id(), fixture.system.presentationSnapshots().get(0).id());
+        assertEquals(canonicalBefore.revision(), fixture.system.presentationSnapshots().get(0).revision());
+        assertEquals(0.0, fixture.logical.snapshot(spawned.id()).orElseThrow().velocityX());
+        assertEquals(new Vector3f(1.5f, 4.0f, 1.5f), body.position(new Vector3f()));
+        assertEquals(new Vector3f(1.5f, 4.0f, 1.5f), body.previousPosition(new Vector3f()));
+        assertEquals(1.5, fixture.system.presentationSnapshots().get(0).positionX(0.0f));
+        assertEquals(1.5, fixture.system.presentationSnapshots().get(0).positionX(1.0f));
+
+        body.setPosition(new Vector3f(2.5f, 4.0f, 1.5f));
+        fixture.system.finishStep();
+
+        WorldItemSnapshot writtenBack = fixture.logical.snapshot(spawned.id()).orElseThrow();
+        assertEquals(18.5, writtenBack.positionX());
+        assertEquals(4.0, writtenBack.positionY());
+        assertEquals(1.5, writtenBack.positionZ());
+    }
+
+    @Test
+    void projectionCreatedAfterLargeOriginCommitLocalizesBeforeFloatConversion() {
+        Fixture fixture = fixture(4);
+        SimulationOrigin oldOrigin = new SimulationOrigin(new ChunkKey(0, 0));
+        SimulationOrigin largeOrigin =
+                new SimulationOrigin(new ChunkKey(100_000_000, -100_000_000));
+        fixture.system.prepareOriginRebase(oldOrigin, largeOrigin).commit();
+
+        WorldItemSnapshot spawned =
+                fixture.spawn(1_600_000_002.5, 4.0, -1_599_999_996.5);
+        fixture.system.prepareStep(1);
+
+        PhysicsBody body = fixture.physics.bodies().get(0);
+        assertEquals(new Vector3f(2.5f, 4.0f, 3.5f), body.position(new Vector3f()));
+        assertEquals(new Vector3f(2.5f, 4.0f, 3.5f), body.previousPosition(new Vector3f()));
+        assertEquals(spawned.id(), fixture.system.presentationSnapshots().get(0).id());
+        assertEquals(2.5, fixture.system.presentationSnapshots().get(0).positionX(1.0f));
+        assertEquals(3.5, fixture.system.presentationSnapshots().get(0).positionZ(1.0f));
+        assertEquals(
+                1_600_000_002.5,
+                fixture.logical.snapshot(spawned.id()).orElseThrow().positionX());
+        assertEquals(
+                -1_599_999_996.5,
+                fixture.logical.snapshot(spawned.id()).orElseThrow().positionZ());
+    }
+
+    @Test
+    void distantCanonicalCoverageUsesDoublesBeforeLocalFloatConversion() {
+        MainThreadGuard guard = MainThreadGuard.captureCurrentThread();
+        ChunkKey key = new ChunkKey(100_000_000, -100_000_000);
+        ChunkRepository chunks = new ChunkRepository(8, new ChunkDirtyTracker());
+        chunks.generate(key, ignored -> {});
+        World world = new World(chunks);
+        PhysicsWorld physics = new PhysicsWorld(
+                new CollisionWorld(world, BlockCollisionShapeResolver.fullCubesForNonAir()),
+                new Vector3f());
+        LogicalWorldItemService logical = new LogicalWorldItemService(guard, 4, 0);
+        PhysicalWorldItemSystem system = new PhysicalWorldItemSystem(
+                logical, physics, chunks, guard, new WorldItemPhysicsConfig(0.50f, 4));
+        SimulationOrigin zero = new SimulationOrigin(new ChunkKey(0, 0));
+        SimulationOrigin origin = new SimulationOrigin(key);
+        system.prepareOriginRebase(zero, origin).commit();
+        logical.spawn(new WorldItemSpawnRequest(
+                DIRT,
+                1_600_000_015.9,
+                4.0,
+                -1_599_999_992.0,
+                0.0, 0.0, 0.0, Optional.empty(), 1));
+
+        system.prepareStep(1);
+
+        assertTrue(physics.bodies().isEmpty(),
+                "canonical half-extent crosses the unavailable east Chunk");
+    }
+
+    @Test
+    void exactChunkEdgeTouchWhileRetreatingDoesNotFreezeWorldItem() {
+        MainThreadGuard guard = MainThreadGuard.captureCurrentThread();
+        ChunkRepository chunks = new ChunkRepository(8, new ChunkDirtyTracker());
+        chunks.generate(new ChunkKey(0, 0), ignored -> {});
+        PhysicsWorld physics = new PhysicsWorld(
+                new CollisionWorld(new World(chunks),
+                        BlockCollisionShapeResolver.fullCubesForNonAir()),
+                new Vector3f());
+        LogicalWorldItemService logical = new LogicalWorldItemService(guard, 4, 0);
+        PhysicalWorldItemSystem system = new PhysicalWorldItemSystem(
+                logical, physics, chunks, guard, new WorldItemPhysicsConfig(0.50f, 4));
+        SimulationOrigin zero = new SimulationOrigin(new ChunkKey(0, 0));
+        physics.prepareOriginRebase(zero, zero).commit();
+        system.prepareOriginRebase(zero, zero).commit();
+        WorldItemSnapshot spawned = logical.spawn(new WorldItemSpawnRequest(
+                DIRT, 15.75, 4.0, 8.0, -1.0, 0.0, 0.0,
+                Optional.empty(), 1)).item().orElseThrow();
+
+        system.prepareStep(1);
+
+        assertEquals(1, physics.bodies().size());
+        assertEquals(spawned.id(), system.presentationSnapshots().get(0).id());
+    }
+
+    @Test
+    void distantPostRebaseWorldItemSettlesOnCanonicalTerrain() {
+        MainThreadGuard guard = MainThreadGuard.captureCurrentThread();
+        ChunkKey key = new ChunkKey(100_000_000, -100_000_000);
+        ChunkRepository chunks = new ChunkRepository(8, new ChunkDirtyTracker());
+        chunks.generate(key, chunk -> chunk.setBlock(2, 0, 3, (byte) 1));
+        World world = new World(chunks);
+        PhysicsWorld physics = new PhysicsWorld(
+                new CollisionWorld(world, BlockCollisionShapeResolver.fullCubesForNonAir()),
+                new Vector3f(0, -25, 0));
+        LogicalWorldItemService logical = new LogicalWorldItemService(guard, 4, 0);
+        PhysicalWorldItemSystem system = new PhysicalWorldItemSystem(
+                logical, physics, chunks, guard, new WorldItemPhysicsConfig(0.50f, 4));
+        SimulationOrigin zero = new SimulationOrigin(new ChunkKey(0, 0));
+        SimulationOrigin origin = new SimulationOrigin(key);
+        physics.prepareOriginRebase(zero, origin).commit();
+        system.prepareOriginRebase(zero, origin).commit();
+        WorldItemSnapshot spawned = logical.spawn(new WorldItemSpawnRequest(
+                DIRT,
+                1_600_000_002.5,
+                1.25,
+                -1_599_999_996.5,
+                0.0, 0.0, 0.0, Optional.empty(), 1)).item().orElseThrow();
+
+        for (int tick = 1; tick <= 20; tick++) {
+            system.prepareStep(tick);
+            physics.step(1.0f / 60.0f);
+            system.finishStep();
+        }
+
+        assertTrue(logical.snapshot(spawned.id()).orElseThrow().positionY() >= 1.24);
+        assertEquals(2.5, system.presentationSnapshots().get(0).positionX(1.0f));
+    }
+
+    @Test
+    void distantPostRebaseRestoreReconcileCreatesResidentLocalProjection() {
+        MainThreadGuard guard = MainThreadGuard.captureCurrentThread();
+        ChunkKey key = new ChunkKey(100_000_000, -100_000_000);
+        ChunkRepository chunks = new ChunkRepository(8, new ChunkDirtyTracker());
+        chunks.generate(key, chunk -> chunk.setBlock(2, 0, 3, (byte) 1));
+        World world = new World(chunks);
+        PhysicsWorld physics = new PhysicsWorld(
+                new CollisionWorld(world, BlockCollisionShapeResolver.fullCubesForNonAir()),
+                new Vector3f(0, -25, 0));
+        LogicalWorldItemService logical = new LogicalWorldItemService(guard, 4, 0);
+        PhysicalWorldItemSystem system = new PhysicalWorldItemSystem(
+                logical, physics, chunks, guard, new WorldItemPhysicsConfig(0.50f, 4));
+        SimulationOrigin zero = new SimulationOrigin(new ChunkKey(0, 0));
+        SimulationOrigin origin = new SimulationOrigin(key);
+        physics.prepareOriginRebase(zero, origin).commit();
+        system.prepareOriginRebase(zero, origin).commit();
+        logical.spawn(new WorldItemSpawnRequest(
+                DIRT,
+                1_600_000_002.5,
+                1.5,
+                -1_599_999_996.5,
+                0.0, 0.0, 0.0, Optional.empty(), 1)).item().orElseThrow();
+
+        system.reconcileRestoredCanonicalState(1L);
+
+        Vector3f residentLocal = physics.bodies().get(0).position(new Vector3f());
+        assertEquals(2.5f, residentLocal.x);
+        assertEquals(1.5f, residentLocal.y);
+        assertEquals(3.5f, residentLocal.z);
+    }
 
     @Test
     void oneStableIdOwnsOneProjectionAndDuplicateReconcileIsIdempotent() {
@@ -89,7 +276,7 @@ class PhysicalWorldItemSystemTest {
 
     @ParameterizedTest(name = "unrepresentable motion component {0} is atomic")
     @ValueSource(ints = {0, 1, 2, 3, 4, 5})
-    void unrepresentableCanonicalMotionLeavesExistingProjectionUnchanged(int component) {
+    void unrepresentableMotionNeverPartiallyMutatesProjection(int component) {
         Fixture fixture = fixture(4);
         WorldItemSnapshot spawned = fixture.spawn(1.5, 4.0, 1.5);
         fixture.system.prepareStep(1);
@@ -102,14 +289,21 @@ class PhysicalWorldItemSystemTest {
 
         double[] motion = {6.0, 7.0, 8.0, 0.5, -0.25, -0.5};
         motion[component] = Double.MAX_VALUE;
-        fixture.logical.updateMotion(new WorldItemMotionUpdate(
+        WorldItemMotionUpdateResult result = fixture.logical.updateMotion(new WorldItemMotionUpdate(
                 spawned.id(),
                 spawned.revision(),
                 motion[0], motion[1], motion[2],
                 motion[3], motion[4], motion[5],
                 WorldItemPhysicalState.ACTIVE));
 
-        assertThrows(IllegalArgumentException.class, () -> fixture.system.prepareStep(2));
+        if (component == 0 || component == 2) {
+            assertEquals(WorldItemMotionUpdateResult.Status.INVALID_MOTION, result.status());
+            assertEquals(spawned, fixture.logical.snapshot(spawned.id()).orElseThrow());
+            assertDoesNotThrow(() -> fixture.system.prepareStep(2));
+        } else {
+            assertEquals(WorldItemMotionUpdateResult.Status.APPLIED, result.status());
+            assertThrows(IllegalArgumentException.class, () -> fixture.system.prepareStep(2));
+        }
 
         assertEquals(1, fixture.physics.bodies().size());
         assertSame(body, fixture.physics.bodies().get(0));

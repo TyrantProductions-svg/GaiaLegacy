@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
 
 class ChunkPersistenceRegressionTest {
     @Test
-    void all81ChunksRestoreExactRevisionsHighWaterAndDirtyMeshScheduling() {
+    void legacy81ChunksRestoreBoundedExactNeighborhoodAndGlobalHighWater() {
         SaveGameSnapshot captured = Gate14BCanonicalFixture
                 .representativeLiveCapture()
                 .capture()
@@ -41,6 +41,8 @@ class ChunkPersistenceRegressionTest {
             List<ChunkKey> expectedKeys = decoded.chunks().chunks().stream()
                     .map(ChunkSnapshot::key)
                     .toList();
+            Map<ChunkKey, ChunkSnapshot> decodedChunks = byKey(decoded.chunks());
+            Map<ChunkKey, ChunkSnapshot> residentChunks = byKey(recaptured.chunks());
 
             assertAll(
                     () -> assertEquals(81, expectedKeys.size()),
@@ -48,8 +50,14 @@ class ChunkPersistenceRegressionTest {
                     () -> assertEquals(0, restored.generationInvocationCount()),
                     () -> assertEquals(95L,
                             recaptured.chunks().revisionHighWater()),
-                    () -> assertEquals(decoded.chunks(), recaptured.chunks()),
-                    () -> assertEquals(decoded, recaptured));
+                    () -> assertEquals(25, residentChunks.size()),
+                    () -> assertTrue(decodedChunks.entrySet()
+                            .containsAll(residentChunks.entrySet())),
+                    () -> assertEquals(decoded.metadata(), recaptured.metadata()),
+                    () -> assertEquals(decoded.fixedTick(), recaptured.fixedTick()),
+                    () -> assertEquals(decoded.player(), recaptured.player()),
+                    () -> assertEquals(decoded.inventory(), recaptured.inventory()),
+                    () -> assertEquals(decoded.worldItems(), recaptured.worldItems()));
         }
     }
 

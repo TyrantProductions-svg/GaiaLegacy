@@ -1,5 +1,8 @@
 package com.overlord.physics;
 
+import com.overlord.voxel.ChunkAvailability;
+import com.overlord.voxel.ChunkCoordinatePolicy;
+import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.World;
 import java.util.List;
 import java.util.Objects;
@@ -26,6 +29,31 @@ public final class BlockRaycast {
     }
 
     public Optional<BlockRaycastHit> cast(
+            Vector3fc origin,
+            Vector3fc direction,
+            float maxDistance) {
+        return castInternal(QueryContext.legacy(), origin, direction, maxDistance);
+    }
+
+    public SpatialQueryResult<BlockRaycastHit> cast(
+            SimulationOrigin simulationOrigin,
+            Vector3fc origin,
+            Vector3fc direction,
+            float maxDistance) {
+        Objects.requireNonNull(simulationOrigin, "simulationOrigin");
+        try {
+            return SpatialQueryResult.available(
+                    castInternal(new QueryContext(
+                            simulationOrigin.worldOriginX(),
+                            simulationOrigin.worldOriginZ(),
+                            true), origin, direction, maxDistance));
+        } catch (UnavailableSpace unavailable) {
+            return SpatialQueryResult.unavailable(unavailable.status, unavailable.key);
+        }
+    }
+
+    private Optional<BlockRaycastHit> castInternal(
+            QueryContext queryContext,
             Vector3fc origin,
             Vector3fc direction,
             float maxDistance) {
@@ -73,6 +101,7 @@ public final class BlockRaycast {
                                     zTraversal.nextDistance()));
             Candidate best =
                     hitInBlock(
+                            queryContext,
                             origin,
                             directionX,
                             directionY,
@@ -138,6 +167,7 @@ public final class BlockRaycast {
                         }
                         Candidate candidate =
                                 hitInBlock(
+                                        queryContext,
                                         origin,
                                         directionX,
                                         directionY,
@@ -192,6 +222,7 @@ public final class BlockRaycast {
     }
 
     private Candidate hitInBlock(
+            QueryContext queryContext,
             Vector3fc origin,
             double directionX,
             double directionY,
@@ -200,7 +231,21 @@ public final class BlockRaycast {
             int blockX,
             int blockY,
             int blockZ) {
-        byte blockId = world.getBlock(blockX, blockY, blockZ);
+        int globalX = queryContext.globalX(blockX);
+        int globalZ = queryContext.globalZ(blockZ);
+        ChunkKey key = ChunkCoordinatePolicy.requireSafe(
+                ChunkKey.fromWorld(globalX, globalZ));
+        if (queryContext.availabilityAware) {
+            ChunkAvailability availability = world.chunks().availability(key);
+            if (availability != ChunkAvailability.AVAILABLE) {
+                throw new UnavailableSpace(
+                        availability == ChunkAvailability.FAILED
+                                ? SpatialQueryResult.Status.FAILED
+                                : SpatialQueryResult.Status.UNKNOWN,
+                        key);
+            }
+        }
+        byte blockId = world.getBlock(globalX, blockY, globalZ);
         BlockCollisionShape shape =
                 Objects.requireNonNull(
                         shapeResolver.shapeFor(blockId),
@@ -214,6 +259,8 @@ public final class BlockRaycast {
                 blockX,
                 blockY,
                 blockZ,
+                globalX,
+                globalZ,
                 blockId,
                 shape.boxes());
     }
@@ -227,6 +274,8 @@ public final class BlockRaycast {
             int blockX,
             int blockY,
             int blockZ,
+            int globalBlockX,
+            int globalBlockZ,
             byte blockId,
             List<Aabb> boxes) {
         Candidate best = null;
@@ -243,9 +292,9 @@ public final class BlockRaycast {
                             directionY,
                             directionZ,
                             maxDistance,
-                            blockX,
+                            globalBlockX,
                             blockY,
-                            blockZ,
+                            globalBlockZ,
                             blockId,
                             subShapeIndex,
                             shape);
@@ -519,6 +568,31 @@ public final class BlockRaycast {
                     step,
                     nextDistance + distancePerCell,
                     distancePerCell);
+        }
+    }
+
+    private record QueryContext(long originX, long originZ, boolean availabilityAware) {
+        private static QueryContext legacy() {
+            return new QueryContext(0, 0, false);
+        }
+
+        private int globalX(int localX) {
+            return Math.toIntExact(Math.addExact(originX, localX));
+        }
+
+        private int globalZ(int localZ) {
+            return Math.toIntExact(Math.addExact(originZ, localZ));
+        }
+    }
+
+    private static final class UnavailableSpace extends RuntimeException {
+        private final SpatialQueryResult.Status status;
+        private final ChunkKey key;
+
+        private UnavailableSpace(SpatialQueryResult.Status status, ChunkKey key) {
+            super(null, null, false, false);
+            this.status = status;
+            this.key = key;
         }
     }
 

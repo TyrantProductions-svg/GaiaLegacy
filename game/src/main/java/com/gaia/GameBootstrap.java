@@ -18,6 +18,14 @@ import com.gaia.save.store.AtomicSaveStore;
 import com.gaia.save.store.FileSaveCatalog;
 import com.gaia.save.store.JdkSaveFileOperations;
 import com.gaia.save.store.SaveRepository;
+import com.gaia.save.streaming.Phase14MigrationResult;
+import com.gaia.save.streaming.Phase14SaveMigrator;
+import com.gaia.save.streaming.StreamedSessionSaveTarget;
+import com.gaia.save.streaming.StreamedChunkCodec;
+import com.gaia.save.streaming.StreamedChunkIndex;
+import com.gaia.save.streaming.StreamedChunkIndexCodec;
+import com.gaia.save.streaming.StreamedChunkStore;
+import com.gaia.save.streaming.StreamedWorldItemPageBackend;
 import com.gaia.save.format.SaveGameId;
 import com.gaia.session.GameSessionConfig;
 import com.gaia.session.GameSessionFactory;
@@ -63,9 +71,12 @@ import com.overlord.renderer.ui.UiLayoutContext;
 import com.overlord.renderer.visual.RenderVisualSettings;
 import java.util.List;
 import java.util.Objects;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
@@ -156,21 +167,25 @@ public final class GameBootstrap {
                     new FrameClock(
                             System::nanoTime,
                             MAX_FRAME_DELTA_SECONDS);
+            Path saveRoot = new DefaultSaveRootProvider().saveRoot();
+            GameSessionFactory.StreamingBackendFactory streamingBackends =
+                    composeStreamingBackends(saveRoot);
             GameSessionFactory sessionFactory =
                     new GameSessionFactory(
                             engine,
                             inputManager,
                             mainThreadGuard,
                             catalog,
-                            uiAssets,
-                            Boolean.getBoolean(
-                                    "gaia.inventory.debugShortcuts"));
+                             uiAssets,
+                             Boolean.getBoolean(
+                                     "gaia.inventory.debugShortcuts"),
+                             streamingBackends);
             SettingsController settingsController = settingsLifecycle.controller();
             ProductShellController shell =
                     new ProductShellController(
                             ScreenRouter.mainMenu(), settingsController);
             SaveComposition saveComposition = composeSaveLoad(
-                    new DefaultSaveRootProvider().saveRoot(),
+                    saveRoot,
                     sessionFactory::create,
                     sessionFactory::restore,
                     settingsLifecycle::newSessionConfig,
@@ -211,6 +226,28 @@ public final class GameBootstrap {
         }
     }
 
+    private static GameSessionFactory.StreamingBackendFactory
+            composeStreamingBackends(Path saveRoot) {
+        Path root = Objects.requireNonNull(saveRoot, "saveRoot");
+        return saveGameId -> {
+            SaveGameId id = Objects.requireNonNull(saveGameId, "saveGameId");
+            StreamedChunkStore store = new StreamedChunkStore(
+                    root,
+                    id,
+                    new StreamedChunkCodec(),
+                    new StreamedChunkIndexCodec(),
+                    new JdkSaveFileOperations());
+            StreamedWorldItemPageBackend pages =
+                    new StreamedWorldItemPageBackend(store);
+            GameSessionFactory.StreamingBackends graph =
+                    new GameSessionFactory.StreamingBackends(store, pages);
+            return new GameSessionFactory.StreamingBackends(
+                    store,
+                    pages,
+                    Optional.of(composeStreamedSaveTarget(root, id, graph)));
+        };
+    }
+
     static SaveComposition composeSaveLoad(
             Path saveRoot,
             GameSessionLauncher.NewSessionFactory newSessions,
@@ -238,6 +275,11 @@ public final class GameBootstrap {
         NewWorldDraftController newWorldDraft = new NewWorldDraftController(catalog);
         WorldSlotsController worldSlots = new WorldSlotsController(catalog, 4);
         SaveCoordinator coordinator = new SaveCoordinator(id -> {
+            if (Phase14SaveMigrator.readPublished(
+                    root, id, archiveReader, files).isPresent()) {
+                return new StreamedSessionSaveTarget(
+                        root, id, archiveReader, files);
+            }
             AtomicSaveStore store = new AtomicSaveStore(
                     root,
                     id,
@@ -288,6 +330,161 @@ public final class GameBootstrap {
                 newWorldDraft,
                 worldSlots,
                 persistenceServices);
+    }
+
+    private static SaveCoordinator.SaveTarget composeStreamedSaveTarget(
+            Path saveRoot,
+            SaveGameId saveGameId,
+            GameSessionFactory.StreamingBackends backends) {
+        SaveSnapshotCodec snapshotCodec = new SaveSnapshotCodec(
+                new ChunkSectionCodec(),
+                new PlayerSectionCodec(),
+                new InventorySectionCodec(),
+                new WorldItemsSectionCodec());
+        return composeStreamedSaveTarget(
+                saveRoot,
+                saveGameId,
+                backends,
+                snapshotCodec,
+                new SaveArchiveReader(snapshotCodec),
+                new JdkSaveFileOperations());
+    }
+
+    private static SaveCoordinator.SaveTarget composeStreamedSaveTarget(
+            Path saveRoot,
+            SaveGameId saveGameId,
+            GameSessionFactory.StreamingBackends backends,
+            SaveSnapshotCodec snapshotCodec,
+            SaveArchiveReader archiveReader,
+            JdkSaveFileOperations files) {
+        GameSessionFactory.StreamingBackends graph = Objects.requireNonNull(
+                backends, "backends");
+        return new StreamedSessionSaveTarget(
+                saveRoot,
+                saveGameId,
+                archiveReader,
+                files,
+                graph.chunkStore(),
+                graph.worldItems(),
+                (snapshot, modifiedTime) -> bootstrapFreshStreamedAuthority(
+                        saveRoot,
+                        saveGameId,
+                        graph.chunkStore(),
+                        snapshotCodec,
+                        archiveReader,
+                        files,
+                        snapshot,
+                        modifiedTime));
+    }
+
+    private static void bootstrapFreshStreamedAuthority(
+            Path saveRoot,
+            SaveGameId saveGameId,
+            StreamedChunkStore store,
+            SaveSnapshotCodec snapshotCodec,
+            SaveArchiveReader archiveReader,
+            JdkSaveFileOperations files,
+            com.gaia.save.snapshot.SaveGameSnapshot snapshot,
+            Instant modifiedTime) {
+        Path current = saveRoot.resolve(saveGameId.value()).resolve("current.glsave");
+        if (!Files.exists(current, LinkOption.NOFOLLOW_LINKS)) {
+            requirePristineFreshStreamedStore(saveRoot, saveGameId, store);
+            com.gaia.save.snapshot.SaveGameSnapshot floor =
+                    requireFreshLegacyMigrationFloor(snapshot);
+            var write = new AtomicSaveStore(
+                            saveRoot,
+                            saveGameId,
+                            snapshotCodec,
+                            new SaveArchiveWriter(),
+                            archiveReader,
+                            files)
+                    .save(floor, modifiedTime);
+            if (write.status()
+                    != com.gaia.save.store.SaveWriteResult.Status.SUCCESS) {
+                throw new IllegalStateException(
+                        "Fresh streamed migration floor could not be written: "
+                                + write.diagnostics());
+            }
+        }
+        Phase14MigrationResult migration = new Phase14SaveMigrator(
+                        saveRoot,
+                        archiveReader,
+                        new StreamedChunkCodec(),
+                        new StreamedChunkIndexCodec(),
+                        files)
+                .migrate(saveGameId);
+        if (migration.status() != Phase14MigrationResult.Status.MIGRATED
+                && migration.status()
+                        != Phase14MigrationResult.Status.NOT_REQUIRED) {
+            throw new IllegalStateException(
+                    "Fresh streamed authority could not be published: "
+                            + migration.diagnostics().stream()
+                                    .map(diagnostic -> diagnostic.code() + ": "
+                                            + diagnostic.message() + " cause="
+                                            + diagnostic.cause()
+                                                    .map(Throwable::toString)
+                                                    .orElse("none"))
+                                    .toList());
+        }
+        StreamedChunkIndex migratedIndex = migration.validatedIndex().orElseThrow();
+        store.acknowledgePublishedMigration(
+                migratedIndex.migrationCompatibility().orElseThrow());
+    }
+
+    private static void requirePristineFreshStreamedStore(
+            Path saveRoot, SaveGameId saveGameId, StreamedChunkStore store) {
+        var authority = store.readCurrentAuthority(saveGameId);
+        var index = authority.index().orElseThrow(() -> new IllegalStateException(
+                "Fresh streamed store is not readable: " + authority.diagnostics()));
+        if (!store.hasPristineUnpublishedAuthority()
+                || !index.entries().isEmpty()
+                || !index.globalExtensions().isEmpty()
+                || index.migrationCompatibility().isPresent()
+                || !authority.payloads().isEmpty()) {
+            throw new IllegalStateException(
+                    "Only a pristine empty streamed store may bootstrap a v1 floor");
+        }
+        Path world = saveRoot.resolve(saveGameId.value());
+        for (String name : List.of(
+                "streamed-migration.a.v2",
+                "streamed-migration.b.v2",
+                "streamed-migration.published.a.v2",
+                "streamed-migration.published.b.v2")) {
+            if (Files.exists(world.resolve(name), LinkOption.NOFOLLOW_LINKS)) {
+                throw new IllegalStateException(
+                        "Fresh streamed store has migration side evidence");
+            }
+        }
+    }
+
+    private static com.gaia.save.snapshot.SaveGameSnapshot
+            requireFreshLegacyMigrationFloor(
+                    com.gaia.save.snapshot.SaveGameSnapshot snapshot) {
+        var worldItems = snapshot.worldItems();
+        if (snapshot.fixedTick() != 0L
+                || worldItems.fixedTick() != 0L
+                || !worldItems.entries().isEmpty()
+                || worldItems.nextItemId() != 0L
+                || worldItems.itemIdsExhausted()) {
+            throw new IllegalStateException(
+                    "Only an untouched initial world may create a v1 migration floor");
+        }
+        return new com.gaia.save.snapshot.SaveGameSnapshot(
+                snapshot.metadata(),
+                snapshot.fixedTick(),
+                new com.overlord.voxel.ChunkRepositorySnapshot(
+                        snapshot.chunks().worldHeight(),
+                        snapshot.chunks().revisionHighWater(),
+                        List.of()),
+                snapshot.player(),
+                snapshot.inventory(),
+                new com.gaia.save.snapshot.WorldItemsSaveSnapshot(
+                        worldItems.fixedTick(),
+                        List.of(),
+                        0L,
+                        false,
+                        com.overlord.worlditem.api.LogicalWorldItemSnapshot.Completeness
+                                .LEGACY_COMPLETE));
     }
 
     record SaveComposition(

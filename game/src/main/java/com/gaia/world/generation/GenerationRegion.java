@@ -2,25 +2,44 @@ package com.gaia.world.generation;
 
 import com.overlord.config.GameConfig;
 import com.overlord.voxel.ChunkGenerationData;
+import com.overlord.voxel.ChunkCoordinatePolicy;
 import com.overlord.voxel.ChunkKey;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.OptionalInt;
 
 public final class GenerationRegion {
     private static final int CHUNK_SIZE =
             GameConfig.Chunk.SIZE;
 
     private final ChunkKey key;
+    private final long worldOriginX;
+    private final long worldOriginZ;
     private final int worldHeight;
     private final byte air;
     private final byte[] blocks;
     private final BiomeSample[] biomes;
     private final int[] heights;
+    private final WorldColumnSampler worldColumns;
     private int writeCount;
 
     public GenerationRegion(
             ChunkKey key, int worldHeight, byte air) {
-        this.key = Objects.requireNonNull(key, "key");
+        this(key, worldHeight, air, null);
+    }
+
+    public GenerationRegion(
+            ChunkKey key,
+            int worldHeight,
+            byte air,
+            WorldColumnSampler worldColumns) {
+        this.key =
+                ChunkCoordinatePolicy.requireSafe(
+                        Objects.requireNonNull(key, "key"));
+        this.worldOriginX =
+                ChunkCoordinatePolicy.worldOriginX(this.key);
+        this.worldOriginZ =
+                ChunkCoordinatePolicy.worldOriginZ(this.key);
         if (worldHeight <= 0) {
             throw new IllegalArgumentException(
                     "worldHeight must be positive");
@@ -38,6 +57,7 @@ public final class GenerationRegion {
         }
         this.worldHeight = worldHeight;
         this.air = air;
+        this.worldColumns = worldColumns;
         this.blocks = new byte[blockCount];
         if (air != 0) {
             Arrays.fill(blocks, air);
@@ -131,23 +151,66 @@ public final class GenerationRegion {
     }
 
     public int worldX(int localX) {
+        return Math.toIntExact(worldXLong(localX));
+    }
+
+    public long worldXLong(int localX) {
         validateLocalHorizontal("localX", localX);
-        return Math.addExact(key.worldOriginX(), localX);
+        return Math.addExact(worldOriginX, localX);
     }
 
     public int worldZ(int localZ) {
+        return Math.toIntExact(worldZLong(localZ));
+    }
+
+    public long worldZLong(int localZ) {
         validateLocalHorizontal("localZ", localZ);
-        return Math.addExact(key.worldOriginZ(), localZ);
+        return Math.addExact(worldOriginZ, localZ);
+    }
+
+    public long worldOriginX() {
+        return worldOriginX;
+    }
+
+    public long worldOriginZ() {
+        return worldOriginZ;
     }
 
     public int localX(int worldX) {
-        return localHorizontal(
-                "worldX", worldX, key.worldOriginX());
+        return localX((long) worldX);
+    }
+
+    public int localX(long worldX) {
+        return localHorizontal("worldX", worldX, worldOriginX);
     }
 
     public int localZ(int worldZ) {
-        return localHorizontal(
-                "worldZ", worldZ, key.worldOriginZ());
+        return localZ((long) worldZ);
+    }
+
+    public int localZ(long worldZ) {
+        return localHorizontal("worldZ", worldZ, worldOriginZ);
+    }
+
+    OptionalInt heightAtWorld(
+            GenerationContext context, long worldX, long worldZ) {
+        Objects.requireNonNull(context, "context");
+        long localX = worldX - worldOriginX;
+        long localZ = worldZ - worldOriginZ;
+        if (localX >= 0
+                && localX < CHUNK_SIZE
+                && localZ >= 0
+                && localZ < CHUNK_SIZE) {
+            return OptionalInt.of(
+                    getHeight((int) localX, (int) localZ));
+        }
+        if (worldColumns == null) {
+            throw new IllegalStateException(
+                    "World-column sampler is required for halo sampling");
+        }
+        return OptionalInt.of(
+                worldColumns.heightAt(
+                        context, worldX, worldZ));
     }
 
     public ChunkGenerationData freeze() {
@@ -206,13 +269,35 @@ public final class GenerationRegion {
     }
 
     private static int localHorizontal(
-            String name, int worldCoordinate, int origin) {
-        long local = (long) worldCoordinate - origin;
+            String name, long worldCoordinate, long origin) {
+        long local = worldCoordinate - origin;
         if (local < 0 || local >= CHUNK_SIZE) {
             throw new IndexOutOfBoundsException(
                     name
                             + " is outside this generation region");
         }
         return (int) local;
+    }
+
+    @FunctionalInterface
+    public interface WorldColumnSampler {
+        int heightAt(
+                GenerationContext context,
+                long worldX,
+                long worldZ);
+
+        static WorldColumnSampler from(
+                BiomeProvider biomes,
+                HeightProvider heights) {
+            Objects.requireNonNull(biomes, "biomes");
+            Objects.requireNonNull(heights, "heights");
+            return (context, worldX, worldZ) -> {
+                BiomeSample biome =
+                        biomes.sample(
+                                context, worldX, worldZ);
+                return heights.sampleHeight(
+                        context, worldX, worldZ, biome);
+            };
+        }
     }
 }

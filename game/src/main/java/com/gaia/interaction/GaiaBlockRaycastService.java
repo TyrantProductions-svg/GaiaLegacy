@@ -6,9 +6,12 @@ import com.overlord.interaction.api.BlockHitResult;
 import com.overlord.interaction.api.BlockRaycastService;
 import com.overlord.physics.BlockRaycast;
 import com.overlord.physics.BlockRaycastHit;
+import com.overlord.physics.SimulationOrigin;
+import com.overlord.physics.SpatialQueryResult;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.IntFunction;
+import java.util.function.Supplier;
 import org.joml.Vector3fc;
 
 /** Identity adapter over the unique Phase 6 shape-aware raycast. */
@@ -18,7 +21,21 @@ public final class GaiaBlockRaycastService implements BlockRaycastService {
 
     public GaiaBlockRaycastService(BlockRaycast raycast, BlockRegistry blocks) {
         this(
-                Objects.requireNonNull(raycast, "raycast")::cast,
+                (RaycastDelegate)
+                        Objects.requireNonNull(raycast, "raycast")::cast,
+                registryIdentity(blocks));
+    }
+
+    /**
+     * Creates a Task 10 origin-aware adapter without owning the origin authority.
+     * The supplier is sampled once per query and unavailable space fails closed.
+     */
+    public GaiaBlockRaycastService(
+            BlockRaycast raycast,
+            BlockRegistry blocks,
+            Supplier<SimulationOrigin> simulationOrigin) {
+        this(
+                failClosedDelegate(originAwareDelegate(raycast, simulationOrigin)),
                 registryIdentity(blocks));
     }
 
@@ -32,6 +49,49 @@ public final class GaiaBlockRaycastService implements BlockRaycastService {
             IntFunction<ResourceLocation> blockIdentity) {
         this.raycast = Objects.requireNonNull(raycast, "raycast");
         this.blockIdentity = Objects.requireNonNull(blockIdentity, "blockIdentity");
+    }
+
+    static GaiaBlockRaycastService originAware(
+            OriginAwareRaycastDelegate raycast,
+            IntFunction<ResourceLocation> blockIdentity) {
+        return new GaiaBlockRaycastService(
+                failClosedDelegate(raycast), blockIdentity);
+    }
+
+    private static OriginAwareRaycastDelegate originAwareDelegate(
+            BlockRaycast raycast,
+            Supplier<SimulationOrigin> simulationOrigin) {
+        BlockRaycast requiredRaycast = Objects.requireNonNull(raycast, "raycast");
+        Supplier<SimulationOrigin> requiredOrigin =
+                Objects.requireNonNull(simulationOrigin, "simulationOrigin");
+        return (origin, direction, maxDistance) -> requiredRaycast.cast(
+                Objects.requireNonNull(
+                        requiredOrigin.get(), "simulationOrigin.get()"),
+                origin,
+                direction,
+                maxDistance);
+    }
+
+    private static Optional<BlockRaycastHit> availableResult(
+            SpatialQueryResult<BlockRaycastHit> query) {
+        SpatialQueryResult<BlockRaycastHit> required =
+                Objects.requireNonNull(query, "query");
+        if (required.status() != SpatialQueryResult.Status.AVAILABLE) {
+            throw new IllegalStateException(
+                    "block raycast space is "
+                            + required.status()
+                            + " at "
+                            + required.unavailableKey().orElseThrow());
+        }
+        return required.result();
+    }
+
+    private static RaycastDelegate failClosedDelegate(
+            OriginAwareRaycastDelegate raycast) {
+        OriginAwareRaycastDelegate required =
+                Objects.requireNonNull(raycast, "raycast");
+        return (origin, direction, maxDistance) -> availableResult(
+                required.cast(origin, direction, maxDistance));
     }
 
     @Override
@@ -52,6 +112,12 @@ public final class GaiaBlockRaycastService implements BlockRaycastService {
     @FunctionalInterface
     interface RaycastDelegate {
         Optional<BlockRaycastHit> cast(
+                Vector3fc origin, Vector3fc direction, float maxDistance);
+    }
+
+    @FunctionalInterface
+    interface OriginAwareRaycastDelegate {
+        SpatialQueryResult<BlockRaycastHit> cast(
                 Vector3fc origin, Vector3fc direction, float maxDistance);
     }
 }

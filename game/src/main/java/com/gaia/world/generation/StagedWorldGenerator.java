@@ -14,6 +14,7 @@ import java.util.concurrent.CancellationException;
 public final class StagedWorldGenerator
         implements WorldGenerator {
     private final List<StageEntry> stages;
+    private final GenerationRegion.WorldColumnSampler worldColumns;
 
     public StagedWorldGenerator(
             List<WorldGenerationStage> stages) {
@@ -25,19 +26,46 @@ public final class StagedWorldGenerator
         List<StageEntry> entries =
                 new ArrayList<>(stages.size());
         Set<ResourceLocation> stageIds = new HashSet<>();
+        BiomeProvider biomeProvider = null;
+        HeightProvider heightProvider = null;
         for (WorldGenerationStage stage : stages) {
             Objects.requireNonNull(stage, "stage");
             ResourceLocation stageId =
                     Objects.requireNonNull(
                             stage.id(), "stage.id()");
+            GenerationStageContract contract =
+                    Objects.requireNonNull(
+                            stage.contract(), "stage.contract()");
+            if (!stageId.equals(contract.id())) {
+                throw new IllegalArgumentException(
+                        "Generation stage ID does not match its contract: "
+                                + stageId
+                                + " != "
+                                + contract.id());
+            }
             if (!stageIds.add(stageId)) {
                 throw new IllegalArgumentException(
                         "Duplicate generation stage ID: "
                                 + stageId);
             }
-            entries.add(new StageEntry(stageId, stage));
+            entries.add(new StageEntry(contract, stage));
+            if (stage instanceof BiomeProvider provider) {
+                biomeProvider = provider;
+            }
+            if (stage instanceof HeightProvider provider) {
+                heightProvider = provider;
+            }
         }
         this.stages = List.copyOf(entries);
+        if ((biomeProvider == null) != (heightProvider == null)) {
+            throw new IllegalArgumentException(
+                    "Biome and height stages must be supplied together");
+        }
+        this.worldColumns =
+                biomeProvider == null
+                        ? null
+                        : GenerationRegion.WorldColumnSampler.from(
+                                biomeProvider, heightProvider);
     }
 
     @Override
@@ -48,7 +76,8 @@ public final class StagedWorldGenerator
                 new GenerationRegion(
                         Objects.requireNonNull(key, "key"),
                         GameConfig.Chunk.MAX_HEIGHT,
-                        context.palette().air());
+                        context.palette().air(),
+                        worldColumns);
         List<GenerationStageResult> results =
                 new ArrayList<>(stages.size());
         for (StageEntry stage : stages) {
@@ -76,13 +105,13 @@ public final class StagedWorldGenerator
             if (result == null) {
                 throw new IllegalStateException(
                         "Generation stage "
-                                + stage.id()
+                                + stage.contract().id()
                                 + " returned null");
             }
-            if (!stage.id().equals(result.stageId())) {
+            if (!stage.contract().id().equals(result.stageId())) {
                 throw new IllegalStateException(
                         "Generation stage "
-                                + stage.id()
+                                + stage.contract().id()
                                 + " returned result for "
                                 + result.stageId());
             }
@@ -91,7 +120,7 @@ public final class StagedWorldGenerator
             throw cancellation;
         } catch (Throwable failure) {
             return new GenerationStageResult(
-                    stage.id(),
+                    stage.contract().id(),
                     GenerationStageResult.Status.FAILED,
                     0,
                     0,
@@ -100,7 +129,7 @@ public final class StagedWorldGenerator
     }
 
     private record StageEntry(
-            ResourceLocation id,
+            GenerationStageContract contract,
             WorldGenerationStage provider) {
     }
 }

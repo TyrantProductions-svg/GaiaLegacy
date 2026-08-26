@@ -1,6 +1,8 @@
 package com.overlord.physics;
 
 import com.overlord.config.GameConfig;
+import com.overlord.voxel.ChunkAvailability;
+import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.World;
 import java.util.ArrayList;
 import java.util.List;
@@ -29,6 +31,35 @@ public final class CollisionWorld {
             Aabb localCollider,
             Vector3fc position,
             Vector3fc displacement) {
+        return sweepInternal(QueryContext.legacy(), localCollider, position, displacement);
+    }
+
+    public SpatialQueryResult<SweepResult> sweep(
+            SimulationOrigin simulationOrigin,
+            Aabb localCollider,
+            Vector3fc position,
+            Vector3fc displacement) {
+        Objects.requireNonNull(simulationOrigin, "simulationOrigin");
+        try {
+            return SpatialQueryResult.available(
+                    sweepInternal(
+                            new QueryContext(
+                                    simulationOrigin.worldOriginX(),
+                                    simulationOrigin.worldOriginZ(),
+                                    true),
+                            localCollider,
+                            position,
+                            displacement));
+        } catch (UnavailableSpace unavailable) {
+            return SpatialQueryResult.unavailable(unavailable.status, unavailable.key);
+        }
+    }
+
+    private Optional<SweepResult> sweepInternal(
+            QueryContext queryContext,
+            Aabb localCollider,
+            Vector3fc position,
+            Vector3fc displacement) {
         Objects.requireNonNull(localCollider, "localCollider");
         Objects.requireNonNull(position, "position");
         Objects.requireNonNull(displacement, "displacement");
@@ -46,9 +77,9 @@ public final class CollisionWorld {
         int minBlockX = floorBlockCoordinate(broadPhase.minX());
         int minBlockY = floorBlockCoordinate(broadPhase.minY());
         int minBlockZ = floorBlockCoordinate(broadPhase.minZ());
-        int maxBlockX = floorBlockCoordinate(broadPhase.maxX());
-        int maxBlockY = floorBlockCoordinate(broadPhase.maxY());
-        int maxBlockZ = floorBlockCoordinate(broadPhase.maxZ());
+        int maxBlockX = maximumBlockCoordinate(broadPhase.minX(), broadPhase.maxX());
+        int maxBlockY = maximumBlockCoordinate(broadPhase.minY(), broadPhase.maxY());
+        int maxBlockZ = maximumBlockCoordinate(broadPhase.minZ(), broadPhase.maxZ());
 
         Candidate best = null;
         for (long blockX = minBlockX; blockX <= maxBlockX; blockX++) {
@@ -57,10 +88,23 @@ public final class CollisionWorld {
                     int x = (int) blockX;
                     int y = (int) blockY;
                     int z = (int) blockZ;
+                    int globalX = queryContext.globalX(x);
+                    int globalZ = queryContext.globalZ(z);
+                    if (queryContext.availabilityAware) {
+                        ChunkKey key = ChunkKey.fromWorld(globalX, globalZ);
+                        ChunkAvailability availability = world.chunks().availability(key);
+                        if (availability != ChunkAvailability.AVAILABLE) {
+                            throw new UnavailableSpace(
+                                    availability == ChunkAvailability.FAILED
+                                            ? SpatialQueryResult.Status.FAILED
+                                            : SpatialQueryResult.Status.UNKNOWN,
+                                    key);
+                        }
+                    }
                     BlockCollisionShape shape =
                             Objects.requireNonNull(
                                     shapeResolver.shapeFor(
-                                            world.getBlock(x, y, z)),
+                                            world.getBlock(globalX, y, globalZ)),
                                     "shapeResolver result");
                     List<Aabb> boxes = shape.boxes();
                     for (int subShapeIndex = 0;
@@ -73,9 +117,9 @@ public final class CollisionWorld {
                                 sweepAgainst(
                                         start,
                                         displacement,
-                                        x,
+                                        globalX,
                                         y,
-                                        z,
+                                        globalZ,
                                         subShapeIndex,
                                         blockShape);
                         if (candidate != null
@@ -112,6 +156,38 @@ public final class CollisionWorld {
             Vector3fc position,
             Vector3fc displacement,
             int maxIterations) {
+        return moveAndSlideInternal(
+                QueryContext.legacy(), localCollider, position, displacement, maxIterations);
+    }
+
+    public SpatialQueryResult<MotionResult> moveAndSlide(
+            SimulationOrigin simulationOrigin,
+            Aabb localCollider,
+            Vector3fc position,
+            Vector3fc displacement,
+            int maxIterations) {
+        Objects.requireNonNull(simulationOrigin, "simulationOrigin");
+        try {
+            return SpatialQueryResult.available(Optional.of(moveAndSlideInternal(
+                    new QueryContext(
+                            simulationOrigin.worldOriginX(),
+                            simulationOrigin.worldOriginZ(),
+                            true),
+                    localCollider,
+                    position,
+                    displacement,
+                    maxIterations)));
+        } catch (UnavailableSpace unavailable) {
+            return SpatialQueryResult.unavailable(unavailable.status, unavailable.key);
+        }
+    }
+
+    private MotionResult moveAndSlideInternal(
+            QueryContext queryContext,
+            Aabb localCollider,
+            Vector3fc position,
+            Vector3fc displacement,
+            int maxIterations) {
         Objects.requireNonNull(localCollider, "localCollider");
         Objects.requireNonNull(position, "position");
         Objects.requireNonNull(displacement, "displacement");
@@ -131,7 +207,7 @@ public final class CollisionWorld {
                         && remaining.lengthSquared() >= toleranceSquared;
                 iteration++) {
             Optional<SweepResult> possibleHit =
-                    sweep(localCollider, current, remaining);
+                    sweepInternal(queryContext, localCollider, current, remaining);
             if (possibleHit.isEmpty()) {
                 current.add(remaining);
                 remaining.zero();
@@ -169,13 +245,32 @@ public final class CollisionWorld {
     }
 
     public boolean overlapsSolid(Aabb worldBounds) {
+        return overlapsSolidInternal(QueryContext.legacy(), worldBounds);
+    }
+
+    public SpatialQueryResult<Boolean> overlapsSolid(
+            SimulationOrigin simulationOrigin, Aabb localBounds) {
+        Objects.requireNonNull(simulationOrigin, "simulationOrigin");
+        try {
+            return SpatialQueryResult.available(Optional.of(overlapsSolidInternal(
+                    new QueryContext(
+                            simulationOrigin.worldOriginX(),
+                            simulationOrigin.worldOriginZ(),
+                            true),
+                    localBounds)));
+        } catch (UnavailableSpace unavailable) {
+            return SpatialQueryResult.unavailable(unavailable.status, unavailable.key);
+        }
+    }
+
+    private boolean overlapsSolidInternal(QueryContext queryContext, Aabb worldBounds) {
         Objects.requireNonNull(worldBounds, "worldBounds");
         int minBlockX = floorBlockCoordinate(worldBounds.minX());
         int minBlockY = floorBlockCoordinate(worldBounds.minY());
         int minBlockZ = floorBlockCoordinate(worldBounds.minZ());
-        int maxBlockX = floorBlockCoordinate(worldBounds.maxX());
-        int maxBlockY = floorBlockCoordinate(worldBounds.maxY());
-        int maxBlockZ = floorBlockCoordinate(worldBounds.maxZ());
+        int maxBlockX = maximumBlockCoordinate(worldBounds.minX(), worldBounds.maxX());
+        int maxBlockY = maximumBlockCoordinate(worldBounds.minY(), worldBounds.maxY());
+        int maxBlockZ = maximumBlockCoordinate(worldBounds.minZ(), worldBounds.maxZ());
 
         for (long blockX = minBlockX; blockX <= maxBlockX; blockX++) {
             for (long blockY = minBlockY; blockY <= maxBlockY; blockY++) {
@@ -183,7 +278,7 @@ public final class CollisionWorld {
                     int x = (int) blockX;
                     int y = (int) blockY;
                     int z = (int) blockZ;
-                    BlockCollisionShape shape = resolveShape(x, y, z);
+                    BlockCollisionShape shape = resolveShape(queryContext, x, y, z);
                     for (Aabb localShape : shape.boxes()) {
                         if (worldBounds.intersects(
                                 translate(localShape, x, y, z))) {
@@ -200,6 +295,35 @@ public final class CollisionWorld {
             Aabb localCollider,
             Vector3fc position,
             int maxIterations) {
+        return depenetrateInternal(
+                QueryContext.legacy(), localCollider, position, maxIterations);
+    }
+
+    public SpatialQueryResult<Vector3f> depenetrate(
+            SimulationOrigin simulationOrigin,
+            Aabb localCollider,
+            Vector3fc position,
+            int maxIterations) {
+        Objects.requireNonNull(simulationOrigin, "simulationOrigin");
+        try {
+            return SpatialQueryResult.available(depenetrateInternal(
+                    new QueryContext(
+                            simulationOrigin.worldOriginX(),
+                            simulationOrigin.worldOriginZ(),
+                            true),
+                    localCollider,
+                    position,
+                    maxIterations));
+        } catch (UnavailableSpace unavailable) {
+            return SpatialQueryResult.unavailable(unavailable.status, unavailable.key);
+        }
+    }
+
+    private Optional<Vector3f> depenetrateInternal(
+            QueryContext queryContext,
+            Aabb localCollider,
+            Vector3fc position,
+            int maxIterations) {
         Objects.requireNonNull(localCollider, "localCollider");
         Objects.requireNonNull(position, "position");
         validateFinite(position, "position");
@@ -209,6 +333,7 @@ public final class CollisionWorld {
         for (int iteration = 0; iteration < maxIterations; iteration++) {
             PenetrationTranslation translation =
                     findSmallestTranslation(
+                            queryContext,
                             localCollider.translated(recovered));
             if (translation == null) {
                 return Optional.of(recovered);
@@ -219,18 +344,19 @@ public final class CollisionWorld {
                     translation.z());
         }
 
-        return overlapsSolid(localCollider.translated(recovered))
+        return overlapsSolidInternal(queryContext, localCollider.translated(recovered))
                 ? Optional.empty()
                 : Optional.of(recovered);
     }
 
-    private PenetrationTranslation findSmallestTranslation(Aabb moving) {
+    private PenetrationTranslation findSmallestTranslation(
+            QueryContext queryContext, Aabb moving) {
         int minBlockX = floorBlockCoordinate(moving.minX());
         int minBlockY = floorBlockCoordinate(moving.minY());
         int minBlockZ = floorBlockCoordinate(moving.minZ());
-        int maxBlockX = floorBlockCoordinate(moving.maxX());
-        int maxBlockY = floorBlockCoordinate(moving.maxY());
-        int maxBlockZ = floorBlockCoordinate(moving.maxZ());
+        int maxBlockX = maximumBlockCoordinate(moving.minX(), moving.maxX());
+        int maxBlockY = maximumBlockCoordinate(moving.minY(), moving.maxY());
+        int maxBlockZ = maximumBlockCoordinate(moving.minZ(), moving.maxZ());
 
         PenetrationTranslation best = null;
         for (long blockX = minBlockX; blockX <= maxBlockX; blockX++) {
@@ -239,7 +365,7 @@ public final class CollisionWorld {
                     int x = (int) blockX;
                     int y = (int) blockY;
                     int z = (int) blockZ;
-                    List<Aabb> boxes = resolveShape(x, y, z).boxes();
+                    List<Aabb> boxes = resolveShape(queryContext, x, y, z).boxes();
                     for (int subShapeIndex = 0;
                             subShapeIndex < boxes.size();
                             subShapeIndex++) {
@@ -335,8 +461,26 @@ public final class CollisionWorld {
     }
 
     private BlockCollisionShape resolveShape(int x, int y, int z) {
+        return resolveShape(QueryContext.legacy(), x, y, z);
+    }
+
+    private BlockCollisionShape resolveShape(
+            QueryContext queryContext, int x, int y, int z) {
+        int globalX = queryContext.globalX(x);
+        int globalZ = queryContext.globalZ(z);
+        if (queryContext.availabilityAware) {
+            ChunkKey key = ChunkKey.fromWorld(globalX, globalZ);
+            ChunkAvailability availability = world.chunks().availability(key);
+            if (availability != ChunkAvailability.AVAILABLE) {
+                throw new UnavailableSpace(
+                        availability == ChunkAvailability.FAILED
+                                ? SpatialQueryResult.Status.FAILED
+                                : SpatialQueryResult.Status.UNKNOWN,
+                        key);
+            }
+        }
         return Objects.requireNonNull(
-                shapeResolver.shapeFor(world.getBlock(x, y, z)),
+                shapeResolver.shapeFor(world.getBlock(globalX, y, globalZ)),
                 "shapeResolver result");
     }
 
@@ -477,6 +621,13 @@ public final class CollisionWorld {
         return (int) floor;
     }
 
+    private static int maximumBlockCoordinate(float minimum, float maximum) {
+        if (maximum <= minimum) {
+            return floorBlockCoordinate(maximum);
+        }
+        return floorBlockCoordinate(Math.nextDown(maximum));
+    }
+
     private static void validateFinite(Vector3fc vector, String name) {
         if (!Float.isFinite(vector.x())
                 || !Float.isFinite(vector.y())
@@ -499,6 +650,31 @@ public final class CollisionWorld {
             float normalX,
             float normalY,
             float normalZ) {}
+
+    private record QueryContext(long originX, long originZ, boolean availabilityAware) {
+        private static QueryContext legacy() {
+            return new QueryContext(0, 0, false);
+        }
+
+        private int globalX(int localX) {
+            return Math.toIntExact(Math.addExact(originX, localX));
+        }
+
+        private int globalZ(int localZ) {
+            return Math.toIntExact(Math.addExact(originZ, localZ));
+        }
+    }
+
+    private static final class UnavailableSpace extends RuntimeException {
+        private final SpatialQueryResult.Status status;
+        private final ChunkKey key;
+
+        private UnavailableSpace(SpatialQueryResult.Status status, ChunkKey key) {
+            super(null, null, false, false);
+            this.status = status;
+            this.key = key;
+        }
+    }
 
     private record Candidate(
             float fraction,

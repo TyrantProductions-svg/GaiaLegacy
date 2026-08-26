@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.assets.ResourceLocation;
+import com.overlord.renderer.RenderOrigin;
 import com.overlord.renderer.feedback.BlockVisualCoordinate;
 import com.overlord.renderer.feedback.TransientBlockVisual;
 import com.overlord.renderer.feedback.WorldItemFaceRegions;
@@ -33,6 +34,25 @@ class TransientBlockVisualSystemTest {
         system.update(0.001);
         assertTrue(system.snapshot().isEmpty());
         assertTrue(system.excludedCells().isEmpty());
+    }
+
+    @Test
+    void originSnapshotLocalizesLargeCanonicalCoordinateWithoutChangingStoredTransition() {
+        TransientBlockVisualSystem system = new TransientBlockVisualSystem();
+        BlockVisualCoordinate canonical =
+                new BlockVisualCoordinate(1_600_000_002, 3, -1_600_000_000);
+        system.registerPlacement(canonical, FACES, 31L);
+
+        TransientBlockVisual zeroOrigin = system.snapshot().get(0);
+        TransientBlockVisual rebased =
+                system.snapshot(new RenderOrigin(new com.overlord.voxel.ChunkKey(100_000_000, -100_000_000)))
+                        .get(0);
+
+        assertEquals(canonical, zeroOrigin.coordinate());
+        assertEquals(new BlockVisualCoordinate(2, 3, 0), rebased.coordinate());
+        assertEquals(31L, rebased.eventIdentity());
+        assertEquals(zeroOrigin.transform(), rebased.transform());
+        assertEquals(canonical, system.snapshot().get(0).coordinate());
     }
 
     @Test

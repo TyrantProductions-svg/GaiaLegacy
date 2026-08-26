@@ -108,6 +108,44 @@ class ChunkRepositoryPersistenceTest {
     }
 
     @Test
+    void restoreCanAtomicallyBindExactPersistedRevisionsForStreamingUnload() {
+        ChunkRepository target = repository();
+        ChunkKey persisted = new ChunkKey(-2, 3);
+        ChunkKey generatedOnly = new ChunkKey(4, -5);
+        ChunkRepositorySnapshot saved = snapshot(
+                90L,
+                chunk(persisted.x(), persisted.z(), 77L, (byte) 7),
+                chunk(generatedOnly.x(), generatedOnly.z(), 80L, (byte) 8));
+
+        ChunkRepositoryRestoreResult result = target.restoreCanonical(
+                saved, Map.of(persisted, 55L));
+
+        assertEquals(RESTORED, result.status());
+        assertEquals(55L, target.prepareStreamingUnload(persisted).persistedRevision());
+        assertEquals(0L, target.prepareStreamingUnload(generatedOnly).persistedRevision());
+    }
+
+    @Test
+    void unloadPreparationCarriesConservativeVoxelMutationKnowledge() {
+        ChunkRepository target = repository();
+        ChunkKey key = new ChunkKey(6, -4);
+        target.generate(key, chunk -> chunk.setBlock(0, 0, 0, (byte) 3));
+
+        ChunkUnloadPreparation clean = target.prepareStreamingUnload(key);
+        assertFalse(clean.voxelModified(),
+                "initial generation is the known clean resident base");
+        assertEquals(ChunkUnloadResult.Status.CANCELED,
+                target.cancelStreamingUnload(clean.ticket().orElseThrow()).status());
+
+        assertTrue(target.setBlock(key.worldOriginX(), 0,
+                key.worldOriginZ(), (byte) 4));
+        ChunkUnloadPreparation changed = target.prepareStreamingUnload(key);
+        assertTrue(changed.voxelModified(),
+                "any canonical voxel mutation conservatively requires base comparison");
+        target.cancelStreamingUnload(changed.ticket().orElseThrow());
+    }
+
+    @Test
     void invalidSnapshotVariantsRejectWithoutPublishingOrAdvancingRevision() {
         ChunkSnapshot malformed = chunk(4, 4, 1L, (byte) 4);
         corruptBlockLength(malformed);
@@ -938,6 +976,62 @@ class ChunkRepositoryPersistenceTest {
                 List.of(new ChunkKey(-1, 3), new ChunkKey(1, -2)),
                 sorted(target.keys()));
         assertEquals(91L, revisionHighWater(target));
+    }
+
+    @Test
+    void streamingPublicationExhaustionIsAtomicBeforeChunkOrNeighborMutation() {
+        ChunkRepository target = repository();
+        ChunkKey published = new ChunkKey(0, 0);
+        ChunkKey east = published.east();
+        assertEquals(
+                RESTORED,
+                target.restoreCanonical(
+                                snapshot(
+                                        Long.MAX_VALUE - 1,
+                                        chunk(1, 0, 81L, (byte) 2)))
+                        .status());
+        ChunkRepositorySnapshot before = target.canonicalSnapshot();
+        long eastRevision = target.revision(east);
+        ChunkState eastState = target.state(east);
+        ChunkStreamingTicket ticket =
+                target.request(
+                        published,
+                        91L,
+                        ChunkStreamingTicket.SourcePreference.GENERATE);
+
+        IllegalStateException failure =
+                assertThrows(
+                        IllegalStateException.class,
+                        () ->
+                                target.publish(
+                                        ticket,
+                                        generationData(
+                                                published, (byte) 15),
+                                        new ChunkStreamingTicket.BaseIdentity(
+                                                ChunkStreamingTicket
+                                                        .SourcePreference
+                                                        .GENERATE,
+                                                0L)));
+
+        assertEquals(
+                "Chunk revision sequence is exhausted",
+                failure.getMessage());
+        assertFalse(target.contains(published));
+        assertEquals(
+                ChunkAvailability.UNKNOWN,
+                target.availability(published));
+        assertEquals(ChunkState.GENERATING, target.state(published));
+        assertEquals(eastRevision, target.revision(east));
+        assertEquals(eastState, target.state(east));
+        assertEquals(
+                2,
+                Byte.toUnsignedInt(
+                        target.getBlock(
+                                east.worldOriginX(),
+                                0,
+                                east.worldOriginZ())));
+        assertTrue(target.cancel(ticket));
+        assertCanonicalEquals(before, target.canonicalSnapshot());
     }
 
     private static ChunkRepository repository() {

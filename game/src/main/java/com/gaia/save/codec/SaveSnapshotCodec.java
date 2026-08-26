@@ -89,6 +89,8 @@ public final class SaveSnapshotCodec {
                             .map(EncodedSaveSection::descriptor)
                             .toList());
             return new EncodedSaveGame(manifest, sections);
+        } catch (SaveCodecException sectionFailure) {
+            throw sectionFailure;
         } catch (RuntimeException failure) {
             throw new SaveCodecException(
                     INVALID_SNAPSHOT,

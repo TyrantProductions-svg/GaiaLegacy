@@ -6,6 +6,7 @@ import com.overlord.worlditem.api.WorldItemId;
 import com.overlord.worlditem.api.WorldItemRestoreEntry;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -14,13 +15,30 @@ public record WorldItemsSaveSnapshot(
         long fixedTick,
         List<WorldItemRestoreEntry> entries,
         long nextItemId,
-        boolean itemIdsExhausted) {
+        boolean itemIdsExhausted,
+        LogicalWorldItemSnapshot.Completeness completeness) {
+    public WorldItemsSaveSnapshot(
+            long fixedTick,
+            List<WorldItemRestoreEntry> entries,
+            long nextItemId,
+            boolean itemIdsExhausted) {
+        this(
+                fixedTick,
+                entries,
+                nextItemId,
+                itemIdsExhausted,
+                LogicalWorldItemSnapshot.Completeness.LEGACY_COMPLETE);
+    }
+
     public WorldItemsSaveSnapshot {
         fixedTick = SaveMetadataValidation.requireNonnegativeFixedTick(fixedTick);
+        completeness = Objects.requireNonNull(completeness, "completeness");
         LogicalWorldItemSnapshot detached = new LogicalWorldItemSnapshot(
                 Objects.requireNonNull(entries, "entries"),
                 nextItemId,
-                itemIdsExhausted);
+                itemIdsExhausted,
+                Map.of(),
+                completeness);
         entries = detached.entries();
 
         if (nextItemId < 0) {
@@ -55,11 +73,13 @@ public record WorldItemsSaveSnapshot(
                 fixedTick,
                 requireSnapshot(snapshot).entries(),
                 snapshot.nextItemId(),
-                snapshot.itemIdsExhausted());
+                snapshot.itemIdsExhausted(),
+                snapshot.completeness());
     }
 
     public LogicalWorldItemSnapshot logicalSnapshot() {
-        return new LogicalWorldItemSnapshot(entries, nextItemId, itemIdsExhausted);
+        return new LogicalWorldItemSnapshot(
+                entries, nextItemId, itemIdsExhausted, Map.of(), completeness);
     }
 
     private static LogicalWorldItemSnapshot requireSnapshot(

@@ -51,7 +51,7 @@ public final class DebugHud {
                 MARGIN,
                 MARGIN,
                 MARGIN + contentWidth + PADDING * 2,
-                MARGIN + PADDING * 2 + LINE_COUNT * LINE_STEP);
+                MARGIN + PADDING * 2 + lines.size() * LINE_STEP);
         if (panel.right() > layout.logicalWidth() - MARGIN
                 || panel.bottom() > layout.logicalHeight() - MARGIN) {
             throw new IllegalArgumentException(
@@ -86,7 +86,7 @@ public final class DebugHud {
         Optional<RenderMetricsSnapshot> previous = debug.previousFrameMetrics();
         HudDebugSnapshot.Counts counts = debug.counts();
         HudDebugSnapshot.FeetPosition feet = debug.feet();
-        return List.of(
+        List<String> standard = List.of(
                 "FRAME (PREV): FPS " + previous
                         .map(metrics -> formatOne(metrics.framesPerSecond())).orElse("N/A"),
                 "FRAME TIME: " + previous
@@ -109,6 +109,12 @@ public final class DebugHud {
                 "FEEDBACK: DAMAGE " + counts.blockDamageVisuals()
                         + " | ITEMS " + counts.feedbackWorldItems()
                         + " | PARTICLES " + counts.particles());
+        if (!debug.streamingMetrics().streamingTerrain()) {
+            return standard;
+        }
+        java.util.ArrayList<String> streaming = new java.util.ArrayList<>(standard);
+        streaming.add(6, "Streaming terrain...");
+        return List.copyOf(streaming);
     }
 
     private static String formatOne(double value) {

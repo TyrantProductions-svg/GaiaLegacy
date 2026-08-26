@@ -53,7 +53,14 @@ class WorldItemPersistenceRegressionTest {
             SaveGameSnapshot recaptured = restored.captureAndMarkSaved();
             assertAll(
                     () -> assertEquals(GameSessionState.READY, restored.state()),
-                    () -> assertEquals(decoded, recaptured),
+                    () -> assertEquals(decoded.metadata(), recaptured.metadata()),
+                    () -> assertEquals(decoded.fixedTick(), recaptured.fixedTick()),
+                    () -> assertEquals(decoded.player(), recaptured.player()),
+                    () -> assertEquals(decoded.inventory(), recaptured.inventory()),
+                    () -> assertEquals(decoded.worldItems(), recaptured.worldItems()),
+                    () -> assertEquals(25, recaptured.chunks().chunks().size()),
+                    () -> assertEquals(decoded.chunks().revisionHighWater(),
+                            recaptured.chunks().revisionHighWater()),
                     () -> assertEquals(3, restored.physicsBodyCount()),
                     () -> assertEquals(0, restored.transientPresentationCount()),
                     () -> assertEquals(0, restored.inventoryPendingReservations()),

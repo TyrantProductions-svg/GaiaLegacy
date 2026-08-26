@@ -41,6 +41,8 @@ public final class SessionRestoreCoordinator {
     private final LongConsumer fixedTickRestorer;
     private final Consumer<List<ChunkKey>> meshReadiness;
     private final Consumer<RestoreStage> stageObserver;
+    private final ChunkRestorer chunkRestorer;
+    private final WorldItemRestorer worldItemRestorer;
     private final Thread ownerThread;
 
     public SessionRestoreCoordinator(
@@ -136,6 +138,70 @@ public final class SessionRestoreCoordinator {
             Consumer<List<ChunkKey>> meshReadiness,
             BiConsumer<Float, Float> cameraOrientationStager,
             Consumer<RestoreStage> stageObserver) {
+        this(
+                chunks,
+                inventory,
+                inventoryOwner,
+                worldItems,
+                playerController,
+                camera,
+                gameModes,
+                physicalWorldItems,
+                fixedTickRestorer,
+                meshReadiness,
+                cameraOrientationStager,
+                stageObserver,
+                snapshot -> worldItems.restoreCanonical(
+                        snapshot.worldItems().logicalSnapshot(),
+                        snapshot.fixedTick()));
+    }
+
+    public SessionRestoreCoordinator(
+            ChunkRepository chunks,
+            BodyInventoryService inventory,
+            EntityRef inventoryOwner,
+            LogicalWorldItemService worldItems,
+            PlayerController playerController,
+            Camera camera,
+            GameModeManager gameModes,
+            PhysicalWorldItemSystem physicalWorldItems,
+            LongConsumer fixedTickRestorer,
+            Consumer<List<ChunkKey>> meshReadiness,
+            BiConsumer<Float, Float> cameraOrientationStager,
+            Consumer<RestoreStage> stageObserver,
+            WorldItemRestorer worldItemRestorer) {
+        this(
+                chunks,
+                inventory,
+                inventoryOwner,
+                worldItems,
+                playerController,
+                camera,
+                gameModes,
+                physicalWorldItems,
+                fixedTickRestorer,
+                meshReadiness,
+                cameraOrientationStager,
+                stageObserver,
+                snapshot -> chunks.restoreCanonical(snapshot.chunks()),
+                worldItemRestorer);
+    }
+
+    public SessionRestoreCoordinator(
+            ChunkRepository chunks,
+            BodyInventoryService inventory,
+            EntityRef inventoryOwner,
+            LogicalWorldItemService worldItems,
+            PlayerController playerController,
+            Camera camera,
+            GameModeManager gameModes,
+            PhysicalWorldItemSystem physicalWorldItems,
+            LongConsumer fixedTickRestorer,
+            Consumer<List<ChunkKey>> meshReadiness,
+            BiConsumer<Float, Float> cameraOrientationStager,
+            Consumer<RestoreStage> stageObserver,
+            ChunkRestorer chunkRestorer,
+            WorldItemRestorer worldItemRestorer) {
         this.chunks = Objects.requireNonNull(chunks, "chunks");
         this.inventory = Objects.requireNonNull(inventory, "inventory");
         this.inventoryOwner =
@@ -159,6 +225,10 @@ public final class SessionRestoreCoordinator {
                 Objects.requireNonNull(meshReadiness, "meshReadiness");
         this.stageObserver =
                 Objects.requireNonNull(stageObserver, "stageObserver");
+        this.chunkRestorer = Objects.requireNonNull(
+                chunkRestorer, "chunkRestorer");
+        this.worldItemRestorer = Objects.requireNonNull(
+                worldItemRestorer, "worldItemRestorer");
         ownerThread = Thread.currentThread();
     }
 
@@ -173,7 +243,7 @@ public final class SessionRestoreCoordinator {
 
         before(RestoreStage.CHUNKS);
         ChunkRepositoryRestoreResult chunksResult =
-                chunks.restoreCanonical(validated.chunks());
+                chunkRestorer.restore(validated);
         requireRestored(
                 "chunks", chunksResult.status(),
                 ChunkRepositoryRestoreResult.Status.RESTORED);
@@ -187,10 +257,12 @@ public final class SessionRestoreCoordinator {
                 "inventory", inventoryResult.status(),
                 BodyInventoryRestoreResult.Status.RESTORED);
 
+        before(RestoreStage.WORLD_TICK);
+        fixedTickRestorer.accept(validated.fixedTick());
+
         before(RestoreStage.WORLD_ITEMS);
         WorldItemRestoreResult worldItemsResult =
-                worldItems.restoreCanonical(
-                        validated.worldItems().logicalSnapshot());
+                worldItemRestorer.restore(validated);
         requireRestored(
                 "world items", worldItemsResult.status(),
                 WorldItemRestoreResult.Status.RESTORED);
@@ -211,6 +283,16 @@ public final class SessionRestoreCoordinator {
                 playerPlan.yaw(), playerPlan.pitch());
     }
 
+    @FunctionalInterface
+    public interface ChunkRestorer {
+        ChunkRepositoryRestoreResult restore(SaveGameSnapshot snapshot);
+    }
+
+    @FunctionalInterface
+    public interface WorldItemRestorer {
+        WorldItemRestoreResult restore(SaveGameSnapshot snapshot);
+    }
+
     private void restorePlayer(
             PlayerRestorePlan plan,
             long fixedTick) {
@@ -220,7 +302,6 @@ public final class SessionRestoreCoordinator {
                 plan.noclip(),
                 plan.worldHeight());
         gameModes.setMode(plan.gameMode(), fixedTick);
-        fixedTickRestorer.accept(fixedTick);
     }
 
     private PlayerRestorePlan planPlayerRestore(SaveGameSnapshot snapshot) {
@@ -341,6 +422,7 @@ public final class SessionRestoreCoordinator {
     public enum RestoreStage {
         CHUNKS,
         INVENTORY,
+        WORLD_TICK,
         WORLD_ITEMS,
         PLAYER,
         PROJECTIONS,

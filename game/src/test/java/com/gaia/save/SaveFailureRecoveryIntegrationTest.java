@@ -34,6 +34,7 @@ import com.gaia.save.store.SaveFileOperations;
 import com.gaia.save.store.SaveRecoveryResult;
 import com.gaia.save.store.SaveRepository;
 import com.gaia.save.store.SaveWriteResult;
+import com.gaia.save.streaming.Phase14MigrationResult;
 import com.gaia.shell.save.SaveSummary;
 import com.overlord.interaction.api.EntityRef;
 import com.overlord.inventory.api.BodySlot;
@@ -367,6 +368,74 @@ class SaveFailureRecoveryIntegrationTest {
                 .snapshot().orElseThrow());
         assertTrue(Files.exists(stale),
                 "startup discovery and explicit recovery must not infer ownership of stale temps");
+    }
+
+    @Test
+    void repositoryMigrationPublishesOnlyAfterFullRereadAndRetainsExactV1Recovery()
+            throws Exception {
+        Path root = Files.createDirectories(tempDir.resolve("phase14-migration-root"));
+        SaveGameId id = Gate14CTestSupport.id(1500);
+        Path world = Files.createDirectories(root.resolve(id.value()));
+        Path current = world.resolve("current.glsave");
+        Path backup = world.resolve("backup.glsave");
+        SaveGameSnapshot representative = Gate14CTestSupport.representative81Snapshot(
+                id, "Phase 14 migration", 1500L, 1500L);
+        SaveGameSnapshot phase14 = new SaveGameSnapshot(
+                representative.metadata(),
+                representative.fixedTick(),
+                new com.overlord.voxel.ChunkRepositorySnapshot(
+                        representative.chunks().worldHeight(),
+                        representative.chunks().revisionHighWater(),
+                        List.of(
+                                representative.chunks().chunks().get(0),
+                                representative.chunks().chunks().get(40),
+                                representative.chunks().chunks().get(80))),
+                representative.player(),
+                representative.inventory(),
+                representative.worldItems());
+        Gate14CTestSupport.writeArchive(current, phase14, FIRST_MODIFIED);
+        byte[] exactV1 = Files.readAllBytes(current);
+
+        SaveRepository firstOpen = Gate14CTestSupport.repository(
+                root, new JdkSaveFileOperations());
+        assertEquals(
+                SaveFormatVersion.CURRENT,
+                new FileSaveCatalog(firstOpen).summaries().get(0)
+                        .formatVersion().orElseThrow(),
+                "v1 remains the repository authority before migration");
+
+        Phase14MigrationResult migrated = firstOpen.migratePhase14(id);
+        SaveRepository reopened = Gate14CTestSupport.repository(
+                root, new JdkSaveFileOperations());
+        SaveArchiveReadResult loaded = reopened.load(id);
+        List<SaveSummary> rows = new FileSaveCatalog(reopened).summaries();
+        Phase14MigrationResult repeated = reopened.migratePhase14(id);
+
+        assertAll(
+                () -> assertEquals(
+                        Phase14MigrationResult.Status.MIGRATED, migrated.status()),
+                () -> assertTrue(migrated.diagnostics().isEmpty()),
+                () -> assertTrue(migrated.validatedManifest().isPresent()),
+                () -> assertTrue(migrated.validatedIndex().isPresent()),
+                () -> assertEquals(3,
+                        migrated.validatedIndex().orElseThrow().entries().size()),
+                () -> assertArrayEquals(exactV1, Files.readAllBytes(backup)),
+                () -> assertEquals(
+                        SaveArchiveReadResult.Status.VALID, loaded.status()),
+                () -> assertEquals(phase14.chunks(),
+                        loaded.snapshot().orElseThrow().chunks()),
+                () -> assertEquals(1, rows.size()),
+                () -> assertEquals(SaveSummary.Health.VALID, rows.get(0).health()),
+                () -> assertEquals(
+                        SaveFormatVersion.STREAMED_CHUNKS,
+                        rows.get(0).formatVersion().orElseThrow()),
+                () -> assertEquals(
+                        Phase14MigrationResult.Status.NOT_REQUIRED,
+                        repeated.status()),
+                () -> assertArrayEquals(exactV1, Files.readAllBytes(backup)));
+        SaveArchiveReadResult retainedV1 = Gate14CTestSupport.reader().read(backup);
+        assertEquals(SaveArchiveReadResult.Status.VALID, retainedV1.status());
+        assertEquals(phase14, retainedV1.snapshot().orElseThrow());
     }
 
     @Test
@@ -875,10 +944,24 @@ final class Gate14CTestSupport {
 
     static SaveGameSnapshot snapshot(
             SaveGameId id, String name, long seed, long fixedTick) {
+        return snapshot(id, name, seed, fixedTick, CHUNK_RADIUS);
+    }
+
+    static SaveGameSnapshot representative81Snapshot(
+            SaveGameId id, String name, long seed, long fixedTick) {
+        return snapshot(id, name, seed, fixedTick, 4);
+    }
+
+    private static SaveGameSnapshot snapshot(
+            SaveGameId id,
+            String name,
+            long seed,
+            long fixedTick,
+            int chunkRadius) {
         List<ChunkSnapshot> chunks = new ArrayList<>();
         long revision = 0;
-        for (int x = -CHUNK_RADIUS; x <= CHUNK_RADIUS; x++) {
-            for (int z = -CHUNK_RADIUS; z <= CHUNK_RADIUS; z++) {
+        for (int x = -chunkRadius; x <= chunkRadius; x++) {
+            for (int z = -chunkRadius; z <= chunkRadius; z++) {
                 byte[] blocks = new byte[16 * WORLD_HEIGHT * 16];
                 blocks[Math.floorMod(x * 31 + z * 17 + (int) seed, blocks.length)] = 1;
                 chunks.add(ChunkSnapshot.of(
@@ -895,7 +978,7 @@ final class Gate14CTestSupport {
                         seed,
                         "v1",
                         "a".repeat(64),
-                        CHUNK_RADIUS,
+                        chunkRadius,
                         WORLD_HEIGHT,
                         Optional.of("Gate 14C integration fixture")),
                 fixedTick,

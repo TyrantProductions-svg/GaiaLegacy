@@ -2,6 +2,7 @@ package com.gaia.world.generation;
 
 import com.overlord.assets.ResourceLocation;
 import com.overlord.config.GameConfig;
+import java.util.Optional;
 
 public final class TreeDecorationProvider {
     private static final ResourceLocation ID =
@@ -9,34 +10,41 @@ public final class TreeDecorationProvider {
     private static final int CELL_SIZE = 8;
     private static final int CANOPY_RADIUS = 2;
     private static final int SPAWN_RESERVE_RADIUS = 12;
+    private final GenerationStageContract contract;
+    private final HybridCaveProvider.EntranceQuery entrances;
+
+    public TreeDecorationProvider(
+            GenerationStageContract decorationContract,
+            HybridCaveProvider.EntranceQuery entrances) {
+        this.contract =
+                decorationContract.child(
+                        ID, CANOPY_RADIUS);
+        this.entrances =
+                java.util.Objects.requireNonNull(
+                        entrances, "entrances");
+    }
 
     public int generate(
             GenerationContext context, GenerationRegion region) {
         int writes = 0;
-        int minimumCellX =
-                cellCoordinate(
-                        (long) region.key().worldOriginX()
-                                - CANOPY_RADIUS);
-        int maximumCellX =
-                cellCoordinate(
-                        (long) region.key().worldOriginX()
-                                + GameConfig.Chunk.SIZE
-                                - 1
-                                + CANOPY_RADIUS);
-        int minimumCellZ =
-                cellCoordinate(
-                        (long) region.key().worldOriginZ()
-                                - CANOPY_RADIUS);
-        int maximumCellZ =
-                cellCoordinate(
-                        (long) region.key().worldOriginZ()
-                                + GameConfig.Chunk.SIZE
-                                - 1
-                                + CANOPY_RADIUS);
-        for (int cellZ = minimumCellZ;
+        GenerationStageContract.RegionRange xRange =
+                contract.regionsForChunk(
+                        region.worldOriginX(),
+                        GameConfig.Chunk.SIZE,
+                        CELL_SIZE);
+        GenerationStageContract.RegionRange zRange =
+                contract.regionsForChunk(
+                        region.worldOriginZ(),
+                        GameConfig.Chunk.SIZE,
+                        CELL_SIZE);
+        long minimumCellX = xRange.minimum();
+        long maximumCellX = xRange.maximum();
+        long minimumCellZ = zRange.minimum();
+        long maximumCellZ = zRange.maximum();
+        for (long cellZ = minimumCellZ;
                 cellZ <= maximumCellZ;
                 cellZ++) {
-            for (int cellX = minimumCellX;
+            for (long cellX = minimumCellX;
                     cellX <= maximumCellX;
                     cellX++) {
                 Tree tree = tree(context, cellX, cellZ);
@@ -49,11 +57,11 @@ public final class TreeDecorationProvider {
     }
 
     boolean conflicts(
-            GenerationContext context, int worldX, int worldZ) {
-        int cellX = Math.floorDiv(worldX, CELL_SIZE);
-        int cellZ = Math.floorDiv(worldZ, CELL_SIZE);
-        for (int z = cellZ - 1; z <= cellZ + 1; z++) {
-            for (int x = cellX - 1; x <= cellX + 1; x++) {
+            GenerationContext context, long worldX, long worldZ) {
+        long cellX = Math.floorDiv(worldX, CELL_SIZE);
+        long cellZ = Math.floorDiv(worldZ, CELL_SIZE);
+        for (long z = cellZ - 1; z <= cellZ + 1; z++) {
+            for (long x = cellX - 1; x <= cellX + 1; x++) {
                 Tree tree = tree(context, x, z);
                 if (tree != null) {
                     long dx = (long) tree.x() - worldX;
@@ -67,26 +75,23 @@ public final class TreeDecorationProvider {
         return false;
     }
 
-    private static Tree tree(
-            GenerationContext context, int cellX, int cellZ) {
-        Integer rootX =
-                rootCoordinate(
-                        cellX,
-                        context,
-                        cellX,
-                        cellZ,
-                        0L);
-        Integer rootZ =
-                rootCoordinate(
-                        cellZ,
-                        context,
+    private Tree tree(
+            GenerationContext context, long cellX, long cellZ) {
+        Optional<StableRegionAnchor> sampled =
+                StableRegionAnchor.sampleIfSafe(
+                        context.sampler(),
+                        contract,
                         cellX,
                         cellZ,
-                        1L);
-        if (rootX == null
-                || rootZ == null
-                || insideSpawnReserve(rootX, rootZ)
-                || HybridCaveProvider.hasEntranceNear(
+                        CELL_SIZE);
+        if (sampled.isEmpty()) {
+            return null;
+        }
+        StableRegionAnchor anchor = sampled.orElseThrow();
+        long rootX = anchor.worldX();
+        long rootZ = anchor.worldZ();
+        if (insideSpawnReserve(rootX, rootZ)
+                || entrances.hasEntranceNear(
                         context, rootX, rootZ, 8)) {
             return null;
         }
@@ -107,7 +112,11 @@ public final class TreeDecorationProvider {
                                                 * biome.rockyHighlands())
                                 * densityScale);
         if (context.sampler().unit(
-                                ID, cellX, 0, cellZ, 2L)
+                                contract,
+                                cellX,
+                                0L,
+                                cellZ,
+                                2L)
                         >= probability) {
             return null;
         }
@@ -120,11 +129,8 @@ public final class TreeDecorationProvider {
                 new int[][] {
                     {-1, 0}, {1, 0}, {0, -1}, {0, 1}
                 }) {
-            Integer x = addIfRepresentable(rootX, offset[0]);
-            Integer z = addIfRepresentable(rootZ, offset[1]);
-            if (x == null || z == null) {
-                continue;
-            }
+            long x = Math.addExact(rootX, offset[0]);
+            long z = Math.addExact(rootZ, offset[1]);
             slope =
                     Math.max(
                             slope,
@@ -144,42 +150,43 @@ public final class TreeDecorationProvider {
         }
         double priority =
                 context.sampler().unit(
-                        ID, cellX, 0, cellZ, 3L);
-        for (int neighborZ = cellZ - 1;
+                        contract,
+                        cellX,
+                        0L,
+                        cellZ,
+                        3L);
+        for (long neighborZ = cellZ - 1;
                 neighborZ <= cellZ + 1;
                 neighborZ++) {
-            for (int neighborX = cellX - 1;
+            for (long neighborX = cellX - 1;
                     neighborX <= cellX + 1;
                     neighborX++) {
                 if (neighborX == cellX
                         && neighborZ == cellZ) {
                     continue;
                 }
-                Integer otherX =
-                        rootCoordinate(
-                                neighborX,
-                                context,
-                                neighborX,
-                                neighborZ,
-                                0L);
-                Integer otherZ =
-                        rootCoordinate(
-                                neighborZ,
-                                context,
+                Optional<StableRegionAnchor> otherAnchor =
+                        StableRegionAnchor.sampleIfSafe(
+                                context.sampler(),
+                                contract,
                                 neighborX,
                                 neighborZ,
-                                1L);
-                if (otherX == null || otherZ == null) {
+                                CELL_SIZE);
+                if (otherAnchor.isEmpty()) {
                     continue;
                 }
-                long dx = (long) otherX - rootX;
-                long dz = (long) otherZ - rootZ;
+                long dx =
+                        otherAnchor.orElseThrow().worldX()
+                                - rootX;
+                long dz =
+                        otherAnchor.orElseThrow().worldZ()
+                                - rootZ;
                 if (dx * dx + dz * dz >= 36L) {
                     continue;
                 }
                 double otherPriority =
                         context.sampler().unit(
-                                ID,
+                                contract,
                                 neighborX,
                                 0,
                                 neighborZ,
@@ -198,7 +205,7 @@ public final class TreeDecorationProvider {
                 4
                         + (int)
                                 (context.sampler().unit(
-                                                ID,
+                                                contract,
                                                 cellX,
                                                 0,
                                                 cellZ,
@@ -207,7 +214,7 @@ public final class TreeDecorationProvider {
         return new Tree(rootX, rootY, rootZ, trunkHeight);
     }
 
-    private static int place(
+    private int place(
             GenerationContext context,
             GenerationRegion region,
             Tree tree) {
@@ -221,24 +228,21 @@ public final class TreeDecorationProvider {
                             tree.z(),
                             context.palette().oakLog(),
                             context.palette().air(),
-                            true);
+                            context.palette().oakLeaves());
         }
         int canopyY = tree.y() + tree.trunkHeight() - 1;
         for (int dy = -1; dy <= 1; dy++) {
             int radius = dy == 1 ? 1 : CANOPY_RADIUS;
             for (int dz = -radius; dz <= radius; dz++) {
                 for (int dx = -radius; dx <= radius; dx++) {
-                    Integer leafX =
-                            addIfRepresentable(tree.x(), dx);
-                    Integer leafZ =
-                            addIfRepresentable(tree.z(), dz);
-                    if (leafX == null || leafZ == null) {
-                        continue;
-                    }
+                    long leafX =
+                            Math.addExact(tree.x(), dx);
+                    long leafZ =
+                            Math.addExact(tree.z(), dz);
                     if (Math.abs(dx) == radius
                             && Math.abs(dz) == radius
                             && context.sampler().unit(
-                                            ID,
+                                            contract,
                                             leafX,
                                             canopyY + dy,
                                             leafZ,
@@ -261,7 +265,7 @@ public final class TreeDecorationProvider {
                                     leafZ,
                                     context.palette().oakLeaves(),
                                     context.palette().air(),
-                                    false);
+                                    context.palette().air());
                 }
             }
         }
@@ -273,22 +277,22 @@ public final class TreeDecorationProvider {
                         tree.z(),
                         context.palette().oakLeaves(),
                         context.palette().air(),
-                        false);
+                        context.palette().air());
         return writes;
     }
 
-    private static int writeWorld(
+    static int writeWorld(
             GenerationRegion region,
-            int worldX,
+            long worldX,
             int y,
-            int worldZ,
+            long worldZ,
             byte block,
             byte air,
-            boolean replaceLeaves) {
-        int originX = region.key().worldOriginX();
-        int originZ = region.key().worldOriginZ();
-        long localXValue = (long) worldX - originX;
-        long localZValue = (long) worldZ - originZ;
+            byte replaceable) {
+        long localXValue =
+                worldX - region.worldOriginX();
+        long localZValue =
+                worldZ - region.worldOriginZ();
         if (localXValue < 0
                 || localXValue >= GameConfig.Chunk.SIZE
                 || localZValue < 0
@@ -300,63 +304,15 @@ public final class TreeDecorationProvider {
         int localX = (int) localXValue;
         int localZ = (int) localZValue;
         byte current = region.getBlock(localX, y, localZ);
-        if (current != air
-                && !(replaceLeaves
-                        && current == block)) {
+        if (current != air && current != replaceable) {
             return 0;
         }
         region.writeBlock(localX, y, localZ, block);
         return 1;
     }
 
-    private static int offset(
-            GenerationContext context,
-            int cellX,
-            int cellZ,
-            long salt) {
-        return (int)
-                (context.sampler().unit(
-                                ID, cellX, 0, cellZ, salt)
-                        * CELL_SIZE);
-    }
-
-    private static int cellCoordinate(long worldCoordinate) {
-        return Math.toIntExact(
-                Math.floorDiv(worldCoordinate, CELL_SIZE));
-    }
-
-    private static Integer rootCoordinate(
-            int baseCell,
-            GenerationContext context,
-            int sampleCellX,
-            int sampleCellZ,
-            long salt) {
-        long value =
-                (long) baseCell * CELL_SIZE
-                        + offset(
-                                context,
-                                sampleCellX,
-                                sampleCellZ,
-                                salt);
-        if (value < Integer.MIN_VALUE
-                || value > Integer.MAX_VALUE) {
-            return null;
-        }
-        return (int) value;
-    }
-
-    private static Integer addIfRepresentable(
-            int base, int offset) {
-        long value = (long) base + offset;
-        if (value < Integer.MIN_VALUE
-                || value > Integer.MAX_VALUE) {
-            return null;
-        }
-        return (int) value;
-    }
-
     private static boolean insideSpawnReserve(
-            int x, int z) {
+            long x, long z) {
         return x > -SPAWN_RESERVE_RADIUS
                 && x < SPAWN_RESERVE_RADIUS
                 && z > -SPAWN_RESERVE_RADIUS
@@ -367,5 +323,5 @@ public final class TreeDecorationProvider {
     }
 
     private record Tree(
-            int x, int y, int z, int trunkHeight) {}
+            long x, int y, long z, int trunkHeight) {}
 }

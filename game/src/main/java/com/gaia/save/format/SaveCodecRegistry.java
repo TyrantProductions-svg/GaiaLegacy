@@ -51,8 +51,10 @@ public final class SaveCodecRegistry {
     }
 
     private static void validateBuiltInRequiredness(SaveSectionCodec<?> codec) {
-        if (SaveSectionId.isRequiredV1(codec.sectionId()) && !codec.required()) {
-            throw new IllegalArgumentException("A required v1 section codec cannot be optional");
+        if ((SaveSectionId.isRequiredV1(codec.sectionId())
+                        || SaveSectionId.isRequiredStreamedV2(codec.sectionId()))
+                && !codec.required()) {
+            throw new IllegalArgumentException("A required built-in section codec cannot be optional");
         }
         if (SaveSectionId.isReservedOptionalV1(codec.sectionId()) && codec.required()) {
             throw new IllegalArgumentException("A reserved optional v1 section codec cannot be required");

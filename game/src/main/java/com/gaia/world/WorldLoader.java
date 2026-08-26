@@ -249,6 +249,31 @@ public final class WorldLoader {
         return Optional.ofNullable(failure);
     }
 
+    /** Performs deterministic generation without repository publication. */
+    public ChunkGenerationData generateDetached(ChunkKey key) {
+        ChunkKey checkedKey = Objects.requireNonNull(key, "key");
+        WorldGenerationResult generated = Objects.requireNonNull(
+                generator.generate(contextFor(config), checkedKey),
+                "generator result");
+        if (!generated.succeeded()) {
+            Throwable cause = generated.failedStage()
+                    .flatMap(GenerationStageResult::failure)
+                    .orElseGet(() -> new IllegalStateException(
+                            "World generator failed without a cause"));
+            throw new IllegalStateException(
+                    "Detached generation failed for " + checkedKey, cause);
+        }
+        ChunkGenerationData data = generated.chunkData().orElseThrow();
+        if (!checkedKey.equals(data.key())) {
+            throw new IllegalStateException(
+                    "World generator returned key "
+                            + data.key()
+                            + " for requested key "
+                            + checkedKey);
+        }
+        return data;
+    }
+
     private ChunkGenerationData generateInitial(
             ChunkRepository chunks,
             GenerationContext context,

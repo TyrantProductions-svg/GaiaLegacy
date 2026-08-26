@@ -7,6 +7,8 @@ import java.util.Optional;
 public final class ContinuousBiomeProvider implements BiomeProvider {
     private static final ResourceLocation ID =
             ResourceLocation.parse("gaia:continuous_biomes");
+    private static final GenerationStageContract CONTRACT =
+            new GenerationStageContract(ID, 1, 0);
     private static final double FIELD_FREQUENCY_MULTIPLIER = 4.0;
     private static final long CLIMATE_SALT = 0L;
     private static final long RELIEF_SALT = 1L;
@@ -17,8 +19,13 @@ public final class ContinuousBiomeProvider implements BiomeProvider {
     }
 
     @Override
+    public GenerationStageContract contract() {
+        return CONTRACT;
+    }
+
+    @Override
     public BiomeSample sample(
-            GenerationContext context, int worldX, int worldZ) {
+            GenerationContext context, long worldX, long worldZ) {
         WorldGenerationConfig.BiomeSettings settings =
                 context.config().biome();
         double scale = settings.scale() * FIELD_FREQUENCY_MULTIPLIER;
@@ -43,8 +50,8 @@ public final class ContinuousBiomeProvider implements BiomeProvider {
                         localZ,
                         sample(
                                 context,
-                                region.worldX(localX),
-                                region.worldZ(localZ)));
+                                region.worldXLong(localX),
+                                region.worldZLong(localZ)));
                 samples++;
             }
         }
@@ -58,12 +65,12 @@ public final class ContinuousBiomeProvider implements BiomeProvider {
 
     private static double centeredNoise(
             GenerationContext context,
-            int worldX,
-            int worldZ,
+            long worldX,
+            long worldZ,
             double scale,
             long salt) {
         return context.sampler().valueNoise2D(
-                        ID, worldX, worldZ, scale, salt)
+                        CONTRACT, worldX, worldZ, scale, salt)
                 * 2.0
                 - 1.0;
     }

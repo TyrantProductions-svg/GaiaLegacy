@@ -103,7 +103,7 @@ class DefaultSurfaceProviderTest {
         provider.generate(context, region);
 
         assertEquals(GRASS, region.getBlock(0, 7, 0));
-        assertEquals(GRASS, region.getBlock(15, 0, 15));
+        assertEquals(STONE, region.getBlock(15, 0, 15));
         assertEquals(AIR, region.getBlock(2, 7, 0));
         assertOnlyPaletteBlocks(region);
     }
@@ -116,7 +116,9 @@ class DefaultSurfaceProviderTest {
                 new GenerationRegion(
                         new ChunkKey(0, 0),
                         worldHeight,
-                        AIR);
+                        AIR,
+                        (context, worldX, worldZ) ->
+                                columnHeight);
         for (int localZ = 0;
                 localZ < GameConfig.Chunk.SIZE;
                 localZ++) {

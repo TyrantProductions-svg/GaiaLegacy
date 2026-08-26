@@ -1,5 +1,6 @@
 package com.overlord.physics;
 
+import com.overlord.voxel.ChunkKey;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -13,6 +14,8 @@ public final class PhysicsWorld {
     private final CollisionWorld collisionWorld;
     private final Vector3f gravity;
     private final Set<PhysicsBody> bodies = new LinkedHashSet<>();
+    private SimulationOrigin simulationOrigin = new SimulationOrigin(new ChunkKey(0, 0));
+    private boolean originAware;
 
     public PhysicsWorld(
             CollisionWorld collisionWorld,
@@ -49,6 +52,20 @@ public final class PhysicsWorld {
     /** Returns the static collision world used by this physics world. */
     public CollisionWorld collisionWorld() {
         return collisionWorld;
+    }
+
+    /** Prepares publication of the collision-query origin without moving bodies. */
+    public PreparedOriginRebase prepareOriginRebase(
+            SimulationOrigin oldOrigin, SimulationOrigin nextOrigin) {
+        Objects.requireNonNull(oldOrigin, "oldOrigin");
+        Objects.requireNonNull(nextOrigin, "nextOrigin");
+        if (!simulationOrigin.equals(oldOrigin)) {
+            throw new IllegalStateException("old origin does not match PhysicsWorld");
+        }
+        return () -> {
+            simulationOrigin = nextOrigin;
+            originAware = true;
+        };
     }
 
     public void step(float fixedDeltaSeconds) {
@@ -96,12 +113,27 @@ public final class PhysicsWorld {
                 new Vector3f(position).add(displacement),
                 "integrated position");
 
-        MotionResult motion =
-                collisionWorld.moveAndSlide(
-                        body.collider(),
-                        position,
-                        displacement,
-                        MAX_COLLISION_ITERATIONS);
+        MotionResult motion;
+        if (originAware) {
+            SpatialQueryResult<MotionResult> query = collisionWorld.moveAndSlide(
+                    simulationOrigin,
+                    body.collider(),
+                    position,
+                    displacement,
+                    MAX_COLLISION_ITERATIONS);
+            if (query.status() != SpatialQueryResult.Status.AVAILABLE) {
+                body.setPosition(position);
+                body.setLinearVelocity(new Vector3f());
+                return;
+            }
+            motion = query.result().orElseThrow();
+        } else {
+            motion = collisionWorld.moveAndSlide(
+                    body.collider(),
+                    position,
+                    displacement,
+                    MAX_COLLISION_ITERATIONS);
+        }
         applyContactResponse(body, velocity, motion);
         requireFinite(velocity, "collision velocity");
 
@@ -138,5 +170,10 @@ public final class PhysicsWorld {
                 || !Float.isFinite(value.z())) {
             throw new IllegalArgumentException(label + " must be finite");
         }
+    }
+
+    @FunctionalInterface
+    public interface PreparedOriginRebase {
+        void commit();
     }
 }

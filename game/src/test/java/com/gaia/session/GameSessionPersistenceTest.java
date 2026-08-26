@@ -45,6 +45,29 @@ class GameSessionPersistenceTest {
     private static final SaveGameSnapshot SNAPSHOT = snapshot();
 
     @Test
+    void pausedProductionSessionAndProcessDowntimeDoNotAdvanceRestoredWorldTick() {
+        var first = GameSessionPersistenceTestFixture.restoreActualProductionSession(
+                SNAPSHOT);
+        first.driveToReady();
+        long restored = first.captureSave().snapshot().orElseThrow().fixedTick();
+        first.capturePaused();
+        first.capturePaused();
+        long afterPausedFrames = first.captureSave().snapshot().orElseThrow().fixedTick();
+        first.close();
+
+        var relaunched = GameSessionPersistenceTestFixture.restoreActualProductionSession(
+                SNAPSHOT);
+        relaunched.driveToReady();
+        long afterProcessDowntime =
+                relaunched.captureSave().snapshot().orElseThrow().fixedTick();
+
+        assertEquals(SNAPSHOT.fixedTick(), restored);
+        assertEquals(restored, afterPausedFrames);
+        assertEquals(restored, afterProcessDowntime);
+        relaunched.close();
+    }
+
+    @Test
     void captureIssuesOpaqueSessionBoundTokensAndCheckpointRejectsStaleFutureAndForeign() {
         var fixture =
                 GameSessionPersistenceTestFixture.sessionHarness(

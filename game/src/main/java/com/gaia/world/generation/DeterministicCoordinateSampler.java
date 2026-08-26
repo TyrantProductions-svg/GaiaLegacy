@@ -7,6 +7,8 @@ import java.util.Objects;
 public final class DeterministicCoordinateSampler {
     private static final long VERSION_FACTOR =
             0x9e3779b97f4a7c15L;
+    private static final long STAGE_VERSION_FACTOR =
+            0xa24baed4963ee407L;
     private static final long X_FACTOR =
             0x632be59bd9b4e019L;
     private static final long Y_FACTOR =
@@ -39,7 +41,21 @@ public final class DeterministicCoordinateSampler {
             int worldY,
             int worldZ,
             long salt) {
-        Objects.requireNonNull(stageId, "stageId");
+        return unit(
+                new GenerationStageContract(stageId, 1, 0),
+                worldX,
+                worldY,
+                worldZ,
+                salt);
+    }
+
+    public double unit(
+            GenerationStageContract stage,
+            long worldX,
+            long worldY,
+            long worldZ,
+            long salt) {
+        Objects.requireNonNull(stage, "stage");
         long value = mix64(seed);
         value =
                 mix64(
@@ -47,19 +63,25 @@ public final class DeterministicCoordinateSampler {
                                 ^ Integer.toUnsignedLong(
                                                 algorithmVersion)
                                         * VERSION_FACTOR);
-        value = mix64(value ^ stageFold(stageId));
         value =
                 mix64(
                         value
-                                ^ (long) worldX * X_FACTOR);
+                                ^ stageFold(stage.id())
+                                ^ Integer.toUnsignedLong(
+                                                stage.version() - 1)
+                                        * STAGE_VERSION_FACTOR);
         value =
                 mix64(
                         value
-                                ^ (long) worldY * Y_FACTOR);
+                                ^ worldX * X_FACTOR);
         value =
                 mix64(
                         value
-                                ^ (long) worldZ * Z_FACTOR);
+                                ^ worldY * Y_FACTOR);
+        value =
+                mix64(
+                        value
+                                ^ worldZ * Z_FACTOR);
         value = mix64(value ^ salt * SALT_FACTOR);
         return unitDouble(value);
     }
@@ -70,26 +92,41 @@ public final class DeterministicCoordinateSampler {
             double worldZ,
             double scale,
             long salt) {
+        return valueNoise2D(
+                new GenerationStageContract(stageId, 1, 0),
+                worldX,
+                worldZ,
+                scale,
+                salt);
+    }
+
+    public double valueNoise2D(
+            GenerationStageContract stage,
+            double worldX,
+            double worldZ,
+            double scale,
+            long salt) {
+        Objects.requireNonNull(stage, "stage");
         requireFinite("worldX", worldX);
         requireFinite("worldZ", worldZ);
         requireScale(scale);
         double scaledX = worldX * scale;
         double scaledZ = worldZ * scale;
-        int x0 = floorToInt("worldX", scaledX);
-        int z0 = floorToInt("worldZ", scaledZ);
-        int x1 = incrementLattice(x0);
-        int z1 = incrementLattice(z0);
+        long x0 = floorToLong("worldX", scaledX);
+        long z0 = floorToLong("worldZ", scaledZ);
+        long x1 = incrementLattice(x0);
+        long z1 = incrementLattice(z0);
         double xFade = fade(scaledX - x0);
         double zFade = fade(scaledZ - z0);
         double north =
                 lerp(
-                        unit(stageId, x0, 0, z0, salt),
-                        unit(stageId, x1, 0, z0, salt),
+                        unit(stage, x0, 0L, z0, salt),
+                        unit(stage, x1, 0L, z0, salt),
                         xFade);
         double south =
                 lerp(
-                        unit(stageId, x0, 0, z1, salt),
-                        unit(stageId, x1, 0, z1, salt),
+                        unit(stage, x0, 0L, z1, salt),
+                        unit(stage, x1, 0L, z1, salt),
                         xFade);
         return lerp(north, south, zFade);
     }
@@ -101,6 +138,23 @@ public final class DeterministicCoordinateSampler {
             double worldZ,
             double scale,
             long salt) {
+        return valueNoise3D(
+                new GenerationStageContract(stageId, 1, 0),
+                worldX,
+                worldY,
+                worldZ,
+                scale,
+                salt);
+    }
+
+    public double valueNoise3D(
+            GenerationStageContract stage,
+            double worldX,
+            double worldY,
+            double worldZ,
+            double scale,
+            long salt) {
+        Objects.requireNonNull(stage, "stage");
         requireFinite("worldX", worldX);
         requireFinite("worldY", worldY);
         requireFinite("worldZ", worldZ);
@@ -108,34 +162,34 @@ public final class DeterministicCoordinateSampler {
         double scaledX = worldX * scale;
         double scaledY = worldY * scale;
         double scaledZ = worldZ * scale;
-        int x0 = floorToInt("worldX", scaledX);
-        int y0 = floorToInt("worldY", scaledY);
-        int z0 = floorToInt("worldZ", scaledZ);
-        int x1 = incrementLattice(x0);
-        int y1 = incrementLattice(y0);
-        int z1 = incrementLattice(z0);
+        long x0 = floorToLong("worldX", scaledX);
+        long y0 = floorToLong("worldY", scaledY);
+        long z0 = floorToLong("worldZ", scaledZ);
+        long x1 = incrementLattice(x0);
+        long y1 = incrementLattice(y0);
+        long z1 = incrementLattice(z0);
         double xFade = fade(scaledX - x0);
         double yFade = fade(scaledY - y0);
         double zFade = fade(scaledZ - z0);
         double lowerNorth =
                 lerp(
-                        unit(stageId, x0, y0, z0, salt),
-                        unit(stageId, x1, y0, z0, salt),
+                        unit(stage, x0, y0, z0, salt),
+                        unit(stage, x1, y0, z0, salt),
                         xFade);
         double upperNorth =
                 lerp(
-                        unit(stageId, x0, y1, z0, salt),
-                        unit(stageId, x1, y1, z0, salt),
+                        unit(stage, x0, y1, z0, salt),
+                        unit(stage, x1, y1, z0, salt),
                         xFade);
         double lowerSouth =
                 lerp(
-                        unit(stageId, x0, y0, z1, salt),
-                        unit(stageId, x1, y0, z1, salt),
+                        unit(stage, x0, y0, z1, salt),
+                        unit(stage, x1, y0, z1, salt),
                         xFade);
         double upperSouth =
                 lerp(
-                        unit(stageId, x0, y1, z1, salt),
-                        unit(stageId, x1, y1, z1, salt),
+                        unit(stage, x0, y1, z1, salt),
+                        unit(stage, x1, y1, z1, salt),
                         xFade);
         return lerp(
                 lerp(lowerNorth, upperNorth, yFade),
@@ -180,19 +234,24 @@ public final class DeterministicCoordinateSampler {
         return start + (end - start) * fraction;
     }
 
-    private static int floorToInt(
+    private static long floorToLong(
             String name, double value) {
         double floor = StrictMath.floor(value);
-        if (floor < Integer.MIN_VALUE
-                || floor >= Integer.MAX_VALUE) {
+        if (floor < Long.MIN_VALUE
+                || floor >= Long.MAX_VALUE) {
             throw new IllegalArgumentException(
                     name + " exceeds the supported lattice");
         }
-        return (int) floor;
+        return (long) floor;
     }
 
-    private static int incrementLattice(int value) {
-        return value + 1;
+    private static long incrementLattice(long value) {
+        try {
+            return Math.addExact(value, 1L);
+        } catch (ArithmeticException failure) {
+            throw new IllegalArgumentException(
+                    "Coordinate exceeds the supported lattice", failure);
+        }
     }
 
     private static void requireScale(double scale) {

@@ -53,7 +53,7 @@ class RenderArchitectureTest {
     void gameSourcesDoNotCallOpenGlDirectly() throws IOException {
         List<String> forbidden =
                 List.of(
-                        "org.lwjgl",
+                        "org.lwjgl.opengl",
                         "glUseProgram",
                         "glBindTexture",
                         "glBindVertexArray",

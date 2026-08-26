@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Objects;
+import org.joml.Vector3fc;
 
 public final class ParticleSystem {
     public static final int MAX_PARTICLES = 512;
@@ -99,6 +100,29 @@ public final class ParticleSystem {
             visuals.add(particle.visual());
         }
         return new ParticleRenderBatch(visuals);
+    }
+
+    /** Prebuilds a bounded, side-effect-free local-position shift. */
+    public PreparedOriginRebase prepareOriginRebase(Vector3fc offset) {
+        if (offset == null
+                || !Float.isFinite(offset.x())
+                || !Float.isFinite(offset.y())
+                || !Float.isFinite(offset.z())) {
+            throw new IllegalArgumentException("offset must be finite");
+        }
+        ParticleState[] replacements = new ParticleState[particles.size()];
+        int index = 0;
+        for (ParticleState particle : particles) {
+            replacements[index++] = particle.rebased(offset);
+        }
+        return () -> {
+            particles.clear();
+            for (int replacementIndex = 0;
+                    replacementIndex < replacements.length;
+                    replacementIndex++) {
+                particles.addLast(replacements[replacementIndex]);
+            }
+        };
     }
 
     public void clear() {
@@ -385,6 +409,20 @@ public final class ParticleSystem {
             ParticleCategory category,
             ParticlePriority priority,
             long spawnSequence) {
+        private ParticleState rebased(Vector3fc offset) {
+            float nextX = x + offset.x();
+            float nextY = y + offset.y();
+            float nextZ = z + offset.z();
+            if (!Float.isFinite(nextX) || !Float.isFinite(nextY) || !Float.isFinite(nextZ)) {
+                throw new IllegalArgumentException("rebased particle position must be finite");
+            }
+            return new ParticleState(
+                    nextX, nextY, nextZ,
+                    velocityX, velocityY, velocityZ,
+                    age, lifetime, size, initialSize, gravity, drag,
+                    region, tint, category, priority, spawnSequence);
+        }
+
         private ParticleState advance() {
             float nextVelocityX = velocityX * drag;
             float nextVelocityY = (velocityY + gravity * FIXED_STEP_SECONDS) * drag;
@@ -442,4 +480,9 @@ public final class ParticleSystem {
             float bitangentX,
             float bitangentY,
             float bitangentZ) {}
+
+    @FunctionalInterface
+    public interface PreparedOriginRebase {
+        void commit();
+    }
 }

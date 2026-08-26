@@ -115,9 +115,9 @@ class ChunkMeshLifecycleStructureTest {
         String manager = readMainSource("com/overlord/voxel/ChunkMeshManager.java");
         String repository = readMainSource("com/overlord/voxel/ChunkRepository.java");
         String workerMeshing =
-                manager.substring(
-                        manager.indexOf("private void buildMesh("),
-                        manager.indexOf("private void drainUnloads("));
+                        manager.substring(
+                                manager.indexOf("private void buildMesh("),
+                                manager.indexOf("private DispatchOutcome dispatchOne("));
 
         assertNoCodeMatches(
                 builder,

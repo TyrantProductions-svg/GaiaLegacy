@@ -151,12 +151,11 @@ class BlockRaycastTest {
     }
 
     @Test
-    void adjacentCoordinateOverflowFailsExplicitly() {
-        BlockRaycast raycast =
-                raycastFor(worldWithBlock(Integer.MIN_VALUE, 0, 0));
+    void unsafeExtremeWorldCoordinateFailsExplicitly() {
+        BlockRaycast raycast = raycastFor(new World());
 
         assertThrows(
-                ArithmeticException.class,
+                IllegalArgumentException.class,
                 () ->
                         raycast.cast(
                                 new Vector3f(
@@ -168,27 +167,17 @@ class BlockRaycastTest {
     }
 
     @Test
-    void unrepresentableTiedStepStillChecksRepresentableIncidentCell() {
-        BlockRaycastHit hit =
-                raycastFor(
-                                worldWithBlock(
-                                        Integer.MIN_VALUE,
-                                        0,
-                                        -1))
-                        .cast(
+    void unsafeExtremeTiedStepFailsExplicitly() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        raycastFor(new World()).cast(
                                 new Vector3f(
                                         (float) Integer.MIN_VALUE,
                                         0.5f,
                                         0),
                                 new Vector3f(-1, 0, -1),
-                                0)
-                        .orElseThrow();
-
-        assertEquals(Integer.MIN_VALUE, hit.blockX());
-        assertEquals(-1, hit.blockZ());
-        assertEquals(0.0f, hit.normalX());
-        assertEquals(0.0f, hit.normalY());
-        assertEquals(1.0f, hit.normalZ());
+                                0));
     }
 
     @Test

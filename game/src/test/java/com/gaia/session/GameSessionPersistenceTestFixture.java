@@ -3,12 +3,14 @@ package com.gaia.session;
 import com.gaia.interaction.GameModeManager;
 import com.gaia.inventory.BodyInventoryService;
 import com.gaia.save.snapshot.SaveGameSnapshot;
+import com.gaia.save.streaming.StreamedWorldItemPageBackend;
 import com.overlord.core.input.MouseDelta;
 import com.overlord.interaction.api.EntityRef;
 import com.overlord.physics.PlayerController;
 import com.overlord.renderer.Camera;
 import com.overlord.voxel.World;
 import com.overlord.worlditem.LogicalWorldItemService;
+import com.overlord.worlditem.api.WorldItemPagingMetrics;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -22,6 +24,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.function.LongSupplier;
+import java.util.function.LongConsumer;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.IntSupplier;
 import java.util.function.Supplier;
@@ -43,6 +46,15 @@ public final class GameSessionPersistenceTestFixture {
                 capture.playerController(),
                 capture.camera(),
                 capture.gameModes());
+    }
+
+    /** Test bridge over the one real package-owned authoritative clock. */
+    public static ClockRestoreAccess freshClockRestoreAccess() {
+        SessionPersistenceClock clock = SessionPersistenceClock.restored(0L, 0L);
+        return new ClockRestoreAccess(
+                clock::restoreAuthoritativeWorldTick,
+                clock::fixedTick,
+                clock::revision);
     }
 
     public static SessionHarness sessionHarness(
@@ -248,6 +260,30 @@ public final class GameSessionPersistenceTestFixture {
                 access::physicsBodyCount,
                 access::inventoryPendingReservations,
                 access::worldItemPendingReservations,
+                access::worldItemLiveMetadataCount,
+                access::worldItemPagingMetrics,
+                access::liveWorkerCount,
+                () -> access.authorizationEntryCount(session));
+    }
+
+    public static ActualProductionSession restoreActualProductionSession(
+            SaveGameSnapshot decoded,
+            StreamedWorldItemPageBackend pagingBackend) {
+        var access = GameSessionFactory.productionSessionTestAccess(
+                Objects.requireNonNull(pagingBackend, "pagingBackend"));
+        GameSession session = access.factory().restore(
+                Objects.requireNonNull(decoded, "decoded"));
+        return new ActualProductionSession(
+                session,
+                access::generationInvocationCount,
+                access::readyPublicationCount,
+                access::capturedFrameCount,
+                access::transientPresentationCount,
+                access::physicsBodyCount,
+                access::inventoryPendingReservations,
+                access::worldItemPendingReservations,
+                access::worldItemLiveMetadataCount,
+                access::worldItemPagingMetrics,
                 access::liveWorkerCount,
                 () -> access.authorizationEntryCount(session));
     }
@@ -360,6 +396,8 @@ public final class GameSessionPersistenceTestFixture {
         private final IntSupplier physicsBodyCount;
         private final IntSupplier inventoryPendingReservations;
         private final IntSupplier worldItemPendingReservations;
+        private final IntSupplier worldItemLiveMetadataCount;
+        private final Supplier<WorldItemPagingMetrics> worldItemPagingMetrics;
         private final IntSupplier liveWorkerCount;
         private final IntSupplier authorizationEntryCount;
 
@@ -372,6 +410,8 @@ public final class GameSessionPersistenceTestFixture {
                 IntSupplier physicsBodyCount,
                 IntSupplier inventoryPendingReservations,
                 IntSupplier worldItemPendingReservations,
+                IntSupplier worldItemLiveMetadataCount,
+                Supplier<WorldItemPagingMetrics> worldItemPagingMetrics,
                 IntSupplier liveWorkerCount,
                 IntSupplier authorizationEntryCount) {
             this.session = Objects.requireNonNull(session, "session");
@@ -389,6 +429,10 @@ public final class GameSessionPersistenceTestFixture {
                     inventoryPendingReservations, "inventoryPendingReservations");
             this.worldItemPendingReservations = Objects.requireNonNull(
                     worldItemPendingReservations, "worldItemPendingReservations");
+            this.worldItemLiveMetadataCount = Objects.requireNonNull(
+                    worldItemLiveMetadataCount, "worldItemLiveMetadataCount");
+            this.worldItemPagingMetrics = Objects.requireNonNull(
+                    worldItemPagingMetrics, "worldItemPagingMetrics");
             this.liveWorkerCount = Objects.requireNonNull(
                     liveWorkerCount, "liveWorkerCount");
             this.authorizationEntryCount = Objects.requireNonNull(
@@ -461,6 +505,14 @@ public final class GameSessionPersistenceTestFixture {
             return worldItemPendingReservations.getAsInt();
         }
 
+        public int worldItemLiveMetadataCount() {
+            return worldItemLiveMetadataCount.getAsInt();
+        }
+
+        public WorldItemPagingMetrics worldItemPagingMetrics() {
+            return worldItemPagingMetrics.get();
+        }
+
         public int liveWorkerCount() {
             return liveWorkerCount.getAsInt();
         }
@@ -497,6 +549,18 @@ public final class GameSessionPersistenceTestFixture {
             Objects.requireNonNull(playerController, "playerController");
             Objects.requireNonNull(camera, "camera");
             Objects.requireNonNull(gameModes, "gameModes");
+        }
+    }
+
+    public record ClockRestoreAccess(
+            LongConsumer restoreAuthoritativeWorldTick,
+            LongSupplier fixedTick,
+            LongSupplier revision) {
+        public ClockRestoreAccess {
+            Objects.requireNonNull(
+                    restoreAuthoritativeWorldTick, "restoreAuthoritativeWorldTick");
+            Objects.requireNonNull(fixedTick, "fixedTick");
+            Objects.requireNonNull(revision, "revision");
         }
     }
 

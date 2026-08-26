@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.gaia.world.GaiaWorldGenerator;
 import com.overlord.voxel.ChunkGenerationData;
+import com.overlord.voxel.ChunkCoordinatePolicy;
 import com.overlord.voxel.ChunkKey;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -346,9 +347,8 @@ class VisualRevisionWorldGenerationTest {
         WorldGenerationConfig config =
                 WorldGenerationConfig.visualRevisionCandidate();
         int maximumChunk =
-                Math.floorDiv(Integer.MAX_VALUE, 16);
-        int minimumChunk =
-                Math.floorDiv(Integer.MIN_VALUE, 16);
+                ChunkCoordinatePolicy.MAX_SAFE_CHUNK_COORDINATE;
+        int minimumChunk = -maximumChunk;
 
         List<ChunkGenerationData> chunks =
                 generate(

@@ -4,6 +4,7 @@ import com.gaia.save.format.SaveSectionCodec;
 import com.gaia.save.format.SaveSectionId;
 import com.overlord.config.GameConfig;
 import com.overlord.voxel.ChunkKey;
+import com.overlord.voxel.ChunkCoordinatePolicy;
 import com.overlord.voxel.ChunkRepositorySnapshot;
 import com.overlord.voxel.ChunkSnapshot;
 import java.io.ByteArrayInputStream;
@@ -41,8 +42,7 @@ public final class ChunkSectionCodec
                     + Long.BYTES
                     + Integer.BYTES;
     private static final Comparator<ChunkSnapshot> CHUNK_ORDER =
-            Comparator.comparingInt((ChunkSnapshot chunk) -> chunk.key().x())
-                    .thenComparingInt(chunk -> chunk.key().z());
+            Comparator.comparing(ChunkSnapshot::key, ChunkCoordinatePolicy.canonicalComparator());
 
     @Override
     public SaveSectionId sectionId() {
@@ -97,7 +97,9 @@ public final class ChunkSectionCodec
         List<EncodedChunk> encodedChunks = new ArrayList<>(chunks.size());
         for (ChunkSnapshot chunk : chunks) {
             Objects.requireNonNull(chunk, "chunk");
-            ChunkKey key = Objects.requireNonNull(chunk.key(), "chunk key");
+            ChunkKey key =
+                    ChunkCoordinatePolicy.requireSafe(
+                            Objects.requireNonNull(chunk.key(), "chunk key"));
             requireChunkRevision(chunk.revision(), revisionHighWater);
             if (chunk.worldHeight() != worldHeight) {
                 throw new IllegalArgumentException(
@@ -166,7 +168,9 @@ public final class ChunkSectionCodec
             Set<ChunkKey> keys = new HashSet<>();
             ChunkKey previousKey = null;
             for (int index = 0; index < chunkCount; index++) {
-                ChunkKey key = new ChunkKey(input.readInt(), input.readInt());
+                ChunkKey key =
+                        ChunkCoordinatePolicy.requireSafe(
+                                new ChunkKey(input.readInt(), input.readInt()));
                 long revision = input.readLong();
                 requireChunkRevision(revision, revisionHighWater);
                 int encodedBlockLength = input.readInt();
@@ -241,10 +245,7 @@ public final class ChunkSectionCodec
     }
 
     private static int compareKeys(ChunkKey first, ChunkKey second) {
-        int xComparison = Integer.compare(first.x(), second.x());
-        return xComparison != 0
-                ? xComparison
-                : Integer.compare(first.z(), second.z());
+        return ChunkCoordinatePolicy.canonicalComparator().compare(first, second);
     }
 
     private record EncodedChunk(ChunkKey key, long revision, byte[] blocks) {

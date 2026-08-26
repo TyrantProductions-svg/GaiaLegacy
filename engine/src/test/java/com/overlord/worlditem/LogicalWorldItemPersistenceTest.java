@@ -69,6 +69,26 @@ class LogicalWorldItemPersistenceTest {
     }
 
     @Test
+    void legacyRestoreRebuildsBoundedMetadataAndExactExpiryIndex() {
+        LogicalWorldItemService source = service(2, 0);
+        WorldItemSnapshot item = source.spawn(request(DIRT, 1, 0))
+                .item().orElseThrow();
+        LogicalWorldItemSnapshot snapshot = source.canonicalSnapshot();
+        LogicalWorldItemService restored = service(2, 0);
+
+        assertEquals(RESTORED, restored.restoreCanonical(snapshot).status());
+        assertEquals(1, restored.liveMetadata().size());
+        assertEquals(1, restored.pagingMetrics().expiryIndexCount());
+        assertTrue(restored.deliverWorldTick(17_999L).isEmpty());
+        assertTrue(restored.snapshot(item.id()).isPresent());
+
+        assertEquals(List.of(item.id()), restored.deliverWorldTick(18_000L));
+        assertTrue(restored.snapshot(item.id()).isEmpty());
+        assertTrue(restored.liveMetadata().isEmpty());
+        assertEquals(0, restored.pagingMetrics().expiryIndexCount());
+    }
+
+    @Test
     void snapshotOwnsAnImmutableStableIdSortedEntryList() {
         WorldItemRestoreEntry high = entry(9, DIRT, 1, 0);
         WorldItemRestoreEntry low = entry(2, STONE, 1, 0);

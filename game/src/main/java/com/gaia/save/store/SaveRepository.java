@@ -9,6 +9,12 @@ import com.gaia.save.format.SaveFormatVersion;
 import com.gaia.save.format.SaveGameId;
 import com.gaia.save.format.SaveGameManifest;
 import com.gaia.save.snapshot.SaveGameSnapshot;
+import com.gaia.save.streaming.Phase14MigrationResult;
+import com.gaia.save.streaming.Phase14SaveMigrator;
+import com.gaia.save.streaming.StreamedChunkCodec;
+import com.gaia.save.streaming.StreamedChunkIndexCodec;
+import com.gaia.save.streaming.StreamedChunkStore;
+import com.gaia.save.streaming.StreamedSessionSaveTarget;
 import com.gaia.shell.save.SaveSummary;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -26,6 +32,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -35,6 +42,14 @@ import java.util.zip.ZipFile;
 public final class SaveRepository {
     private static final String CURRENT_NAME = "current.glsave";
     private static final String BACKUP_NAME = "backup.glsave";
+    private static final Set<String> STREAMED_TOP_FILES = Set.of(
+            "streamed-migration.a.v2",
+            "streamed-migration.b.v2",
+            "streamed-migration.published.a.v2",
+            "streamed-migration.published.b.v2",
+            "streamed-chunks.idx",
+            "streamed-chunks.prev.idx");
+    private static final String STREAMED_CHUNK_DIRECTORY = "streamed-chunks";
     private static final String TRASH_NAME = ".trash";
     private static final int MAX_CATALOG_DIAGNOSTICS = 8;
 
@@ -103,6 +118,29 @@ public final class SaveRepository {
                     "save-load.not-found",
                     "The selected save does not exist"));
         }
+        Phase14SaveMigrator.PublicationObservation migrated =
+                publishedMigration(world);
+        if (migrated.status()
+                == Phase14SaveMigrator.PublicationStatus.PUBLISHED_VALID) {
+            try {
+                SaveGameSnapshot snapshot = StreamedSessionSaveTarget.restoreSnapshot(
+                                saveRoot.lexical(),
+                                id,
+                                migrated.migration(),
+                                files)
+                        .orElse(migrated.migration().snapshot());
+                return SaveArchiveReadResult.valid(snapshot, List.of());
+            } catch (RuntimeException failure) {
+                return SaveArchiveReadResult.corrupt(diagnostic(
+                        "save-load.streamed-session-corrupt",
+                        "The streamed session checkpoint is invalid",
+                        failure));
+            }
+        }
+        if (migrated.status()
+                == Phase14SaveMigrator.PublicationStatus.PUBLISHED_INVALID) {
+            return SaveArchiveReadResult.corrupt(migrated.diagnostic());
+        }
         ArchiveObservation current = observeArchive(world, world.current());
         return switch (current.status()) {
             case VALID -> SaveArchiveReadResult.valid(
@@ -122,6 +160,18 @@ public final class SaveRepository {
                                     ? "The current save archive is missing"
                                     : "The current save archive is corrupt"));
         };
+    }
+
+    /** Conservatively imports a Phase 14 archive into the streamed v2 authority. */
+    public Phase14MigrationResult migratePhase14(SaveGameId id) {
+        Objects.requireNonNull(id, "id");
+        return new Phase14SaveMigrator(
+                        saveRoot.lexical(),
+                        archiveReader,
+                        new StreamedChunkCodec(),
+                        new StreamedChunkIndexCodec(),
+                        files)
+                .migrate(id);
     }
 
     public SaveRecoveryResult recoverBackup(SaveGameId id) {
@@ -306,6 +356,50 @@ public final class SaveRepository {
             return Optional.empty();
         }
 
+        Phase14SaveMigrator.PublicationObservation migrated =
+                publishedMigration(world);
+        if (migrated.status()
+                == Phase14SaveMigrator.PublicationStatus.PUBLISHED_VALID) {
+            try {
+                Optional<com.gaia.save.streaming.StreamedSessionSaveTarget.RestoredSession>
+                        session = StreamedSessionSaveTarget.restoreSession(
+                                saveRoot.lexical(),
+                                id,
+                                migrated.migration(),
+                                files);
+                return Optional.of(summaryFromMigrated(
+                        id,
+                        migrated.migration().manifest(),
+                        session.map(value -> value.modifiedTime()).orElse(
+                                migrated.migration().manifest().modifiedAt())));
+            } catch (RuntimeException failure) {
+                return Optional.of(new SaveSummary(
+                        id,
+                        id.value(),
+                        Optional.empty(),
+                        Instant.EPOCH,
+                        Optional.empty(),
+                        Optional.of(SaveFormatVersion.STREAMED_CHUNKS),
+                        SaveSummary.Health.CORRUPT,
+                        List.of(diagnostic(
+                                "save-catalog.streamed-session-corrupt",
+                                "The latest streamed session root is invalid",
+                                failure))));
+            }
+        }
+        if (migrated.status()
+                == Phase14SaveMigrator.PublicationStatus.PUBLISHED_INVALID) {
+            return Optional.of(new SaveSummary(
+                    id,
+                    id.value(),
+                    Optional.empty(),
+                    Instant.EPOCH,
+                    Optional.empty(),
+                    Optional.of(SaveFormatVersion.STREAMED_CHUNKS),
+                    SaveSummary.Health.CORRUPT,
+                    List.of(migrated.diagnostic())));
+        }
+
         ArchiveObservation current = observeArchive(world, world.current());
         ArchiveObservation backup = observeArchive(world, world.backup());
         if (current.status() == ArchiveStatus.VALID) {
@@ -353,6 +447,40 @@ public final class SaveRepository {
                 Optional.empty(),
                 SaveSummary.Health.CORRUPT,
                 boundedDiagnostics(diagnostics)));
+    }
+
+    private Phase14SaveMigrator.PublicationObservation
+            publishedMigration(WorldIdentity world) {
+        return Phase14SaveMigrator.observePublished(
+                saveRoot.lexical(), world.id(), archiveReader, files);
+    }
+
+    private static SaveSummary summaryFromMigrated(
+            SaveGameId expectedId,
+            Phase14MigrationResult.ValidatedV2Manifest manifest,
+            Instant modifiedTime) {
+        if (!manifest.saveGameId().equals(expectedId)) {
+            return new SaveSummary(
+                    expectedId,
+                    expectedId.value(),
+                    Optional.empty(),
+                    Instant.EPOCH,
+                    Optional.empty(),
+                    Optional.empty(),
+                    SaveSummary.Health.CORRUPT,
+                    List.of(diagnostic(
+                            "save-catalog.identity-mismatch",
+                            "The save manifest identity does not match its directory")));
+        }
+        return new SaveSummary(
+                expectedId,
+                manifest.displayName(),
+                Optional.of(manifest.createdAt()),
+                modifiedTime,
+                Optional.of(manifest.worldSeed()),
+                Optional.of(SaveFormatVersion.STREAMED_CHUNKS),
+                SaveSummary.Health.VALID,
+                List.of());
     }
 
     private SaveSummary summaryFromValid(
@@ -487,19 +615,31 @@ public final class SaveRepository {
 
     private void requireDeleteTreeShape(WorldIdentity world) throws IOException {
         requireWorld(world);
-        try (Stream<Path> children = Files.list(world.directory().lexical())) {
-            for (Path child : children.toList()) {
-                String name = child.getFileName().toString();
-                boolean allowedName = name.equals(CURRENT_NAME)
-                        || name.equals(BACKUP_NAME)
-                        || name.endsWith(".tmp");
-                if (!allowedName
-                        || Files.isSymbolicLink(child)
-                        || !Files.isRegularFile(child, LinkOption.NOFOLLOW_LINKS)
-                        || !Objects.equals(child.toRealPath().getParent(),
-                                world.directory().real())) {
-                    throw new UnsafePathException();
-                }
+        boolean streamed = Files.exists(
+                world.directory().lexical().resolve(STREAMED_CHUNK_DIRECTORY),
+                LinkOption.NOFOLLOW_LINKS);
+        if (streamed) {
+            Phase14SaveMigrator.PublicationObservation publication =
+                    publishedMigration(world);
+            if (publication.status()
+                    != Phase14SaveMigrator.PublicationStatus.PUBLISHED_VALID) {
+                throw new UnsafePathException();
+            }
+            StreamedChunkStore.ManagedTreeValidationResult validation =
+                    new StreamedChunkStore(
+                            saveRoot.lexical(),
+                            world.id(),
+                            new StreamedChunkCodec(),
+                            new StreamedChunkIndexCodec(),
+                            files)
+                            .validateManagedTreeForDelete();
+            if (!validation.valid()) {
+                throw new UnsafePathException();
+            }
+        }
+        try (Stream<Path> tree = Files.walk(world.directory().lexical())) {
+            for (Path entry : tree.skip(1).toList()) {
+                requireDeleteTreeEntry(world.directory(), entry, streamed);
             }
         }
     }
@@ -526,35 +666,118 @@ public final class SaveRepository {
     private void cleanupTrashEntry(TrashEntry moved) throws IOException {
         requireDirectory(moved.trash());
         requireDirectory(moved.entry());
-        List<Path> children;
-        try (Stream<Path> stream = Files.list(moved.entry().lexical())) {
-            children = stream.toList();
+        List<Path> entries;
+        boolean streamed = Files.exists(
+                moved.entry().lexical().resolve(STREAMED_CHUNK_DIRECTORY),
+                LinkOption.NOFOLLOW_LINKS);
+        try (Stream<Path> stream = Files.walk(moved.entry().lexical())) {
+            entries = stream.sorted(Comparator
+                    .comparingInt((Path path) -> path.getNameCount())
+                    .reversed()).toList();
         }
-        for (Path child : children) {
-            requireTrashChild(moved, child);
-            files.deleteIfExists(child, () -> requireTrashChild(moved, child));
-        }
-        files.deleteIfExists(moved.entry().lexical(), () -> {
-            requireDirectory(moved.trash());
-            requireDirectory(moved.entry());
-            try (Stream<Path> stream = Files.list(moved.entry().lexical())) {
-                if (stream.findAny().isPresent()) {
-                    throw new UnsafePathException();
-                }
+        for (Path entry : entries) {
+            if (entry.equals(moved.entry().lexical())) {
+                files.deleteIfExists(entry, () -> {
+                    requireDirectory(moved.trash());
+                    requireDirectory(moved.entry());
+                    try (Stream<Path> children = Files.list(entry)) {
+                        if (children.findAny().isPresent()) {
+                            throw new UnsafePathException();
+                        }
+                    }
+                });
+            } else {
+                requireDeleteTreeEntry(moved.entry(), entry, streamed);
+                files.deleteIfExists(entry, () -> {
+                    requireDirectory(moved.trash());
+                    requireDirectory(moved.entry());
+                    requireDeleteTreeEntry(moved.entry(), entry, streamed);
+                    if (Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS)) {
+                        try (Stream<Path> children = Files.list(entry)) {
+                            if (children.findAny().isPresent()) {
+                                throw new UnsafePathException();
+                            }
+                        }
+                    }
+                });
             }
-        });
+        }
     }
 
-    private void requireTrashChild(TrashEntry moved, Path child) throws IOException {
-        requireDirectory(moved.trash());
-        requireDirectory(moved.entry());
-        Path normalized = child.toAbsolutePath().normalize();
-        if (!Objects.equals(normalized.getParent(), moved.entry().lexical())
-                || Files.isSymbolicLink(normalized)
-                || !Files.isRegularFile(normalized, LinkOption.NOFOLLOW_LINKS)
-                || !Objects.equals(normalized.toRealPath().getParent(), moved.entry().real())) {
+    private void requireDeleteTreeEntry(
+            DirectoryIdentity root, Path entry, boolean streamed) throws IOException {
+        requireDirectory(root);
+        Path normalized = entry.toAbsolutePath().normalize();
+        if (!normalized.startsWith(root.lexical())
+                || normalized.equals(root.lexical())) {
             throw new UnsafePathException();
         }
+        Path relative = root.lexical().relativize(normalized);
+        int depth = relative.getNameCount();
+        String first = relative.getName(0).toString();
+        boolean directoryExpected = false;
+        boolean fileExpected = false;
+        if (depth == 1) {
+            fileExpected = first.equals(CURRENT_NAME)
+                    || first.equals(BACKUP_NAME)
+                    || STREAMED_TOP_FILES.contains(first);
+            if (!streamed && first.endsWith(".tmp")) {
+                fileExpected = true;
+            }
+            directoryExpected = first.equals(STREAMED_CHUNK_DIRECTORY);
+        } else if (first.equals(STREAMED_CHUNK_DIRECTORY) && depth == 2) {
+            directoryExpected = canonicalSignedCoordinate(
+                    relative.getName(1).toString());
+        } else if (first.equals(STREAMED_CHUNK_DIRECTORY) && depth == 3) {
+            fileExpected = canonicalSignedCoordinate(
+                            relative.getName(1).toString())
+                    && relative.getName(2).toString().matches(
+                            "[np][0-9a-f]{8}\\.[ab]\\.glchunk");
+        }
+        if (directoryExpected) {
+            if (Files.isSymbolicLink(normalized)
+                    || !Files.isDirectory(normalized, LinkOption.NOFOLLOW_LINKS)
+                    || !Objects.equals(
+                            normalized.toRealPath().getParent(),
+                            normalized.getParent().toRealPath())) {
+                throw new UnsafePathException();
+            }
+            return;
+        }
+        if (!fileExpected
+                || Files.isSymbolicLink(normalized)
+                || !Files.isRegularFile(normalized, LinkOption.NOFOLLOW_LINKS)
+                || !Objects.equals(
+                        normalized.toRealPath().getParent(),
+                        normalized.getParent().toRealPath())) {
+            throw new UnsafePathException();
+        }
+        if (streamed) {
+            files.readManagedFileIdentity(
+                    normalized,
+                    SaveArchiveLimits.MAX_ARCHIVE_FILE_BYTES,
+                    () -> {
+                        if (Files.isSymbolicLink(normalized)
+                                || !Files.isRegularFile(
+                                        normalized, LinkOption.NOFOLLOW_LINKS)) {
+                            throw new UnsafePathException();
+                        }
+                    });
+        }
+    }
+
+    private static boolean canonicalSignedCoordinate(String encoded) {
+        if (!encoded.matches("[np][0-9a-f]{8}")) {
+            return false;
+        }
+        long magnitude = Long.parseLong(encoded.substring(1), 16);
+        long signed = encoded.charAt(0) == 'n' ? -magnitude : magnitude;
+        return signed >= Integer.MIN_VALUE
+                && signed <= Integer.MAX_VALUE
+                && (signed < 0 ? "n" : "p").concat(String.format(
+                        java.util.Locale.ROOT,
+                        "%08x",
+                        Math.abs(signed))).equals(encoded);
     }
 
     private void requireWorld(WorldIdentity world) throws IOException {
