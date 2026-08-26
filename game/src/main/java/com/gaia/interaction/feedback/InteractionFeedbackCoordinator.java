@@ -13,12 +13,14 @@ import com.overlord.renderer.feedback.FeedbackVisibility;
 import com.overlord.renderer.feedback.FirstPersonItemVisual;
 import com.overlord.renderer.feedback.InteractionFeedbackFrame;
 import com.overlord.renderer.feedback.WorldItemFaceRegions;
+import com.overlord.renderer.RenderOrigin;
 import com.overlord.renderer.particle.ParticleCategory;
 import com.overlord.renderer.particle.ParticleEmission;
 import com.overlord.renderer.particle.ParticleSystem;
 import com.overlord.renderer.texture.TextureRegion;
 import com.overlord.worlditem.api.WorldItemSnapshot;
 import com.gaia.worlditem.WorldItemPresentationSnapshot;
+import com.overlord.voxel.ChunkKey;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -237,9 +239,22 @@ public final class InteractionFeedbackCoordinator
             BlockInteractionViewModel view,
             List<WorldItemSnapshot> worldItemSnapshots,
             FeedbackVisibility visibility) {
+        return snapshot(
+                view,
+                worldItemSnapshots,
+                visibility,
+                new RenderOrigin(new ChunkKey(0, 0)));
+    }
+
+    public InteractionFeedbackFrame snapshot(
+            BlockInteractionViewModel view,
+            List<WorldItemSnapshot> worldItemSnapshots,
+            FeedbackVisibility visibility,
+            RenderOrigin renderOrigin) {
         Objects.requireNonNull(view, "view");
         Objects.requireNonNull(worldItemSnapshots, "worldItemSnapshots");
         Objects.requireNonNull(visibility, "visibility");
+        Objects.requireNonNull(renderOrigin, "renderOrigin");
         if (closed) {
             return closedFrame(visibility);
         }
@@ -248,7 +263,8 @@ public final class InteractionFeedbackCoordinator
                 view,
                 worldItems.reconcile(List.copyOf(worldItemSnapshots)),
                 1.0f,
-                visibility);
+                visibility,
+                renderOrigin);
     }
 
     public InteractionFeedbackFrame snapshotPhysical(
@@ -256,9 +272,24 @@ public final class InteractionFeedbackCoordinator
             List<WorldItemPresentationSnapshot> worldItemSnapshots,
             float interpolationAlpha,
             FeedbackVisibility visibility) {
+        return snapshotPhysical(
+                view,
+                worldItemSnapshots,
+                interpolationAlpha,
+                visibility,
+                new RenderOrigin(new ChunkKey(0, 0)));
+    }
+
+    public InteractionFeedbackFrame snapshotPhysical(
+            BlockInteractionViewModel view,
+            List<WorldItemPresentationSnapshot> worldItemSnapshots,
+            float interpolationAlpha,
+            FeedbackVisibility visibility,
+            RenderOrigin renderOrigin) {
         Objects.requireNonNull(view, "view");
         Objects.requireNonNull(worldItemSnapshots, "worldItemSnapshots");
         Objects.requireNonNull(visibility, "visibility");
+        Objects.requireNonNull(renderOrigin, "renderOrigin");
         if (closed) {
             return closedFrame(visibility);
         }
@@ -267,14 +298,16 @@ public final class InteractionFeedbackCoordinator
                 worldItems.reconcilePhysical(
                         List.copyOf(worldItemSnapshots), interpolationAlpha),
                 interpolationAlpha,
-                visibility);
+                visibility,
+                renderOrigin);
     }
 
     private InteractionFeedbackFrame snapshotFrame(
             BlockInteractionViewModel view,
             List<com.overlord.renderer.feedback.WorldItemVisual> worldItemVisuals,
             float interpolationAlpha,
-            FeedbackVisibility visibility) {
+            FeedbackVisibility visibility,
+            RenderOrigin renderOrigin) {
         Optional<BlockDamageVisual> damage = Optional.empty();
         if (visibility.showGameplayFeedback()
                 && interactionEnabled
@@ -282,7 +315,10 @@ public final class InteractionFeedbackCoordinator
                 && isActiveSurvivalBreak(view)) {
             BlockHitResult target = view.target().orElseThrow();
             damage = Optional.of(new BlockDamageVisual(
-                    target.blockX(), target.blockY(), target.blockZ(), view.crackStage()));
+                    localCoordinate(target.blockX(), renderOrigin.worldOriginX(), "x"),
+                    target.blockY(),
+                    localCoordinate(target.blockZ(), renderOrigin.worldOriginZ(), "z"),
+                    view.crackStage()));
         }
         return new InteractionFeedbackFrame(
                 visibility,
@@ -297,11 +333,22 @@ public final class InteractionFeedbackCoordinator
                         ? cameraImpulses.snapshot()
                         : com.overlord.renderer.feedback.CameraImpulseVisual.identity(),
                 visibility.showGameplayFeedback() && transientBlocks.isOpen()
-                        ? transientBlocks.snapshot()
+                        ? transientBlocks.snapshot(renderOrigin)
                         : List.of(),
                 visibility.showGameplayFeedback() && transientBlocks.isOpen()
-                        ? transientBlocks.excludedCells()
+                        ? transientBlocks.excludedCells(renderOrigin)
                         : List.of());
+    }
+
+    private static int localCoordinate(
+            int canonical, long origin, String axis) {
+        try {
+            return Math.toIntExact(Math.subtractExact((long) canonical, origin));
+        } catch (ArithmeticException outsideRenderEnvelope) {
+            throw new IllegalArgumentException(
+                    axis + " feedback coordinate is outside the render envelope",
+                    outsideRenderEnvelope);
+        }
     }
 
     private static InteractionFeedbackFrame closedFrame(FeedbackVisibility visibility) {

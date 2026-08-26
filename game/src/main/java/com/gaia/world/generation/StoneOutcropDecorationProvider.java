@@ -8,12 +8,19 @@ public final class StoneOutcropDecorationProvider
         implements DecorationProvider {
     private static final ResourceLocation ID =
             ResourceLocation.parse("gaia:decoration");
+    private static final GenerationStageContract CONTRACT =
+            new GenerationStageContract(ID, 1, 0);
     private static final long CHANCE_SALT = 0L;
     private static final long HEIGHT_SALT = 1L;
 
     @Override
     public ResourceLocation id() {
         return ID;
+    }
+
+    @Override
+    public GenerationStageContract contract() {
+        return CONTRACT;
     }
 
     @Override
@@ -27,11 +34,11 @@ public final class StoneOutcropDecorationProvider
         for (int localZ = 0;
                 localZ < GameConfig.Chunk.SIZE;
                 localZ++) {
-            int worldZ = region.worldZ(localZ);
+            long worldZ = region.worldZLong(localZ);
             for (int localX = 0;
                     localX < GameConfig.Chunk.SIZE;
                     localX++) {
-                int worldX = region.worldX(localX);
+                long worldX = region.worldXLong(localX);
                 int surfaceY =
                         highestSolid(
                                 context,
@@ -88,12 +95,12 @@ public final class StoneOutcropDecorationProvider
     private static boolean selected(
             GenerationContext context,
             WorldGenerationConfig.DecorationSettings settings,
-            int worldX,
+            long worldX,
             int surfaceY,
-            int worldZ) {
+            long worldZ) {
         return context.sampler()
                         .unit(
-                                ID,
+                                CONTRACT,
                                 worldX,
                                 surfaceY,
                                 worldZ,
@@ -104,14 +111,14 @@ public final class StoneOutcropDecorationProvider
     private static int outcropHeight(
             GenerationContext context,
             WorldGenerationConfig.DecorationSettings settings,
-            int worldX,
+            long worldX,
             int surfaceY,
-            int worldZ) {
+            long worldZ) {
         return 1
                 + (int)
                         (context.sampler()
                                         .unit(
-                                                ID,
+                                                CONTRACT,
                                                 worldX,
                                                 surfaceY,
                                                 worldZ,

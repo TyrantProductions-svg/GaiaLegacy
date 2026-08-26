@@ -1,5 +1,6 @@
 package com.gaia.ui;
 
+import com.gaia.world.streaming.ChunkStreamingMetrics;
 import com.gaia.interaction.BlockInteractionViewModel;
 import com.overlord.core.input.InputSnapshot;
 import com.overlord.inventory.api.BodyInventoryViewModel;
@@ -37,6 +38,7 @@ public final class HudFrameCoordinator {
                 input.previousFrameMetrics(),
                 input.feet(),
                 input.counts(),
+                input.streamingMetrics(),
                 presentationInput,
                 nextInputSampleId++,
                 input.fixedInput().isPresent(),
@@ -69,6 +71,7 @@ public final class HudFrameCoordinator {
             Optional<RenderMetricsSnapshot> previousFrameMetrics,
             HudDebugSnapshot.FeetPosition feet,
             HudDebugSnapshot.Counts counts,
+            ChunkStreamingMetrics streamingMetrics,
             Optional<InputSnapshot> fixedInput,
             double frameDeltaSeconds,
             HudVisibility.Lifecycle lifecycle,
@@ -76,6 +79,24 @@ public final class HudFrameCoordinator {
             boolean cursorCaptured,
             boolean blockingUi,
             RenderSurfaceMetrics surface) {
+        public FrameCapture(
+                BodyInventoryViewModel inventory,
+                BlockInteractionViewModel interaction,
+                Optional<RenderMetricsSnapshot> previousFrameMetrics,
+                HudDebugSnapshot.FeetPosition feet,
+                HudDebugSnapshot.Counts counts,
+                Optional<InputSnapshot> fixedInput,
+                double frameDeltaSeconds,
+                HudVisibility.Lifecycle lifecycle,
+                boolean focused,
+                boolean cursorCaptured,
+                boolean blockingUi,
+                RenderSurfaceMetrics surface) {
+            this(inventory, interaction, previousFrameMetrics, feet, counts,
+                    ChunkStreamingMetrics.empty(), fixedInput, frameDeltaSeconds,
+                    lifecycle, focused, cursorCaptured, blockingUi, surface);
+        }
+
         public FrameCapture {
             Objects.requireNonNull(inventory, "inventory");
             Objects.requireNonNull(interaction, "interaction");
@@ -83,6 +104,8 @@ public final class HudFrameCoordinator {
                     previousFrameMetrics, "previousFrameMetrics");
             feet = Objects.requireNonNull(feet, "feet");
             counts = Objects.requireNonNull(counts, "counts");
+            streamingMetrics = Objects.requireNonNull(
+                    streamingMetrics, "streamingMetrics");
             fixedInput = Objects.requireNonNull(fixedInput, "fixedInput");
             lifecycle = Objects.requireNonNull(lifecycle, "lifecycle");
             surface = Objects.requireNonNull(surface, "surface");

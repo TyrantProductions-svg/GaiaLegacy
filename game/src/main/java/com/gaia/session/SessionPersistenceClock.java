@@ -9,6 +9,7 @@ final class SessionPersistenceClock {
     private long fixedTick;
     private long revision;
     private long issuedNonce;
+    private boolean authoritativeRestoreConsumed;
 
     private SessionPersistenceClock(long fixedTick, long revision) {
         if (fixedTick < 0) {
@@ -33,6 +34,19 @@ final class SessionPersistenceClock {
 
     long revision() {
         return revision;
+    }
+
+    void restoreAuthoritativeWorldTick(long restoredTick) {
+        if (authoritativeRestoreConsumed) {
+            throw new IllegalStateException(
+                    "authoritative world tick may be restored only once");
+        }
+        if (restoredTick < fixedTick) {
+            throw new IllegalArgumentException(
+                    "authoritative world tick cannot move backward");
+        }
+        fixedTick = restoredTick;
+        authoritativeRestoreConsumed = true;
     }
 
     MutationReservation reserveFixedStep() {

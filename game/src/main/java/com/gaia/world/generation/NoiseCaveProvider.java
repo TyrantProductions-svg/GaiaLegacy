@@ -8,11 +8,18 @@ public final class NoiseCaveProvider
         implements CaveProvider {
     private static final ResourceLocation ID =
             ResourceLocation.parse("gaia:cave");
+    private static final GenerationStageContract CONTRACT =
+            new GenerationStageContract(ID, 1, 0);
     private static final long CAVE_SALT = 0L;
 
     @Override
     public ResourceLocation id() {
         return ID;
+    }
+
+    @Override
+    public GenerationStageContract contract() {
+        return CONTRACT;
     }
 
     @Override
@@ -26,11 +33,11 @@ public final class NoiseCaveProvider
         for (int localZ = 0;
                 localZ < GameConfig.Chunk.SIZE;
                 localZ++) {
-            int worldZ = region.worldZ(localZ);
+            long worldZ = region.worldZLong(localZ);
             for (int localX = 0;
                     localX < GameConfig.Chunk.SIZE;
                     localX++) {
-                int worldX = region.worldX(localX);
+                long worldX = region.worldXLong(localX);
                 int surfaceHeight =
                         region.getHeight(localX, localZ);
                 int firstCarvable =
@@ -44,7 +51,7 @@ public final class NoiseCaveProvider
                     double density =
                             context.sampler()
                                     .valueNoise3D(
-                                            ID,
+                                            CONTRACT,
                                             worldX,
                                             y,
                                             worldZ,

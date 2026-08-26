@@ -1002,6 +1002,44 @@ class ChunkRepositoryGenerationTransactionTest {
                 () -> repository.generationFailure(null));
     }
 
+    @Test
+    void streamingGenerateRequestReusesGenerationAttemptAuthority() {
+        ChunkRepository repository = repository();
+        ChunkKey key = new ChunkKey(-8, 6);
+
+        ChunkStreamingTicket streaming =
+                repository.request(
+                        key,
+                        71L,
+                        ChunkStreamingTicket.SourcePreference.GENERATE);
+
+        assertEquals(
+                ChunkGenerationStatus.GENERATING,
+                repository.generationStatus(key));
+        assertThrows(
+                IllegalStateException.class,
+                () ->
+                        repository.beginGeneration(
+                                key, ChunkGenerationMode.INITIAL));
+
+        ChunkStreamingPublication publication =
+                repository.publish(
+                        streaming,
+                        filled(key, (byte) 14),
+                        new ChunkStreamingTicket.BaseIdentity(
+                                ChunkStreamingTicket.SourcePreference.GENERATE,
+                                0L));
+
+        assertEquals(
+                ChunkStreamingPublication.Status.PUBLISHED,
+                publication.status());
+        assertEquals(
+                ChunkGenerationStatus.COMMITTED,
+                repository.generationStatus(key));
+        assertEquals(ChunkState.GENERATED, repository.state(key));
+        assertEquals(14, repository.getBlock(-127, 4, 97));
+    }
+
     private static ChunkRepository repository() {
         return new ChunkRepository(
                 WORLD_HEIGHT, new ChunkDirtyTracker());

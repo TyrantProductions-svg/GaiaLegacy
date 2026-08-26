@@ -8,10 +8,17 @@ public final class DefaultStrataDensityProvider
         implements StrataDensityProvider {
     private static final ResourceLocation ID =
             ResourceLocation.parse("gaia:strata_density");
+    private static final GenerationStageContract CONTRACT =
+            new GenerationStageContract(ID, 1, 0);
 
     @Override
     public ResourceLocation id() {
         return ID;
+    }
+
+    @Override
+    public GenerationStageContract contract() {
+        return CONTRACT;
     }
 
     @Override

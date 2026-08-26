@@ -19,6 +19,7 @@ import com.gaia.save.codec.InventorySectionCodec;
 import com.gaia.save.codec.PlayerSectionCodec;
 import com.gaia.save.codec.SaveSnapshotCodec;
 import com.gaia.save.codec.WorldItemsSectionCodec;
+import com.gaia.save.codec.SaveCodecException;
 import com.gaia.save.format.SaveSectionCodec;
 import com.gaia.save.format.SaveSectionId;
 import com.gaia.save.snapshot.InventorySaveSnapshot;
@@ -26,6 +27,14 @@ import com.gaia.save.snapshot.PlayerSaveSnapshot;
 import com.gaia.save.snapshot.SaveGameSnapshot;
 import com.gaia.save.snapshot.WorldItemsSaveSnapshot;
 import com.overlord.voxel.ChunkRepositorySnapshot;
+import com.overlord.worlditem.api.LogicalWorldItemSnapshot;
+import com.overlord.assets.ResourceLocation;
+import com.overlord.inventory.api.ItemStack;
+import com.overlord.worlditem.api.WorldItemId;
+import com.overlord.worlditem.api.WorldItemPhysicalState;
+import com.overlord.worlditem.api.WorldItemRestoreEntry;
+import com.overlord.worlditem.api.WorldItemRuntimeSnapshot;
+import com.overlord.worlditem.api.WorldItemSnapshot;
 import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
@@ -686,6 +695,95 @@ class AtomicSaveStoreFaultInjectionTest {
                 ignored -> {
                     throw new UnsupportedOperationException(
                             "injected unsupported directory force");
+                });
+
+        assertDoesNotThrow(() -> files.forceDirectoryBestEffort(tempDir, () -> {}));
+    }
+
+    @Test
+    void pagedWorldItemsAreRejectedByV1BeforeAnyFilesystemMutation()
+            throws Exception {
+        PreparedWorld world = AtomicSaveStoreTestSupport.preparedWorld(
+                tempDir.resolve("paged-v1-rejected"));
+        RecordingSaveFileOperations files = AtomicSaveStoreTestSupport.operations();
+        SaveGameSnapshot source = replacement();
+        WorldItemsSaveSnapshot paged = new WorldItemsSaveSnapshot(
+                source.fixedTick(),
+                source.worldItems().entries(),
+                source.worldItems().nextItemId(),
+                source.worldItems().itemIdsExhausted(),
+                LogicalWorldItemSnapshot.Completeness.PAGED_PARTIAL);
+        SaveGameSnapshot lossy = new SaveGameSnapshot(
+                source.metadata(), source.fixedTick(), source.chunks(),
+                source.player(), source.inventory(), paged);
+
+        SaveWriteResult result = AtomicSaveStoreTestSupport.store(world.directory(), files)
+                .save(lossy, REPLACEMENT_MODIFIED);
+
+        AtomicSaveStoreTestSupport.assertFailurePublishesNoCommittedManifest(
+                result, world.directory());
+        assertEquals("save-write.section-encode-failed",
+                result.diagnostics().get(0).code());
+        SaveCodecException primary = (SaveCodecException)
+                AtomicSaveStoreTestSupport.primaryFailure(result);
+        assertEquals("world-items-v1.paged-state-unsupported", primary.code());
+        assertTrue(files.calls().isEmpty());
+        AtomicSaveStoreTestSupport.assertUnchangedOldSlots(world);
+        AtomicSaveStoreTestSupport.assertNoTaskTemps(world.directory());
+    }
+
+    @Test
+    void expiryMismatchIsRejectedByV1BeforeAnyFilesystemMutation()
+            throws Exception {
+        PreparedWorld world = AtomicSaveStoreTestSupport.preparedWorld(
+                tempDir.resolve("expiry-v1-rejected"));
+        RecordingSaveFileOperations files = AtomicSaveStoreTestSupport.operations();
+        SaveGameSnapshot source = replacement();
+        WorldItemRestoreEntry entry = new WorldItemRestoreEntry(
+                new WorldItemRuntimeSnapshot(
+                        new WorldItemSnapshot(
+                                new WorldItemId(0L),
+                                new ItemStack(ResourceLocation.of("gaia", "test/drop"), 1),
+                                0.5, 4.0, 0.5, 0.0, 0.0, 0.0, 1L),
+                        java.util.Optional.empty(),
+                        source.fixedTick(),
+                        source.fixedTick(),
+                        source.fixedTick()
+                                + WorldItemRuntimeSnapshot.WORLD_ITEM_TTL_TICKS
+                                + 1L),
+                WorldItemPhysicalState.ACTIVE);
+        WorldItemsSaveSnapshot mismatch = new WorldItemsSaveSnapshot(
+                source.fixedTick(),
+                List.of(entry),
+                1L,
+                false,
+                LogicalWorldItemSnapshot.Completeness.LEGACY_COMPLETE);
+        SaveGameSnapshot lossy = new SaveGameSnapshot(
+                source.metadata(), source.fixedTick(), source.chunks(),
+                source.player(), source.inventory(), mismatch);
+
+        SaveWriteResult result = AtomicSaveStoreTestSupport.store(world.directory(), files)
+                .save(lossy, REPLACEMENT_MODIFIED);
+
+        assertEquals(SaveWriteResult.Status.FAILED, result.status());
+        assertEquals("save-write.section-encode-failed",
+                result.diagnostics().get(0).code());
+        SaveCodecException primary = (SaveCodecException)
+                AtomicSaveStoreTestSupport.primaryFailure(result);
+        assertEquals("world-items-v1.expiry-mismatch", primary.code());
+        assertTrue(files.calls().isEmpty());
+        AtomicSaveStoreTestSupport.assertUnchangedOldSlots(world);
+    }
+
+    @Test
+    void wrappedUnsupportedDirectoryForceCapabilityIsAlsoTolerated()
+            throws Exception {
+        JdkSaveFileOperations files = jdkFilesWithDirectoryForcer(
+                ignored -> {
+                    throw new IOException(
+                            "provider wrapper",
+                            new UnsupportedOperationException(
+                                    "injected unsupported directory force"));
                 });
 
         assertDoesNotThrow(() -> files.forceDirectoryBestEffort(tempDir, () -> {}));

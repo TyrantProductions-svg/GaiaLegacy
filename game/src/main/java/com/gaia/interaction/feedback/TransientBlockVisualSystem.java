@@ -1,6 +1,7 @@
 package com.gaia.interaction.feedback;
 
 import com.overlord.renderer.feedback.BlockVisualCoordinate;
+import com.overlord.renderer.RenderOrigin;
 import com.overlord.renderer.feedback.TransientBlockVisual;
 import com.overlord.renderer.feedback.VisualTransform;
 import com.overlord.renderer.feedback.WorldItemFaceRegions;
@@ -79,10 +80,45 @@ public final class TransientBlockVisualSystem implements AutoCloseable {
         return List.copyOf(result);
     }
 
+    /** Builds an immutable render-local view without changing canonical transitions. */
+    public List<TransientBlockVisual> snapshot(RenderOrigin origin) {
+        Objects.requireNonNull(origin, "origin");
+        List<TransientBlockVisual> result = new ArrayList<>(transitions.size());
+        for (Map.Entry<BlockVisualCoordinate, Transition> entry : transitions.entrySet()) {
+            BlockVisualCoordinate canonical = entry.getKey();
+            long localX = Math.subtractExact((long) canonical.x(), origin.worldOriginX());
+            long localZ = Math.subtractExact((long) canonical.z(), origin.worldOriginZ());
+            BlockVisualCoordinate local = new BlockVisualCoordinate(
+                    Math.toIntExact(localX), canonical.y(), Math.toIntExact(localZ));
+            Transition transition = entry.getValue();
+            result.add(new TransientBlockVisual(
+                    local,
+                    transition.faces,
+                    transition.type,
+                    transition.eventIdentity,
+                    transition.transform()));
+        }
+        return List.copyOf(result);
+    }
+
     public List<BlockVisualCoordinate> excludedCells() {
         return transitions.entrySet().stream()
                 .map(Map.Entry::getKey)
                 .toList();
+    }
+
+    public List<BlockVisualCoordinate> excludedCells(RenderOrigin origin) {
+        Objects.requireNonNull(origin, "origin");
+        List<BlockVisualCoordinate> result = new ArrayList<>(transitions.size());
+        for (BlockVisualCoordinate canonical : transitions.keySet()) {
+            long localX = Math.subtractExact(
+                    (long) canonical.x(), origin.worldOriginX());
+            long localZ = Math.subtractExact(
+                    (long) canonical.z(), origin.worldOriginZ());
+            result.add(new BlockVisualCoordinate(
+                    Math.toIntExact(localX), canonical.y(), Math.toIntExact(localZ)));
+        }
+        return List.copyOf(result);
     }
 
     public boolean isOpen() {

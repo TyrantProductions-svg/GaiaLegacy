@@ -1294,6 +1294,22 @@ class WorldLoaderTest {
     }
 
     @Test
+    void detachedGenerationProducesCanonicalDataWithoutChangingLoaderLifecycle() {
+        ChunkKey key = new ChunkKey(-7, 11);
+        WorldLoader loader =
+                loader(
+                        flatGenerator(STONE),
+                        withRadius(WorldGenerationConfig.defaults(), 0));
+
+        ChunkGenerationData generated = loader.generateDetached(key);
+
+        assertEquals(key, generated.key());
+        assertEquals(STONE, generated.getBlock(0, 0, 0));
+        assertEquals(WorldLoadState.IDLE, loader.state());
+        assertTrue(loader.failure().isEmpty());
+    }
+
+    @Test
     void loaderSourceHasNoGameplayGpuOrDirectWorldMutationPaths()
             throws IOException {
         String source =

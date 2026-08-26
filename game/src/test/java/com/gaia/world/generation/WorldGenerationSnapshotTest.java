@@ -34,11 +34,11 @@ class WorldGenerationSnapshotTest {
     static final String VERSION_TWO_CONFIG_FINGERPRINT =
             "56cb2f243319c7cf275ade89f480f9208ce5c1f85334eb225e6b56ed18e3012a";
     static final String VERSION_TWO_REGION_HASH =
-            "ec2c76a97f36d34b7360ae9abbb0be60fb8790f275fdaf5227a7daeae9754353";
+            "c627a5dd796139bc38e31b1e2f3698d0062be03e9db9fbe8f24b5d4f37434585";
     private static final List<String> VERSION_TWO_REPRESENTATIVE_HASHES =
             List.of(
                     "be50d65edfef7a20fa20f93e3da65835e05c143600b79d5dcbedad7323debc2e",
-                    "857c9a85799b9dcc7ddf4a2f6a5bee3b58c7e49142a17f6fc8abc46e43c97ea0",
+                    "a1fb4ee54a92b0fe833b40881fe8a8086930145955a8744e7cee60c89c71530a",
                     "fb7ff4753fa1b008a6f2da3add9139e774a500bd43a878f75ad36564e0985b81",
                     "843a1f350723c87b2def6ae1cb9f305da12ea607bb6a6a1ce1de8447f3acf923",
                     "225a5c0b5c00064cf23ffb250b95f153fd8b98e04dfc9b8529958dd88641484a");

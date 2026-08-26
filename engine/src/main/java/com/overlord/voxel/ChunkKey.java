@@ -14,42 +14,42 @@ public record ChunkKey(int x, int z) {
     }
 
     public int worldOriginX() {
-        return x * GameConfig.Chunk.SIZE;
+        return Math.toIntExact(ChunkCoordinatePolicy.worldOriginX(this));
     }
 
     public int worldOriginZ() {
-        return z * GameConfig.Chunk.SIZE;
+        return Math.toIntExact(ChunkCoordinatePolicy.worldOriginZ(this));
     }
 
     public ChunkKey north() {
-        return new ChunkKey(x, z - 1);
+        return ChunkCoordinatePolicy.neighbor(this, 0, -1);
     }
 
     public ChunkKey south() {
-        return new ChunkKey(x, z + 1);
+        return ChunkCoordinatePolicy.neighbor(this, 0, 1);
     }
 
     public ChunkKey west() {
-        return new ChunkKey(x - 1, z);
+        return ChunkCoordinatePolicy.neighbor(this, -1, 0);
     }
 
     public ChunkKey east() {
-        return new ChunkKey(x + 1, z);
+        return ChunkCoordinatePolicy.neighbor(this, 1, 0);
     }
 
     public ChunkKey northWest() {
-        return new ChunkKey(x - 1, z - 1);
+        return ChunkCoordinatePolicy.neighbor(this, -1, -1);
     }
 
     public ChunkKey northEast() {
-        return new ChunkKey(x + 1, z - 1);
+        return ChunkCoordinatePolicy.neighbor(this, 1, -1);
     }
 
     public ChunkKey southWest() {
-        return new ChunkKey(x - 1, z + 1);
+        return ChunkCoordinatePolicy.neighbor(this, -1, 1);
     }
 
     public ChunkKey southEast() {
-        return new ChunkKey(x + 1, z + 1);
+        return ChunkCoordinatePolicy.neighbor(this, 1, 1);
     }
 }

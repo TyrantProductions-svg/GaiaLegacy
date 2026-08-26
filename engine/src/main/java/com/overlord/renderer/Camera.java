@@ -3,6 +3,7 @@ package com.overlord.renderer;
 import com.overlord.config.GameConfig;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
+import org.joml.Vector3fc;
 
 public class Camera {
     private static final float MIN_MOUSE_SENSITIVITY = 0.02f;
@@ -108,6 +109,26 @@ public class Camera {
     public void setPosition(Vector3f position) {
         this.position.set(position);
     }
+
+    /** Shifts only the resident-local position, preserving view orientation. */
+    public void rebase(Vector3fc offset) {
+        prepareOriginRebase(offset).commit();
+    }
+
+    /** Precomputes a validated position-only origin publication. */
+    public PreparedOriginRebase prepareOriginRebase(Vector3fc offset) {
+        if (offset == null
+                || !Float.isFinite(offset.x())
+                || !Float.isFinite(offset.y())
+                || !Float.isFinite(offset.z())) {
+            throw new IllegalArgumentException("offset must be finite");
+        }
+        Vector3f next = new Vector3f(position).add(offset);
+        if (!Float.isFinite(next.x()) || !Float.isFinite(next.y()) || !Float.isFinite(next.z())) {
+            throw new IllegalArgumentException("rebased camera position must be finite");
+        }
+        return () -> position.set(next);
+    }
     
     public float getMovementSpeed() {
         return movementSpeed;
@@ -162,5 +183,10 @@ public class Camera {
     
     public float getYaw() {
         return yaw;
+    }
+
+    @FunctionalInterface
+    public interface PreparedOriginRebase {
+        void commit();
     }
 }

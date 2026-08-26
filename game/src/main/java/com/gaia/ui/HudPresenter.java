@@ -1,5 +1,6 @@
 package com.gaia.ui;
 
+import com.gaia.world.streaming.ChunkStreamingMetrics;
 import com.gaia.blocks.ItemFormDefinition;
 import com.gaia.interaction.BlockInteractionViewModel;
 import com.gaia.interaction.GameMode;
@@ -109,7 +110,8 @@ public final class HudPresenter {
                 timedItemName(),
                 modeNotice(),
                 new HudDebugSnapshot(
-                        input.previousFrameMetrics(), input.feet(), input.counts()));
+                        input.previousFrameMetrics(), input.feet(), input.counts(),
+                        input.streamingMetrics()));
     }
 
     private void processPresentationInput(FrameInput input) {
@@ -402,6 +404,7 @@ public final class HudPresenter {
             Optional<RenderMetricsSnapshot> previousFrameMetrics,
             HudDebugSnapshot.FeetPosition feet,
             HudDebugSnapshot.Counts counts,
+            ChunkStreamingMetrics streamingMetrics,
             InputSnapshot input,
             long inputSampleId,
             boolean firstFixedStep,
@@ -410,6 +413,26 @@ public final class HudPresenter {
             boolean focused,
             boolean cursorCaptured,
             boolean blockingUi) {
+        public FrameInput(
+                BodyInventoryViewModel inventory,
+                BlockInteractionViewModel interaction,
+                Optional<RenderMetricsSnapshot> previousFrameMetrics,
+                HudDebugSnapshot.FeetPosition feet,
+                HudDebugSnapshot.Counts counts,
+                InputSnapshot input,
+                long inputSampleId,
+                boolean firstFixedStep,
+                double frameDeltaSeconds,
+                HudVisibility.Lifecycle lifecycle,
+                boolean focused,
+                boolean cursorCaptured,
+                boolean blockingUi) {
+            this(inventory, interaction, previousFrameMetrics, feet, counts,
+                    ChunkStreamingMetrics.empty(), input, inputSampleId,
+                    firstFixedStep, frameDeltaSeconds, lifecycle, focused,
+                    cursorCaptured, blockingUi);
+        }
+
         public FrameInput {
             inventory = Objects.requireNonNull(inventory, "inventory");
             interaction = Objects.requireNonNull(interaction, "interaction");
@@ -417,6 +440,8 @@ public final class HudPresenter {
                     previousFrameMetrics, "previousFrameMetrics");
             feet = Objects.requireNonNull(feet, "feet");
             counts = Objects.requireNonNull(counts, "counts");
+            streamingMetrics = Objects.requireNonNull(
+                    streamingMetrics, "streamingMetrics");
             input = Objects.requireNonNull(input, "input");
             lifecycle = Objects.requireNonNull(lifecycle, "lifecycle");
             if (inputSampleId < 0) {

@@ -12,10 +12,42 @@ public final class HybridCaveProvider implements CaveProvider {
     private static final int ENTRANCE_CELL_SIZE = 32;
     private static final int MAXIMUM_REACH = 96;
     private static final int ENTRANCE_STEPS = 12;
+    private static final GenerationStageContract CONTRACT =
+            new GenerationStageContract(
+                    ID, 1, MAXIMUM_REACH);
+    private final GenerationStageContract contract;
+    private final GenerationStageContract tunnelContract;
+    private final EntranceQuery entranceQuery;
+
+    public HybridCaveProvider() {
+        this(CONTRACT);
+    }
+
+    public HybridCaveProvider(
+            GenerationStageContract contract) {
+        if (!ID.equals(contract.id())) {
+            throw new IllegalArgumentException(
+                    "Hybrid cave contract must use " + ID);
+        }
+        this.contract = contract;
+        this.tunnelContract =
+                contract.child(
+                        TUNNEL_ID, contract.haloRadius());
+        this.entranceQuery = new EntranceQuery(this);
+    }
 
     @Override
     public ResourceLocation id() {
         return ID;
+    }
+
+    @Override
+    public GenerationStageContract contract() {
+        return contract;
+    }
+
+    public EntranceQuery entranceQuery() {
+        return entranceQuery;
     }
 
     @Override
@@ -24,9 +56,9 @@ public final class HybridCaveProvider implements CaveProvider {
         int samples = 0;
         int writes = 0;
         for (int z = 0; z < GameConfig.Chunk.SIZE; z++) {
-            int worldZ = region.worldZ(z);
+            long worldZ = region.worldZLong(z);
             for (int x = 0; x < GameConfig.Chunk.SIZE; x++) {
-                int worldX = region.worldX(x);
+                long worldX = region.worldXLong(x);
                 int surface = region.getHeight(x, z);
                 for (int y = context.config().cave().bedrockDepth();
                         y
@@ -37,7 +69,7 @@ public final class HybridCaveProvider implements CaveProvider {
                         y++) {
                     double low =
                             context.sampler().valueNoise3D(
-                                    ID,
+                                    contract,
                                     worldX,
                                     y,
                                     worldZ,
@@ -46,7 +78,7 @@ public final class HybridCaveProvider implements CaveProvider {
                                     10L);
                     double high =
                             context.sampler().valueNoise3D(
-                                    ID,
+                                    contract,
                                     worldX,
                                     y,
                                     worldZ,
@@ -78,33 +110,27 @@ public final class HybridCaveProvider implements CaveProvider {
                 Optional.empty());
     }
 
-    private static int carveTunnelSystems(
+    private int carveTunnelSystems(
             GenerationContext context, GenerationRegion region) {
-        int minimumCellX =
-                cellCoordinate(
-                        (long) region.key().worldOriginX()
-                                - MAXIMUM_REACH);
-        int maximumCellX =
-                cellCoordinate(
-                        (long) region.key().worldOriginX()
-                                + GameConfig.Chunk.SIZE
-                                - 1
-                                + MAXIMUM_REACH);
-        int minimumCellZ =
-                cellCoordinate(
-                        (long) region.key().worldOriginZ()
-                                - MAXIMUM_REACH);
-        int maximumCellZ =
-                cellCoordinate(
-                        (long) region.key().worldOriginZ()
-                                + GameConfig.Chunk.SIZE
-                                - 1
-                                + MAXIMUM_REACH);
+        GenerationStageContract.RegionRange xRange =
+                contract.regionsForChunk(
+                        region.worldOriginX(),
+                        GameConfig.Chunk.SIZE,
+                        ENTRANCE_CELL_SIZE);
+        GenerationStageContract.RegionRange zRange =
+                contract.regionsForChunk(
+                        region.worldOriginZ(),
+                        GameConfig.Chunk.SIZE,
+                        ENTRANCE_CELL_SIZE);
+        long minimumCellX = xRange.minimum();
+        long maximumCellX = xRange.maximum();
+        long minimumCellZ = zRange.minimum();
+        long maximumCellZ = zRange.maximum();
         int writes = 0;
-        for (int cellZ = minimumCellZ;
+        for (long cellZ = minimumCellZ;
                 cellZ <= maximumCellZ;
                 cellZ++) {
-            for (int cellX = minimumCellX;
+            for (long cellX = minimumCellX;
                     cellX <= maximumCellX;
                     cellX++) {
                 Tunnel tunnel = tunnel(context, cellX, cellZ);
@@ -116,29 +142,25 @@ public final class HybridCaveProvider implements CaveProvider {
         return writes;
     }
 
-    private static Tunnel tunnel(
-            GenerationContext context, int cellX, int cellZ) {
-        Long x =
-                worldCoordinate(
-                        cellX,
-                        context,
-                        cellX,
-                        cellZ,
-                        0L);
-        Long z =
-                worldCoordinate(
-                        cellZ,
-                        context,
+    private Tunnel tunnel(
+            GenerationContext context, long cellX, long cellZ) {
+        Optional<StableRegionAnchor> sampled =
+                StableRegionAnchor.sampleIfSafe(
+                        context.sampler(),
+                        tunnelContract,
                         cellX,
                         cellZ,
-                        1L);
-        if (x == null
-                || z == null
-                || insideOriginReserve(x, z)) {
+                        ENTRANCE_CELL_SIZE);
+        if (sampled.isEmpty()) {
             return null;
         }
-        int rootX = x.intValue();
-        int rootZ = z.intValue();
+        StableRegionAnchor anchor = sampled.orElseThrow();
+        if (insideOriginReserve(
+                anchor.worldX(), anchor.worldZ())) {
+            return null;
+        }
+        long rootX = anchor.worldX();
+        long rootZ = anchor.worldZ();
         BiomeProvider biomes = new ContinuousBiomeProvider();
         BiomeSample biome =
                 biomes.sample(context, rootX, rootZ);
@@ -147,9 +169,9 @@ public final class HybridCaveProvider implements CaveProvider {
                         + 0.24 * biome.rollingHills()
                         + 0.34 * biome.rockyHighlands();
         if (context.sampler().unit(
-                                TUNNEL_ID,
+                                tunnelContract,
                                 cellX,
-                                0,
+                                0L,
                                 cellZ,
                                 2L)
                         >= probability) {
@@ -161,9 +183,9 @@ public final class HybridCaveProvider implements CaveProvider {
                                 context, rootX, rootZ, biome);
         double angle =
                 context.sampler().unit(
-                                TUNNEL_ID,
+                                tunnelContract,
                                 cellX,
-                                0,
+                                0L,
                                 cellZ,
                                 3L)
                         * StrictMath.PI
@@ -172,18 +194,18 @@ public final class HybridCaveProvider implements CaveProvider {
                 56
                         + (int)
                                 (context.sampler().unit(
-                                                TUNNEL_ID,
+                                                tunnelContract,
                                                 cellX,
-                                                0,
+                                                0L,
                                                 cellZ,
                                                 4L)
                                         * 33.0);
         double drop =
                 0.20
                         + context.sampler().unit(
-                                        TUNNEL_ID,
+                                        tunnelContract,
                                         cellX,
-                                        0,
+                                        0L,
                                         cellZ,
                                         5L)
                                 * 0.12;
@@ -191,25 +213,25 @@ public final class HybridCaveProvider implements CaveProvider {
                 rootX, surface, rootZ, angle, length, drop);
     }
 
-    static boolean hasEntranceNear(
+    private boolean hasEntranceNearInternal(
             GenerationContext context,
-            int worldX,
-            int worldZ,
+            long worldX,
+            long worldZ,
             int radius) {
-        int cellX = Math.floorDiv(worldX, ENTRANCE_CELL_SIZE);
-        int cellZ = Math.floorDiv(worldZ, ENTRANCE_CELL_SIZE);
+        long cellX = Math.floorDiv(worldX, ENTRANCE_CELL_SIZE);
+        long cellZ = Math.floorDiv(worldZ, ENTRANCE_CELL_SIZE);
         long radiusSquared = (long) radius * radius;
         int cellReach =
                 Math.floorDiv(
-                                MAXIMUM_REACH
+                                contract.haloRadius()
                                         + radius
                                         + ENTRANCE_CELL_SIZE
                                         - 1,
                                 ENTRANCE_CELL_SIZE);
-        for (int z = cellZ - cellReach;
+        for (long z = cellZ - cellReach;
                 z <= cellZ + cellReach;
                 z++) {
-            for (int x = cellX - cellReach;
+            for (long x = cellX - cellReach;
                     x <= cellX + cellReach;
                     x++) {
                 Tunnel tunnel = tunnel(context, x, z);
@@ -224,7 +246,7 @@ public final class HybridCaveProvider implements CaveProvider {
                         step++) {
                     double bend =
                             (context.sampler().valueNoise2D(
-                                                    TUNNEL_ID,
+                                                    tunnelContract,
                                                     saturatedAdd(
                                                             tunnel.x(), step),
                                                     saturatedAdd(
@@ -251,7 +273,7 @@ public final class HybridCaveProvider implements CaveProvider {
         return false;
     }
 
-    private static int carve(
+    private int carve(
             GenerationContext context,
             GenerationRegion region,
             Tunnel tunnel) {
@@ -259,7 +281,7 @@ public final class HybridCaveProvider implements CaveProvider {
         for (int step = 0; step < tunnel.length(); step++) {
             double bend =
                     (context.sampler().valueNoise2D(
-                                            TUNNEL_ID,
+                                            tunnelContract,
                                             saturatedAdd(
                                                     tunnel.x(), step),
                                             saturatedAdd(
@@ -285,7 +307,7 @@ public final class HybridCaveProvider implements CaveProvider {
                             ? 1.8 + step * 0.16
                             : 2.35
                                     + context.sampler().unit(
-                                                    TUNNEL_ID,
+                                                    tunnelContract,
                                                     tunnel.x(),
                                                     step,
                                                     tunnel.z(),
@@ -338,7 +360,7 @@ public final class HybridCaveProvider implements CaveProvider {
             int worldZ = (int) worldZValue;
             long localZValue =
                     worldZValue
-                            - region.key().worldOriginZ();
+                            - region.worldOriginZ();
             if (localZValue < 0
                     || localZValue >= GameConfig.Chunk.SIZE) {
                 continue;
@@ -347,10 +369,9 @@ public final class HybridCaveProvider implements CaveProvider {
             for (long worldXValue = minimumX;
                     worldXValue <= maximumX;
                     worldXValue++) {
-                int worldX = (int) worldXValue;
                 long localXValue =
                         worldXValue
-                                - region.key().worldOriginX();
+                                - region.worldOriginX();
                 if (localXValue < 0
                         || localXValue >= GameConfig.Chunk.SIZE) {
                     continue;
@@ -363,13 +384,13 @@ public final class HybridCaveProvider implements CaveProvider {
                     }
                     if (!tunnelCellAllowed(
                             context,
-                            worldX,
+                            worldXValue,
                             y,
                             worldZ,
                             tunnelStep)) {
                         continue;
                     }
-                    double dx = worldX + 0.5 - centerX;
+                    double dx = worldXValue + 0.5 - centerX;
                     double dy = y + 0.5 - centerY;
                     double dz = worldZ + 0.5 - centerZ;
                     if (dx * dx + dy * dy + dz * dz
@@ -391,9 +412,9 @@ public final class HybridCaveProvider implements CaveProvider {
 
     static boolean tunnelCellAllowed(
             GenerationContext context,
-            int worldX,
+            long worldX,
             int y,
-            int worldZ,
+            long worldZ,
             int tunnelStep) {
         if (tunnelStep < ENTRANCE_STEPS) {
             return true;
@@ -414,36 +435,6 @@ public final class HybridCaveProvider implements CaveProvider {
                                 .surfaceBuffer();
     }
 
-    private static int cellCoordinate(long worldCoordinate) {
-        return Math.toIntExact(
-                Math.floorDiv(
-                        worldCoordinate,
-                        ENTRANCE_CELL_SIZE));
-    }
-
-    private static Long worldCoordinate(
-            int cell,
-            GenerationContext context,
-            int sampleCellX,
-            int sampleCellZ,
-            long salt) {
-        long value =
-                (long) cell * ENTRANCE_CELL_SIZE
-                        + (int)
-                                (context.sampler().unit(
-                                                TUNNEL_ID,
-                                                sampleCellX,
-                                                0,
-                                                sampleCellZ,
-                                                salt)
-                                        * ENTRANCE_CELL_SIZE);
-        if (value < Integer.MIN_VALUE
-                || value > Integer.MAX_VALUE) {
-            return null;
-        }
-        return value;
-    }
-
     private static boolean insideOriginReserve(
             long x, long z) {
         return x > -12
@@ -453,19 +444,32 @@ public final class HybridCaveProvider implements CaveProvider {
                 && x * x + z * z < 144L;
     }
 
-    private static int saturatedAdd(int value, int delta) {
-        long result = (long) value + delta;
-        return (int)
-                Math.max(
-                        Integer.MIN_VALUE,
-                        Math.min(Integer.MAX_VALUE, result));
+    private static long saturatedAdd(long value, int delta) {
+        return Math.addExact(value, delta);
     }
 
     private record Tunnel(
-            int x,
+            long x,
             int surfaceY,
-            int z,
+            long z,
             double angle,
             int length,
             double drop) {}
+
+    public static final class EntranceQuery {
+        private final HybridCaveProvider provider;
+
+        private EntranceQuery(HybridCaveProvider provider) {
+            this.provider = provider;
+        }
+
+        public boolean hasEntranceNear(
+                GenerationContext context,
+                long worldX,
+                long worldZ,
+                int radius) {
+            return provider.hasEntranceNearInternal(
+                    context, worldX, worldZ, radius);
+        }
+    }
 }

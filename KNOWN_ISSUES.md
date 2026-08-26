@@ -2,15 +2,18 @@
 
 ## Release-candidate limitations
 
-- The demo world is a deterministic finite 81-Chunk load. It does not stream
-  an unbounded world and has no user-facing render-distance control.
+- Deterministic infinite-world streaming is implemented with fixed
+  simulation/render/preload/unload radii `2/4/5/7`; there is not yet a
+  user-facing render-distance control.
 - Local versioned world saves and the paged World Slots browser are implemented.
-  Save data is finite-world v1 only; cloud synchronization, multiplayer save
-  locking, infinite region streaming, and migration UI are not implemented.
+  Legacy v1 remains readable and streamed Save v2 is implemented. Cloud
+  synchronization, multiplayer save locking, region files, and migration UI
+  are not implemented.
 - Survival is a systems vertical slice rather than a complete economy: there
   is no crafting, mob loop, or broader progression.
-- Canonical WorldItems do not expire automatically. Sleeping and unloaded
-  duration do not delete items, and shutdown removes runtime projections only.
+- Ground WorldItems expire after exactly 18,000 authoritative simulation ticks
+  (five in-game minutes at 60 Hz). Pause and process downtime do not advance
+  TTL; expired stable IDs are permanently retired.
 - Pickup is deliberately manual: Shift+right-click in Survival. Walking near a
   WorldItem never attracts or collects it.
 - Rotation and body-body collision are not implemented for physical
@@ -51,6 +54,14 @@
   macOS Gate 14E test is also HUMAN-REPORTED PASS, but the exact Mac model,
   macOS version, Java version, automated totals, raw logs, durations, and
   performance measurements were not supplied and are not claimed.
+- Phase 15 native Apple Silicon macOS Gate 15F evidence is pending/not supplied.
+  Historical Phase 12-14 macOS results are not treated as Phase 15 acceptance.
+- Phase 15 Windows automation and development runtime are PASS. The installDist
+  workflow created a world, entered gameplay, completed Save & Quit, exited,
+  relaunched, loaded the same sparse streamed-v2 world, re-entered gameplay,
+  saved again, and exited normally. It did not run a human-driven 500-transition
+  long-distance route or instrument a standalone duration; the automated typed
+  500-plus-transition test is structural evidence, not an FPS claim.
 
 ## Performance observations
 

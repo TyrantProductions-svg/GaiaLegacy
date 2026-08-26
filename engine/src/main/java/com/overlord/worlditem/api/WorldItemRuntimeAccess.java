@@ -12,5 +12,10 @@ public interface WorldItemRuntimeAccess {
 
     Optional<WorldItemPhysicalSnapshot> physicalSnapshot(WorldItemId itemId);
 
+    /** True while automatic projection motion must preserve an exact persistence capture. */
+    default boolean motionPinnedForPersistence(WorldItemId itemId) {
+        return false;
+    }
+
     WorldItemMotionUpdateResult updateMotion(WorldItemMotionUpdate update);
 }

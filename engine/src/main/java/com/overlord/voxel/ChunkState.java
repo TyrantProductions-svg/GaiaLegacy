@@ -2,6 +2,7 @@ package com.overlord.voxel;
 
 public enum ChunkState {
     EMPTY,
+    LOADING,
     GENERATING,
     GENERATED,
     MESHING,

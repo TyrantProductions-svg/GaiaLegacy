@@ -1,5 +1,6 @@
 package com.gaia.ui;
 
+import com.gaia.world.streaming.ChunkStreamingMetrics;
 import com.overlord.renderer.metrics.RenderMetricsSnapshot;
 import java.util.Objects;
 import java.util.Optional;
@@ -8,11 +9,20 @@ import java.util.Optional;
 public record HudDebugSnapshot(
         Optional<RenderMetricsSnapshot> previousFrameMetrics,
         FeetPosition feet,
-        Counts counts) {
+        Counts counts,
+        ChunkStreamingMetrics streamingMetrics) {
+    public HudDebugSnapshot(
+            Optional<RenderMetricsSnapshot> previousFrameMetrics,
+            FeetPosition feet,
+            Counts counts) {
+        this(previousFrameMetrics, feet, counts, ChunkStreamingMetrics.empty());
+    }
+
     public HudDebugSnapshot {
         previousFrameMetrics = Objects.requireNonNull(previousFrameMetrics, "previousFrameMetrics");
         feet = Objects.requireNonNull(feet, "feet");
         counts = Objects.requireNonNull(counts, "counts");
+        streamingMetrics = Objects.requireNonNull(streamingMetrics, "streamingMetrics");
     }
 
     public record FeetPosition(double x, double y, double z) {

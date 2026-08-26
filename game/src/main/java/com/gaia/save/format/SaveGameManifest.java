@@ -26,7 +26,10 @@ public record SaveGameManifest(
             SaveMetadataValidation.MAX_SUMMARY_CODE_POINTS;
 
     public SaveGameManifest {
-        formatVersion = SaveMetadataValidation.requireCurrentFormat(formatVersion);
+        if (!SaveFormatVersion.CURRENT.equals(formatVersion)
+                && !SaveFormatVersion.STREAMED_CHUNKS.equals(formatVersion)) {
+            throw new IllegalArgumentException("Unsupported save manifest format");
+        }
         gameVersion = SaveMetadataValidation.requireNonblank(gameVersion, "gameVersion");
         require(saveGameId, "saveGameId");
         displayName = SaveMetadataValidation.requireDisplayName(displayName);
@@ -45,10 +48,12 @@ public record SaveGameManifest(
         fixedTick = SaveMetadataValidation.requireNonnegativeFixedTick(fixedTick);
         summary = SaveMetadataValidation.requireSummaryWithinV1Bound(summary);
         sections = List.copyOf(require(sections, "sections"));
-        validateSections(sections);
+        validateSections(formatVersion, sections);
     }
 
-    private static void validateSections(List<SaveSectionDescriptor> sections) {
+    private static void validateSections(
+            SaveFormatVersion formatVersion,
+            List<SaveSectionDescriptor> sections) {
         Set<SaveSectionId> ids = new HashSet<>();
         for (SaveSectionDescriptor descriptor : sections) {
             require(descriptor, "section descriptor");
@@ -56,15 +61,23 @@ public record SaveGameManifest(
                 throw new IllegalArgumentException("Manifest contains duplicate section ID: " + descriptor.sectionId().value());
             }
         }
-        if (!ids.containsAll(Set.of(
-                SaveSectionId.CHUNKS,
-                SaveSectionId.PLAYER,
-                SaveSectionId.INVENTORY,
-                SaveSectionId.WORLD_ITEMS))) {
-            throw new IllegalArgumentException("Manifest is missing one or more required v1 sections");
+        Set<SaveSectionId> required = SaveFormatVersion.CURRENT.equals(formatVersion)
+                ? Set.of(
+                        SaveSectionId.CHUNKS,
+                        SaveSectionId.PLAYER,
+                        SaveSectionId.INVENTORY,
+                        SaveSectionId.WORLD_ITEMS)
+                : Set.of(
+                        SaveSectionId.STREAMED_CHUNKS,
+                        SaveSectionId.PLAYER,
+                        SaveSectionId.INVENTORY,
+                        SaveSectionId.WORLD_ITEMS);
+        if (!ids.containsAll(required)) {
+            throw new IllegalArgumentException(
+                    "Manifest is missing one or more required save sections");
         }
         for (SaveSectionDescriptor descriptor : sections) {
-            if (SaveSectionId.isRequiredV1(descriptor.sectionId()) && !descriptor.required()) {
+            if (required.contains(descriptor.sectionId()) && !descriptor.required()) {
                 throw new IllegalArgumentException("A required v1 section cannot be optional");
             }
             if (SaveSectionId.isReservedOptionalV1(descriptor.sectionId()) && descriptor.required()) {

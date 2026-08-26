@@ -8,6 +8,8 @@ public final class BiomeShapedHeightProvider
         implements HeightProvider {
     private static final ResourceLocation ID =
             ResourceLocation.parse("gaia:blended_heights");
+    private static final GenerationStageContract CONTRACT =
+            new GenerationStageContract(ID, 1, 0);
 
     @Override
     public ResourceLocation id() {
@@ -15,10 +17,15 @@ public final class BiomeShapedHeightProvider
     }
 
     @Override
+    public GenerationStageContract contract() {
+        return CONTRACT;
+    }
+
+    @Override
     public int sampleHeight(
             GenerationContext context,
-            int worldX,
-            int worldZ,
+            long worldX,
+            long worldZ,
             BiomeSample biome) {
         WorldGenerationConfig.HeightSettings settings =
                 context.config().height();
@@ -94,8 +101,8 @@ public final class BiomeShapedHeightProvider
         int samples = 0;
         for (int z = 0; z < GameConfig.Chunk.SIZE; z++) {
             for (int x = 0; x < GameConfig.Chunk.SIZE; x++) {
-                int worldX = region.worldX(x);
-                int worldZ = region.worldZ(z);
+                long worldX = region.worldXLong(x);
+                long worldZ = region.worldZLong(z);
                 region.setHeight(
                         x,
                         z,
@@ -117,13 +124,13 @@ public final class BiomeShapedHeightProvider
 
     private static double centered(
             GenerationContext context,
-            int worldX,
-            int worldZ,
+            long worldX,
+            long worldZ,
             double scale,
             long salt) {
         return context.sampler()
                         .valueNoise2D(
-                                ID, worldX, worldZ, scale, salt)
+                                CONTRACT, worldX, worldZ, scale, salt)
                         * 2.0
                 - 1.0;
     }

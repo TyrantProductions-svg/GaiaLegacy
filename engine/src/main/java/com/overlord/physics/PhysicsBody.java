@@ -50,6 +50,24 @@ public final class PhysicsBody {
         this.position.set(position);
     }
 
+    /** Shifts both fixed-step endpoints while preserving all physical state. */
+    public void rebase(Vector3fc offset) {
+        prepareRebase(offset).commit();
+    }
+
+    /** Precomputes validated endpoints so publication performs assignments only. */
+    public PreparedRebase prepareRebase(Vector3fc offset) {
+        requireFinite(offset, "offset");
+        Vector3f nextPrevious = new Vector3f(previousPosition).add(offset);
+        Vector3f nextPosition = new Vector3f(position).add(offset);
+        requireFinite(nextPrevious, "rebased previous position");
+        requireFinite(nextPosition, "rebased position");
+        return () -> {
+            previousPosition.set(nextPrevious);
+            position.set(nextPosition);
+        };
+    }
+
     public Vector3f interpolatedPosition(float alpha, Vector3f destination) {
         Objects.requireNonNull(destination, "destination");
         if (!Float.isFinite(alpha) || alpha < 0 || alpha > 1) {
@@ -166,5 +184,10 @@ public final class PhysicsBody {
         if (!Float.isFinite(value) || value < 0 || value > 1) {
             throw new IllegalArgumentException(label + " must be finite and in [0, 1]");
         }
+    }
+
+    @FunctionalInterface
+    public interface PreparedRebase {
+        void commit();
     }
 }

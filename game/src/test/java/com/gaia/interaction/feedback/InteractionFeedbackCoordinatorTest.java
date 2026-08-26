@@ -17,9 +17,11 @@ import com.overlord.inventory.api.ItemStack;
 import com.overlord.renderer.feedback.FeedbackVisibility;
 import com.overlord.renderer.feedback.InteractionFeedbackFrame;
 import com.overlord.renderer.feedback.ParticleVisual;
+import com.overlord.renderer.RenderOrigin;
 import com.overlord.renderer.particle.ParticleCategory;
 import com.overlord.renderer.particle.ParticleSystem;
 import com.overlord.renderer.texture.TextureRegion;
+import com.overlord.voxel.ChunkKey;
 import com.overlord.worlditem.api.WorldItemId;
 import com.overlord.worlditem.api.WorldItemSnapshot;
 import java.util.ArrayList;
@@ -308,6 +310,29 @@ class InteractionFeedbackCoordinatorTest {
         assertTrue(closed.worldItems().isEmpty());
         assertTrue(closed.particles().particles().isEmpty());
         assertTrue(fixture.particles.snapshot().particles().isEmpty());
+    }
+
+    @Test
+    void nonzeroRenderOriginLocalizesDamageTransientAndExcludedCellsTogether() {
+        Fixture fixture = fixture();
+        BlockInteractionViewModel active = breaking(18, 2, 3, STONE, 0.5, 4);
+        BlockHitResult target = active.target().orElseThrow();
+        fixture.coordinator.fixedUpdate(active, true, 0L);
+        fixture.coordinator.onPlacementCommitted(target, STONE, 41L);
+
+        InteractionFeedbackFrame frame = fixture.coordinator.snapshotPhysical(
+                active,
+                List.of(),
+                0.5f,
+                VISIBLE,
+                new RenderOrigin(new ChunkKey(1, 0)));
+
+        assertEquals(2, frame.blockDamage().orElseThrow().blockX());
+        assertEquals(3, frame.transientBlocks().get(0).coordinate().x());
+        assertEquals(3, frame.excludedBlockCells().get(0).x());
+        assertEquals(3, frame.blockDamage().orElseThrow().blockZ());
+        assertEquals(3, frame.transientBlocks().get(0).coordinate().z());
+        assertEquals(3, frame.excludedBlockCells().get(0).z());
     }
 
     private static Fixture fixture() {

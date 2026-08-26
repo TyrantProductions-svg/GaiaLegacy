@@ -14,6 +14,7 @@ import com.overlord.config.GameConfig;
 import com.overlord.interaction.api.EntityRef;
 import com.overlord.inventory.api.ItemStack;
 import com.overlord.worlditem.api.WorldItemId;
+import com.overlord.worlditem.api.LogicalWorldItemSnapshot;
 import com.overlord.worlditem.api.WorldItemPhysicalState;
 import com.overlord.worlditem.api.WorldItemRestoreEntry;
 import com.overlord.worlditem.api.WorldItemRuntimeSnapshot;
@@ -84,6 +85,64 @@ class WorldItemsSectionCodecTest {
                 exhaustedJson.getBytes(StandardCharsets.UTF_8),
                 codec.encode(exhausted));
         assertEquals(exhausted, codec.decode(codec.encode(exhausted)));
+    }
+
+    @Test
+    void legacyReadDerivesCanonicalExpiryAndMarksSnapshotComplete() {
+        WorldItemsSaveSnapshot decoded = codec.decode(
+                CANONICAL_JSON.getBytes(StandardCharsets.UTF_8));
+
+        assertEquals(
+                LogicalWorldItemSnapshot.Completeness.LEGACY_COMPLETE,
+                decoded.completeness());
+        assertEquals(
+                90L + WorldItemRuntimeSnapshot.WORLD_ITEM_TTL_TICKS,
+                decoded.entries().get(0).runtime().expiresAtWorldTick());
+
+        String maximumSpawn = CANONICAL_JSON
+                .replace("\"fixedTick\":100", "\"fixedTick\":9223372036854775807")
+                .replace("\"spawnTick\":90", "\"spawnTick\":9223372036854775807")
+                .replace("\"spawnTick\":100", "\"spawnTick\":9223372036854775807")
+                .replace("\"pickupAvailableTick\":110", "\"pickupAvailableTick\":9223372036854775807")
+                .replace("\"pickupAvailableTick\":100", "\"pickupAvailableTick\":9223372036854775807");
+        WorldItemsSaveSnapshot saturated = codec.decode(
+                maximumSpawn.getBytes(StandardCharsets.UTF_8));
+        assertEquals(
+                Long.MAX_VALUE,
+                saturated.entries().get(0).runtime().expiresAtWorldTick());
+    }
+
+    @Test
+    void v1WriterRejectsExpiryMismatchAndPagedPartialStateWithStableCodes() {
+        WorldItemRestoreEntry legacy = lowEntry();
+        WorldItemRuntimeSnapshot runtime = legacy.runtime();
+        WorldItemRestoreEntry mismatched = new WorldItemRestoreEntry(
+                new WorldItemRuntimeSnapshot(
+                        runtime.item(),
+                        runtime.source(),
+                        runtime.spawnTick(),
+                        runtime.pickupAvailableTick(),
+                        runtime.expiresAtWorldTick() + 1L),
+                legacy.physicalState());
+        WorldItemsSaveSnapshot mismatch = new WorldItemsSaveSnapshot(
+                100L,
+                List.of(mismatched),
+                10L,
+                false,
+                LogicalWorldItemSnapshot.Completeness.LEGACY_COMPLETE);
+        WorldItemsSaveSnapshot paged = new WorldItemsSaveSnapshot(
+                100L,
+                List.of(lowEntry()),
+                10L,
+                false,
+                LogicalWorldItemSnapshot.Completeness.PAGED_PARTIAL);
+
+        assertCodecFailure(
+                "world-items-v1.expiry-mismatch",
+                () -> codec.encode(mismatch));
+        assertCodecFailure(
+                "world-items-v1.paged-state-unsupported",
+                () -> codec.encode(paged));
     }
 
     @Test

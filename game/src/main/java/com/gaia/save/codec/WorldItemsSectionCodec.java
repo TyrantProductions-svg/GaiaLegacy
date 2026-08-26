@@ -11,6 +11,7 @@ import com.overlord.config.GameConfig;
 import com.overlord.interaction.api.EntityRef;
 import com.overlord.inventory.api.ItemStack;
 import com.overlord.worlditem.api.WorldItemId;
+import com.overlord.worlditem.api.LogicalWorldItemSnapshot;
 import com.overlord.worlditem.api.WorldItemPhysicalState;
 import com.overlord.worlditem.api.WorldItemRestoreEntry;
 import com.overlord.worlditem.api.WorldItemRuntimeSnapshot;
@@ -71,6 +72,13 @@ public final class WorldItemsSectionCodec
         try {
             WorldItemsSaveSnapshot value =
                     Objects.requireNonNull(snapshot, "snapshot");
+            if (value.completeness()
+                    != LogicalWorldItemSnapshot.Completeness.LEGACY_COMPLETE) {
+                throw new SaveCodecException(
+                        "world-items-v1.paged-state-unsupported",
+                        "Legacy v1 cannot encode paged world-item state",
+                        new IllegalArgumentException("paged world-item state"));
+            }
             List<WorldItemRestoreEntry> entries = new ArrayList<>(value.entries());
             if (entries.size() > MAX_ENTRIES) {
                 throw new IllegalArgumentException(
@@ -78,8 +86,20 @@ public final class WorldItemsSectionCodec
             }
             entries.sort(ENTRY_ORDER);
             validateEntries(entries);
+            for (WorldItemRestoreEntry entry : entries) {
+                WorldItemRuntimeSnapshot runtime = entry.runtime();
+                if (runtime.expiresAtWorldTick()
+                        != WorldItemRuntimeSnapshot.saturatingExpiry(runtime.spawnTick())) {
+                    throw new SaveCodecException(
+                            "world-items-v1.expiry-mismatch",
+                            "Legacy v1 requires the canonical derived world-item expiry",
+                            new IllegalArgumentException("world-item expiry mismatch"));
+                }
+            }
             return JsonCodecSupport.write(
                     writer -> writeDocument(writer, value, entries));
+        } catch (SaveCodecException failure) {
+            throw failure;
         } catch (RuntimeException failure) {
             throw new SaveCodecException(
                     "world-items.invalid-snapshot",

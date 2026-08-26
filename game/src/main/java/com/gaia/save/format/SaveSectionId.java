@@ -9,6 +9,12 @@ public record SaveSectionId(String value) {
     public static final SaveSectionId PLAYER = new SaveSectionId("player");
     public static final SaveSectionId INVENTORY = new SaveSectionId("inventory");
     public static final SaveSectionId WORLD_ITEMS = new SaveSectionId("world-items");
+    public static final SaveSectionId STREAMED_CHUNKS = new SaveSectionId("streamed-chunks");
+    public static final SaveSectionId WORLD_ITEM_PAGE = new SaveSectionId("world-item-page");
+    public static final SaveSectionId WORLD_ITEM_CHECKPOINT =
+            new SaveSectionId("world-item-checkpoint");
+    public static final SaveSectionId STREAMED_SESSION_CHECKPOINT =
+            new SaveSectionId("streamed-session-checkpoint");
     public static final SaveSectionId DISCOVERY_LORE = new SaveSectionId("discovery-lore");
     public static final SaveSectionId DETAIL_BLOCKS = new SaveSectionId("detail-blocks");
     private static final Set<SaveSectionId> REQUIRED_V1 = Set.of(
@@ -29,5 +35,9 @@ public record SaveSectionId(String value) {
 
     public static boolean isReservedOptionalV1(SaveSectionId sectionId) {
         return RESERVED_OPTIONAL_V1.contains(Objects.requireNonNull(sectionId, "sectionId"));
+    }
+
+    public static boolean isRequiredStreamedV2(SaveSectionId sectionId) {
+        return STREAMED_CHUNKS.equals(Objects.requireNonNull(sectionId, "sectionId"));
     }
 }

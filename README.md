@@ -7,15 +7,15 @@
 GaiaLegacy is an experimental physical voxel survival project focused on
 embodied choices, deterministic exploration, and systems with explicit
 technical ownership. Milestone 1 is a pre-alpha vertical slice rather than a
-finished game. The current Phase 14 working branch adds versioned local
-Save/Load v1 and world slots around the Phase 13 product shell, settings, and
-audio foundation.
+finished game. The current Phase 15 working branch adds bounded deterministic
+infinite-world streaming and Save v2 restart persistence to the Phase 14 local
+save/world-slot foundation.
 
 ## Milestone 1 vertical slice
 
 The current release-candidate branch integrates:
 
-- a deterministic finite 81-Chunk world with plains, rolling terrain, rocky
+- deterministic on-demand Chunk streaming with plains, rolling terrain, rocky
   highlands, trees, surface entrances, and connected caves;
 - exact 1/60-second player and world-item physics;
 - Survival and Creative block breaking and placement;
@@ -33,20 +33,22 @@ implemented. The application launches to a Main Menu with New World, World
 Slots when saves exist, Settings, Controls, and Quit. Gameplay has Pause Save,
 Save & Quit, and dirty return-to-menu confirmation.
 
-## Save/Load v1
+## Save/Load v1 and streamed v2
 
 - New World accepts a Unicode name and signed 64-bit seed, then commits an
   initial atomic save before publishing the playable session.
 - World Slots shows four saves per page with stable-ID Load, explicit backup
   recovery, and confirmed delete actions.
-- The versioned archive preserves finite-world Chunk bytes/revisions, player
-  transform/mode, three-slot inventory, and stable-ID WorldItems.
+- Legacy v1 archives remain readable. Streamed v2 preserves modified Chunk
+  bytes/revisions, authoritative world tick, allocator high-water, player
+  transform/mode, three-slot inventory, and paged stable-ID WorldItems.
 - Pause Save writes and checkpoints before resuming; Save & Quit closes only
   after a successful write/checkpoint.
 - Save roots are `%APPDATA%/GaiaLegacy/saves` on Windows and
   `~/Library/Application Support/GaiaLegacy/saves` on macOS.
-- v1 has no timed autosave, background writer, cloud sync, infinite streaming,
-  or fabricated Loading/Saving percentage.
+- There is no timed autosave, cloud sync, region database, or fabricated
+  Loading/Saving percentage. Writes use bounded invisible staging and one final
+  semantic root publication.
 
 ## Product shell and audio
 
@@ -130,8 +132,8 @@ macOS:
 | --- | ---: |
 | World seed | `12345` |
 | World-generation algorithm | `2` |
-| Finite loaded-world radius | `4` Chunks |
-| Loaded demo area | `81` Chunks |
+| Simulation / render / preload radii | `2 / 4 / 5` Chunks |
+| Unload hysteresis radius | `7` Chunks |
 | Vertical FOV | `70.0` degrees |
 | Mouse sensitivity | `0.1` |
 | VSync | enabled, swap interval `1` |
@@ -140,9 +142,9 @@ macOS:
 | Master / Music / SFX | `100%` / `65%` / `100%` |
 | Mute when unfocused | enabled |
 
-The Chunk radius is a finite demo-world loading boundary. Milestone 1 does
-not implement a configurable streaming distance or a separate
-distance-culling system. VSync affects presentation only; simulation remains
+The Phase 15 radii are fixed policy constants rather than a user-facing render
+distance setting. Resident authority may temporarily use the radius-7
+hysteresis footprint. VSync affects presentation only; simulation remains
 fixed at exactly 1/60 second.
 
 ## Demo world and route
@@ -232,6 +234,20 @@ restored-state verification, and normal-exit cycle is also HUMAN-REPORTED PASS;
 its exact duration and raw runtime log were not supplied. Phase 14
 cross-platform acceptance is complete. See the
 [Phase 14 acceptance matrix](docs/testing/phase-14-save-load-acceptance.md).
+
+Phase 15 Windows Gate 15F automation is PASS: the final clean build ran 3,351
+tests (3,350 passed, one platform-conditional tools skip, zero failures/errors),
+installDist, and packaged shader/resource/OpenAL audits. The development
+launcher passed Main Menu, Settings navigation, and clean shutdown. The
+generated Windows distribution created a unique world, entered gameplay,
+placed a visible dirt block in a resident Chunk, completed Save & Quit, exited
+0, relaunched in a fresh process, loaded the same sparse streamed-v2 world with
+that block still visible, completed a second Save & Quit, and exited 0 again.
+The typed structural Gate drove more than 500 transitions without an FPS or
+wall-clock pass threshold. Native Apple Silicon macOS Phase 15 evidence is
+**NOT RUN / PENDING** and is not inferred from the historical Phase 12-14
+results. See the
+[Phase 15 acceptance matrix](docs/testing/phase-15-infinite-world-streaming-acceptance.md).
 
 ## Architecture map
 

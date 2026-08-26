@@ -29,13 +29,15 @@ public final class GaiaWorldGenerator {
     }
 
     public static WorldGenerator createVisualRevisionCandidate() {
+        HybridCaveProvider caves = new HybridCaveProvider();
         return new StagedWorldGenerator(
                 List.of(
                         new ContinuousBiomeProvider(),
                         new BiomeShapedHeightProvider(),
                         new DefaultStrataDensityProvider(),
-                        new HybridCaveProvider(),
+                        caves,
                         new DefaultSurfaceProvider(),
-                        new CompositeDecorationProvider()));
+                        new CompositeDecorationProvider(
+                                caves.entranceQuery())));
     }
 }

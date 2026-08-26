@@ -2,6 +2,7 @@ package com.gaia.world;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.gaia.world.generation.WorldGenerationConfig;
@@ -11,7 +12,11 @@ import com.overlord.voxel.ChunkGenerationMode;
 import com.overlord.voxel.ChunkGenerationResult;
 import com.overlord.voxel.ChunkGenerationTicket;
 import com.overlord.voxel.ChunkKey;
+import com.overlord.voxel.ChunkRepositoryRestoreResult;
+import com.overlord.voxel.ChunkRepositorySnapshot;
+import com.overlord.voxel.ChunkSnapshot;
 import com.overlord.voxel.World;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import org.joml.Vector3f;
@@ -152,11 +157,11 @@ class SafeSpawnSelectorTest {
         World world = new World();
         ChunkKey extreme =
                 new ChunkKey(
-                        Integer.MIN_VALUE / GameConfig.Chunk.SIZE,
-                        Integer.MIN_VALUE / GameConfig.Chunk.SIZE);
+                        -134217727,
+                        -134217727);
         byte[] blocks = emptyBlocks();
         set(blocks, 0, 0, 0, SOLID);
-        commit(world, extreme, blocks);
+        restore(world, extreme, blocks);
         WorldGenerationConfig defaults = WorldGenerationConfig.defaults();
         WorldGenerationConfig config =
                 new WorldGenerationConfig(
@@ -176,6 +181,22 @@ class SafeSpawnSelectorTest {
                         .find(world, Set.of(extreme), config);
 
         assertTrue(spawn.isEmpty());
+    }
+
+    @Test
+    void rejectsUnsafeCommittedChunkKeyBeforeWorldProbing() {
+        World world = new World();
+        ChunkKey unsafe = new ChunkKey(134217728, 0);
+        restore(world, unsafe, emptyBlocks());
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        new SafeSpawnSelector()
+                                .find(
+                                        world,
+                                        Set.of(unsafe),
+                                        WorldGenerationConfig.defaults()));
     }
 
     @Test
@@ -269,6 +290,25 @@ class SafeSpawnSelectorTest {
                                         blocks));
         assertEquals(
                 ChunkGenerationResult.Status.COMMITTED,
+                result.status());
+    }
+
+    private static void restore(
+            World world, ChunkKey key, byte[] blocks) {
+        ChunkRepositoryRestoreResult result =
+                world.chunks()
+                        .restoreCanonical(
+                                new ChunkRepositorySnapshot(
+                                        GameConfig.Chunk.MAX_HEIGHT,
+                                        1L,
+                                        List.of(
+                                                ChunkSnapshot.of(
+                                                        key,
+                                                        1L,
+                                                        GameConfig.Chunk.MAX_HEIGHT,
+                                                        blocks))));
+        assertEquals(
+                ChunkRepositoryRestoreResult.Status.RESTORED,
                 result.status());
     }
 }

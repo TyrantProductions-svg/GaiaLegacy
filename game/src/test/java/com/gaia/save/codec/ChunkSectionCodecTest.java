@@ -265,6 +265,27 @@ class ChunkSectionCodecTest {
     }
 
     @Test
+    void encodeAndDecodeRejectKeysOutsideTheSafeGlobalAddressEnvelope() {
+        ChunkSnapshot unsafe =
+                markedChunk(134217728, 0, 1L, 1, 0, (byte) 1);
+        assertCodecFailure(
+                "chunks.invalid-snapshot", () -> codec.encode(snapshot(1, 1L, unsafe)));
+
+        byte[] valid =
+                codec.encode(
+                        snapshot(
+                                1,
+                                1L,
+                                markedChunk(0, 0, 1L, 1, 0, (byte) 1)));
+        assertCodecFailure(
+                "chunks.invalid-payload",
+                () -> codec.decode(withInt(valid, FIRST_X_OFFSET, 134217728)));
+        assertCodecFailure(
+                "chunks.invalid-payload",
+                () -> codec.decode(withInt(valid, FIRST_Z_OFFSET, -134217728)));
+    }
+
+    @Test
     void decodeRejectsTrailingBytesAndOversizedCountBeforeAllocation() {
         byte[] valid = codec.encode(snapshot(1, 1L, markedChunk(0, 0, 1L, 1, 0, (byte) 1)));
 

@@ -11,12 +11,46 @@ public final class CompositeDecorationProvider
     private static final ResourceLocation OUTCROP_ID =
             ResourceLocation.parse("gaia:stone_outcrop");
     private static final int CELL_SIZE = 16;
-    private final TreeDecorationProvider trees =
-            new TreeDecorationProvider();
+    private static final int OUTCROP_HALO_RADIUS = 4;
+    private static final GenerationStageContract CONTRACT =
+            new GenerationStageContract(
+                    ID, 1, OUTCROP_HALO_RADIUS);
+    private final GenerationStageContract contract;
+    private final GenerationStageContract outcropContract;
+    private final TreeDecorationProvider trees;
+    private final HybridCaveProvider.EntranceQuery entrances;
+
+    public CompositeDecorationProvider(
+            HybridCaveProvider.EntranceQuery entrances) {
+        this(CONTRACT, entrances);
+    }
+
+    public CompositeDecorationProvider(
+            GenerationStageContract contract,
+            HybridCaveProvider.EntranceQuery entrances) {
+        if (!ID.equals(contract.id())) {
+            throw new IllegalArgumentException(
+                    "Composite decoration contract must use " + ID);
+        }
+        this.contract = contract;
+        this.outcropContract =
+                contract.child(
+                        OUTCROP_ID, contract.haloRadius());
+        this.entrances =
+                java.util.Objects.requireNonNull(
+                        entrances, "entrances");
+        this.trees =
+                new TreeDecorationProvider(contract, entrances);
+    }
 
     @Override
     public ResourceLocation id() {
         return ID;
+    }
+
+    @Override
+    public GenerationStageContract contract() {
+        return contract;
     }
 
     @Override
@@ -35,49 +69,45 @@ public final class CompositeDecorationProvider
     private int generateOutcrops(
             GenerationContext context, GenerationRegion region) {
         int writes = 0;
-        int minimumCellX =
-                cellCoordinate(
-                        (long) region.key().worldOriginX() - 4);
-        int maximumCellX =
-                cellCoordinate(
-                        (long) region.key().worldOriginX()
-                                + GameConfig.Chunk.SIZE
-                                + 3);
-        int minimumCellZ =
-                cellCoordinate(
-                        (long) region.key().worldOriginZ() - 4);
-        int maximumCellZ =
-                cellCoordinate(
-                        (long) region.key().worldOriginZ()
-                                + GameConfig.Chunk.SIZE
-                                + 3);
+        GenerationStageContract.RegionRange xRange =
+                contract.regionsForChunk(
+                        region.worldOriginX(),
+                        GameConfig.Chunk.SIZE,
+                        CELL_SIZE);
+        GenerationStageContract.RegionRange zRange =
+                contract.regionsForChunk(
+                        region.worldOriginZ(),
+                        GameConfig.Chunk.SIZE,
+                        CELL_SIZE);
+        long minimumCellX = xRange.minimum();
+        long maximumCellX = xRange.maximum();
+        long minimumCellZ = zRange.minimum();
+        long maximumCellZ = zRange.maximum();
         BiomeProvider biomes = new ContinuousBiomeProvider();
         HeightProvider heights = new BiomeShapedHeightProvider();
-        for (int cellZ = minimumCellZ;
+        for (long cellZ = minimumCellZ;
                 cellZ <= maximumCellZ;
                 cellZ++) {
-            for (int cellX = minimumCellX;
+            for (long cellX = minimumCellX;
                     cellX <= maximumCellX;
                     cellX++) {
-                Integer rootX =
-                        worldCoordinate(
-                                cellX,
-                                context,
-                                cellX,
-                                cellZ,
-                                0L);
-                Integer rootZ =
-                        worldCoordinate(
-                                cellZ,
-                                context,
+                Optional<StableRegionAnchor> sampled =
+                        StableRegionAnchor.sampleIfSafe(
+                                context.sampler(),
+                                outcropContract,
                                 cellX,
                                 cellZ,
-                                1L);
-                if (rootX == null
-                        || rootZ == null
-                        || insideOriginReserve(rootX, rootZ)
+                                CELL_SIZE);
+                if (sampled.isEmpty()) {
+                    continue;
+                }
+                StableRegionAnchor anchor =
+                        sampled.orElseThrow();
+                long rootX = anchor.worldX();
+                long rootZ = anchor.worldZ();
+                if (insideOriginReserve(rootX, rootZ)
                         || trees.conflicts(context, rootX, rootZ)
-                        || HybridCaveProvider.hasEntranceNear(
+                        || entrances.hasEntranceNear(
                                 context, rootX, rootZ, 8)) {
                     continue;
                 }
@@ -91,15 +121,12 @@ public final class CompositeDecorationProvider
                         new int[][] {
                             {-1, 0}, {1, 0}, {0, -1}, {0, 1}
                         }) {
-                    Integer x =
-                            addIfRepresentable(
+                    long x =
+                            Math.addExact(
                                     rootX, direction[0]);
-                    Integer z =
-                            addIfRepresentable(
+                    long z =
+                            Math.addExact(
                                     rootZ, direction[1]);
-                    if (x == null || z == null) {
-                        continue;
-                    }
                     slope =
                             Math.max(
                                     slope,
@@ -133,9 +160,9 @@ public final class CompositeDecorationProvider
                                                         * slopeWeight)
                                         * densityScale);
                 if (context.sampler().unit(
-                                        OUTCROP_ID,
+                                        outcropContract,
                                         cellX,
-                                        0,
+                                        0L,
                                         cellZ,
                                         2L)
                                 >= probability
@@ -146,18 +173,18 @@ public final class CompositeDecorationProvider
                         2
                                 + (int)
                                         (context.sampler().unit(
-                                                        OUTCROP_ID,
+                                                        outcropContract,
                                                         cellX,
-                                                        0,
+                                                        0L,
                                                         cellZ,
                                                         3L)
                                                 * 4.0);
                 int orientation =
                         (int)
                                 (context.sampler().unit(
-                                                OUTCROP_ID,
+                                                outcropContract,
                                                 cellX,
-                                                0,
+                                                0L,
                                                 cellZ,
                                                 4L)
                                         * 4.0);
@@ -176,13 +203,8 @@ public final class CompositeDecorationProvider
                                     case 2 -> index / 2;
                                     default -> -(index / 2);
                                 };
-                        Integer x =
-                                addIfRepresentable(rootX, dx);
-                        Integer z =
-                                addIfRepresentable(rootZ, dz);
-                        if (x == null || z == null) {
-                            continue;
-                        }
+                        long x = Math.addExact(rootX, dx);
+                        long z = Math.addExact(rootZ, dz);
                         BiomeSample localBiome =
                                 biomes.sample(context, x, z);
                         int surface =
@@ -194,7 +216,7 @@ public final class CompositeDecorationProvider
                         int columnHeight =
                                 1
                                         + (context.sampler().unit(
-                                                                OUTCROP_ID,
+                                                                outcropContract,
                                                                 x,
                                                                 surface,
                                                                 z,
@@ -223,58 +245,8 @@ public final class CompositeDecorationProvider
         return writes;
     }
 
-    private static int cellOffset(
-            GenerationContext context,
-            int cellX,
-            int cellZ,
-            long salt) {
-        return (int)
-                (context.sampler().unit(
-                                OUTCROP_ID,
-                                cellX,
-                                0,
-                                cellZ,
-                                salt)
-                        * CELL_SIZE);
-    }
-
-    private static int cellCoordinate(long worldCoordinate) {
-        return Math.toIntExact(
-                Math.floorDiv(worldCoordinate, CELL_SIZE));
-    }
-
-    private static Integer worldCoordinate(
-            int baseCell,
-            GenerationContext context,
-            int sampleCellX,
-            int sampleCellZ,
-            long salt) {
-        long value =
-                (long) baseCell * CELL_SIZE
-                        + cellOffset(
-                                context,
-                                sampleCellX,
-                                sampleCellZ,
-                                salt);
-        if (value < Integer.MIN_VALUE
-                || value > Integer.MAX_VALUE) {
-            return null;
-        }
-        return (int) value;
-    }
-
-    private static Integer addIfRepresentable(
-            int base, int offset) {
-        long value = (long) base + offset;
-        if (value < Integer.MIN_VALUE
-                || value > Integer.MAX_VALUE) {
-            return null;
-        }
-        return (int) value;
-    }
-
     private static boolean insideOriginReserve(
-            int x, int z) {
+            long x, long z) {
         return x > -12
                 && x < 12
                 && z > -12
@@ -284,17 +256,15 @@ public final class CompositeDecorationProvider
 
     private static int writeWorld(
             GenerationRegion region,
-            int worldX,
+            long worldX,
             int y,
-            int worldZ,
+            long worldZ,
             byte block,
             byte air) {
         long xValue =
-                (long) worldX
-                        - region.key().worldOriginX();
+                worldX - region.worldOriginX();
         long zValue =
-                (long) worldZ
-                        - region.key().worldOriginZ();
+                worldZ - region.worldOriginZ();
         if (xValue < 0
                 || xValue >= GameConfig.Chunk.SIZE
                 || zValue < 0

@@ -8,10 +8,17 @@ public final class DefaultSurfaceProvider
         implements SurfaceProvider {
     private static final ResourceLocation ID =
             ResourceLocation.parse("gaia:surface");
+    private static final GenerationStageContract CONTRACT =
+            new GenerationStageContract(ID, 1, 1);
 
     @Override
     public ResourceLocation id() {
         return ID;
+    }
+
+    @Override
+    public GenerationStageContract contract() {
+        return CONTRACT;
     }
 
     @Override
@@ -43,7 +50,8 @@ public final class DefaultSurfaceProvider
                                                 .rockyHighlands()
                                         >= settings
                                                 .rockyWeightThreshold()
-                                || localSlope(
+                                || worldSlope(
+                                                context,
                                                 region,
                                                 localX,
                                                 localZ)
@@ -83,52 +91,33 @@ public final class DefaultSurfaceProvider
         return -1;
     }
 
-    private static double localSlope(
+    private static double worldSlope(
+            GenerationContext context,
             GenerationRegion region,
             int localX,
             int localZ) {
         int center =
                 region.getHeight(localX, localZ);
         int maximumDifference = 0;
-        if (localX > 0) {
+        long worldX = region.worldXLong(localX);
+        long worldZ = region.worldZLong(localZ);
+        for (int[] direction :
+                new int[][] {
+                    {-1, 0}, {1, 0}, {0, -1}, {0, 1}
+                }) {
+            int neighbor =
+                    region.heightAtWorld(
+                                    context,
+                                    worldX + direction[0],
+                                    worldZ + direction[1])
+                            .orElseThrow(
+                                    () ->
+                                            new IllegalStateException(
+                                                    "Required surface halo column was omitted"));
             maximumDifference =
                     Math.max(
                             maximumDifference,
-                            Math.abs(
-                                    center
-                                            - region.getHeight(
-                                                    localX - 1,
-                                                    localZ)));
-        }
-        if (localX + 1 < GameConfig.Chunk.SIZE) {
-            maximumDifference =
-                    Math.max(
-                            maximumDifference,
-                            Math.abs(
-                                    center
-                                            - region.getHeight(
-                                                    localX + 1,
-                                                    localZ)));
-        }
-        if (localZ > 0) {
-            maximumDifference =
-                    Math.max(
-                            maximumDifference,
-                            Math.abs(
-                                    center
-                                            - region.getHeight(
-                                                    localX,
-                                                    localZ - 1)));
-        }
-        if (localZ + 1 < GameConfig.Chunk.SIZE) {
-            maximumDifference =
-                    Math.max(
-                            maximumDifference,
-                            Math.abs(
-                                    center
-                                            - region.getHeight(
-                                                    localX,
-                                                    localZ + 1)));
+                            Math.abs(center - neighbor));
         }
         return maximumDifference;
     }

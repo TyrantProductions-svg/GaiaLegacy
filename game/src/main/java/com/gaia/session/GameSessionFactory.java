@@ -17,6 +17,7 @@ import com.gaia.interaction.BlockPlacementTransaction;
 import com.gaia.interaction.CreativeSelection;
 import com.gaia.interaction.GaiaBlockRaycastService;
 import com.gaia.interaction.GaiaBlockWorldAccess;
+import com.gaia.interaction.GaiaInteractionContext;
 import com.gaia.interaction.GameModeManager;
 import com.gaia.interaction.PlayerBlockTargeting;
 import com.gaia.interaction.feedback.CommittedBreakVisualAdapter;
@@ -30,7 +31,23 @@ import com.gaia.interaction.feedback.VisualRegionDiagnostics;
 import com.gaia.interaction.feedback.WorldItemVisualTracker;
 import com.gaia.save.format.SaveFormatVersion;
 import com.gaia.save.format.SaveGameId;
+import com.gaia.save.format.SaveSectionId;
 import com.gaia.save.session.SessionRestoreCoordinator;
+import com.gaia.save.session.SaveCoordinator;
+import com.gaia.save.streaming.StreamedWorldItemPageBackend;
+import com.gaia.save.streaming.StreamedChunkPayload;
+import com.gaia.save.streaming.StreamedChunkIndex;
+import com.gaia.save.streaming.StreamedChunkCodec;
+import com.gaia.save.streaming.StreamedChunkIndexCodec;
+import com.gaia.save.streaming.StreamedChunkStore;
+import com.gaia.save.streaming.StreamedChunkUnloadPlan;
+import com.gaia.save.streaming.StreamedChunkUnloadResult;
+import com.gaia.save.streaming.StreamedGlobalExtension;
+import com.gaia.save.streaming.StreamedGlobalExtensionMutation;
+import com.gaia.save.streaming.StreamedSessionCheckpoint;
+import com.gaia.save.streaming.StreamedSessionCheckpointCodec;
+import com.gaia.save.streaming.WorldItemPageCodec;
+import com.gaia.save.store.JdkSaveFileOperations;
 import com.gaia.save.snapshot.InventorySaveSnapshot;
 import com.gaia.save.snapshot.PlayerSaveSnapshot;
 import com.gaia.save.snapshot.SaveGameSnapshot;
@@ -49,7 +66,18 @@ import com.gaia.world.WorldLoadResult;
 import com.gaia.world.WorldLoadState;
 import com.gaia.world.WorldLoader;
 import com.gaia.world.generation.WorldGenerationConfig;
+import com.gaia.world.generation.WorldGenerationHasher;
 import com.gaia.world.generation.WorldGenerator;
+import com.gaia.world.streaming.ChunkStreamingController;
+import com.gaia.world.streaming.ChunkStreamingDecision;
+import com.gaia.world.streaming.ChunkStreamingDiagnostic;
+import com.gaia.world.streaming.ChunkStreamingMetrics;
+import com.gaia.world.streaming.ChunkStreamingMetricsRecorder;
+import com.gaia.world.streaming.ChunkStreamingObservation;
+import com.gaia.world.streaming.ChunkStreamingPipeline;
+import com.gaia.world.streaming.ChunkStreamingPolicy;
+import com.gaia.world.streaming.ChunkWorkResult;
+import com.gaia.session.streaming.SimulationOriginCoordinator;
 import com.gaia.worlditem.PhysicalWorldItemSystem;
 import com.gaia.worlditem.RoutedWorldInteractionInput;
 import com.gaia.worlditem.WorldInteractionInputRouter;
@@ -75,7 +103,10 @@ import com.overlord.event.EventBus;
 import com.overlord.interaction.DefaultWorldMutationService;
 import com.overlord.interaction.SynchronousBlockChangeEventPublisher;
 import com.overlord.interaction.api.BlockChangeDecision;
+import com.overlord.interaction.api.BlockChangeRequest;
+import com.overlord.interaction.api.BlockChangeResult;
 import com.overlord.interaction.api.EntityRef;
+import com.overlord.interaction.api.InteractionAction;
 import com.overlord.inventory.api.ItemStack;
 import com.overlord.physics.Aabb;
 import com.overlord.physics.BlockCollisionShapeResolver;
@@ -85,11 +116,13 @@ import com.overlord.physics.MassProperties;
 import com.overlord.physics.PhysicsBody;
 import com.overlord.physics.PhysicsWorld;
 import com.overlord.physics.PlayerController;
+import com.overlord.physics.SimulationOrigin;
 import com.overlord.renderer.Camera;
 import com.overlord.renderer.ChunkGpuMesh;
 import com.overlord.renderer.ChunkRenderBackend;
 import com.overlord.renderer.ChunkRenderObject;
 import com.overlord.renderer.RenderFrameInput;
+import com.overlord.renderer.RenderOrigin;
 import com.overlord.renderer.RenderSurfaceMetrics;
 import com.overlord.renderer.feedback.FeedbackVisibility;
 import com.overlord.renderer.feedback.InteractionFeedbackFrame;
@@ -97,18 +130,36 @@ import com.overlord.renderer.metrics.RenderMetricsSnapshot;
 import com.overlord.renderer.particle.ParticleSystem;
 import com.overlord.renderer.ui.TextRenderer;
 import com.overlord.voxel.ChunkKey;
+import com.overlord.voxel.ChunkGenerationData;
 import com.overlord.voxel.ChunkMeshBuilder;
 import com.overlord.voxel.ChunkMeshData;
 import com.overlord.voxel.ChunkMeshManager;
 import com.overlord.voxel.ChunkRepository;
 import com.overlord.voxel.ChunkRepositorySnapshot;
+import com.overlord.voxel.ChunkSnapshot;
+import com.overlord.voxel.GlobalPosition;
+import com.overlord.voxel.ChunkUnloadPreparation;
+import com.overlord.voxel.ChunkUnloadResult;
+import com.overlord.voxel.ChunkUnloadTicket;
 import com.overlord.voxel.World;
 import com.overlord.worlditem.LogicalWorldItemService;
 import com.overlord.worlditem.api.WorldItemSnapshot;
+import com.overlord.worlditem.api.LogicalWorldItemSnapshot;
+import com.overlord.worlditem.api.SaveIdentity;
+import com.overlord.worlditem.api.WorldItemDurableProof;
+import com.overlord.worlditem.api.WorldItemHibernateResult;
+import com.overlord.worlditem.api.WorldItemHibernateTicket;
+import com.overlord.worlditem.api.WorldItemPageCachePolicy;
+import com.overlord.worlditem.api.WorldItemPageDescriptor;
+import com.overlord.worlditem.api.WorldItemPersistencePlan;
+import com.overlord.worlditem.api.WorldItemPersistenceTicket;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
@@ -116,17 +167,22 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.IdentityHashMap;
+import java.util.Map;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import org.joml.Vector3f;
@@ -148,11 +204,33 @@ public final class GameSessionFactory {
             GaiaAssetCatalog catalog,
             GaiaUiAssets uiAssets,
             boolean inventoryDebugShortcuts) {
+        this(
+                engine,
+                inputManager,
+                mainThreadGuard,
+                catalog,
+                uiAssets,
+                inventoryDebugShortcuts,
+                (WorldItemPagingBackendFactory) id -> {
+                    throw new IllegalStateException(
+                            "This session factory has no streamed WorldItem backend");
+                });
+    }
+
+    public GameSessionFactory(
+            Engine engine,
+            InputManager inputManager,
+            MainThreadGuard mainThreadGuard,
+            GaiaAssetCatalog catalog,
+            GaiaUiAssets uiAssets,
+            boolean inventoryDebugShortcuts,
+            WorldItemPagingBackendFactory pagingBackends) {
         Objects.requireNonNull(engine, "engine");
         Objects.requireNonNull(inputManager, "inputManager");
         Objects.requireNonNull(mainThreadGuard, "mainThreadGuard");
         Objects.requireNonNull(catalog, "catalog");
         Objects.requireNonNull(uiAssets, "uiAssets");
+        Objects.requireNonNull(pagingBackends, "pagingBackends");
         ownerThread = Thread.currentThread();
         validateCanonicalFiniteWorld = true;
         ProductionEnvironment environment =
@@ -196,7 +274,8 @@ public final class GameSessionFactory {
                                 catalog,
                                 uiAssets,
                                 inventoryDebugShortcuts,
-                                ProductionHooks.NONE);
+                                ProductionHooks.NONE,
+                                pagingBackends);
     }
 
     private GameSessionFactory(
@@ -206,12 +285,81 @@ public final class GameSessionFactory {
             GaiaAssetCatalog catalog,
             GaiaUiAssets uiAssets,
             ProductionHooks hooks) {
+        this(
+                environment,
+                inputManager,
+                mainThreadGuard,
+                catalog,
+                uiAssets,
+                hooks,
+                (WorldItemPagingBackendFactory) id -> {
+                    throw new IllegalStateException(
+                            "This test factory has no streamed WorldItem backend");
+                });
+    }
+
+    public GameSessionFactory(
+            Engine engine,
+            InputManager inputManager,
+            MainThreadGuard mainThreadGuard,
+            GaiaAssetCatalog catalog,
+            GaiaUiAssets uiAssets,
+            boolean inventoryDebugShortcuts,
+            StreamingBackendFactory streamingBackends) {
+        Objects.requireNonNull(engine, "engine");
+        Objects.requireNonNull(inputManager, "inputManager");
+        Objects.requireNonNull(mainThreadGuard, "mainThreadGuard");
+        Objects.requireNonNull(catalog, "catalog");
+        Objects.requireNonNull(uiAssets, "uiAssets");
+        Objects.requireNonNull(streamingBackends, "streamingBackends");
+        ownerThread = Thread.currentThread();
+        validateCanonicalFiniteWorld = false;
+        ProductionEnvironment environment = new EngineProductionEnvironment(engine);
+        assembler = (config, world, shutdown) -> {
+            SaveGameId id = SaveGameId.parse(UUID.randomUUID().toString());
+            NewWorldRequest request = new NewWorldRequest(id, "New World", config.seed());
+            StreamingBackends backends = requireStreamingBackends(
+                    streamingBackends.open(id));
+            return assembleProduction(
+                    config, Optional.of(request), Optional.empty(), world, shutdown,
+                    environment, inputManager, mainThreadGuard, catalog, uiAssets,
+                    inventoryDebugShortcuts, ProductionHooks.NONE,
+                    Optional.of(backends.worldItems()), Optional.of(backends));
+        };
+        namedAssembler = (request, config, world, shutdown) -> {
+            StreamingBackends backends = requireStreamingBackends(
+                    streamingBackends.open(request.saveGameId()));
+            return assembleProduction(
+                    config, Optional.of(request), Optional.empty(), world, shutdown,
+                    environment, inputManager, mainThreadGuard, catalog, uiAssets,
+                    inventoryDebugShortcuts, ProductionHooks.NONE,
+                    Optional.of(backends.worldItems()), Optional.of(backends));
+        };
+        restoreAssembler = (snapshot, world, shutdown) -> {
+            StreamingBackends backends = requireStreamingBackends(
+                    streamingBackends.open(snapshot.metadata().saveGameId()));
+            return assembleRestoredProduction(
+                    snapshot, world, shutdown, environment, inputManager,
+                    mainThreadGuard, catalog, uiAssets, inventoryDebugShortcuts,
+                    ProductionHooks.NONE, backends);
+        };
+    }
+
+    private GameSessionFactory(
+            ProductionEnvironment environment,
+            InputManager inputManager,
+            MainThreadGuard mainThreadGuard,
+            GaiaAssetCatalog catalog,
+            GaiaUiAssets uiAssets,
+            ProductionHooks hooks,
+            WorldItemPagingBackendFactory pagingBackends) {
         Objects.requireNonNull(environment, "environment");
         Objects.requireNonNull(inputManager, "inputManager");
         Objects.requireNonNull(mainThreadGuard, "mainThreadGuard");
         Objects.requireNonNull(catalog, "catalog");
         Objects.requireNonNull(uiAssets, "uiAssets");
         Objects.requireNonNull(hooks, "hooks");
+        Objects.requireNonNull(pagingBackends, "pagingBackends");
         ownerThread = Thread.currentThread();
         validateCanonicalFiniteWorld = true;
         assembler =
@@ -253,7 +401,8 @@ public final class GameSessionFactory {
                                 catalog,
                                 uiAssets,
                                 false,
-                                hooks);
+                                hooks,
+                                pagingBackends);
     }
 
     GameSessionFactory(SessionAssembler assembler) {
@@ -473,7 +622,8 @@ public final class GameSessionFactory {
             GaiaAssetCatalog catalog,
             GaiaUiAssets uiAssets,
             boolean inventoryDebugShortcuts,
-            ProductionHooks hooks) {
+            ProductionHooks hooks,
+            WorldItemPagingBackendFactory pagingBackends) {
         GameSessionConfig config =
                 new GameSessionConfig(
                         snapshot.metadata().worldSeed(),
@@ -492,7 +642,263 @@ public final class GameSessionFactory {
                 catalog,
                 uiAssets,
                 inventoryDebugShortcuts,
-                hooks);
+                hooks,
+                snapshot.worldItems().completeness()
+                                == LogicalWorldItemSnapshot.Completeness.PAGED_PARTIAL
+                        ? Optional.of(Objects.requireNonNull(
+                                pagingBackends.open(snapshot.metadata().saveGameId()),
+                                 "streamed WorldItem backend"))
+                         : Optional.empty(),
+                Optional.empty());
+    }
+
+    private GameSessionFactory(
+            ProductionEnvironment environment,
+            InputManager inputManager,
+            MainThreadGuard mainThreadGuard,
+            GaiaAssetCatalog catalog,
+            GaiaUiAssets uiAssets,
+            ProductionHooks hooks,
+            Function<SaveGameId, StreamingBackends> streamingBackends) {
+        Objects.requireNonNull(environment, "environment");
+        Objects.requireNonNull(inputManager, "inputManager");
+        Objects.requireNonNull(mainThreadGuard, "mainThreadGuard");
+        Objects.requireNonNull(catalog, "catalog");
+        Objects.requireNonNull(uiAssets, "uiAssets");
+        Objects.requireNonNull(hooks, "hooks");
+        Objects.requireNonNull(streamingBackends, "streamingBackends");
+        ownerThread = Thread.currentThread();
+        validateCanonicalFiniteWorld = false;
+        assembler = (config, world, shutdown) -> {
+            SaveGameId id = SaveGameId.parse(UUID.randomUUID().toString());
+            NewWorldRequest request = new NewWorldRequest(id, "New World", config.seed());
+            StreamingBackends backends = requireStreamingBackends(
+                    streamingBackends.apply(id));
+            return assembleProduction(
+                    config, Optional.of(request), Optional.empty(), world, shutdown,
+                    environment, inputManager, mainThreadGuard, catalog, uiAssets,
+                    false, hooks, Optional.of(backends.worldItems()),
+                    Optional.of(backends));
+        };
+        namedAssembler = (request, config, world, shutdown) -> {
+            StreamingBackends backends = requireStreamingBackends(
+                    streamingBackends.apply(request.saveGameId()));
+            return assembleProduction(
+                    config, Optional.of(request), Optional.empty(), world, shutdown,
+                    environment, inputManager, mainThreadGuard, catalog, uiAssets,
+                    false, hooks, Optional.of(backends.worldItems()),
+                    Optional.of(backends));
+        };
+        restoreAssembler = (snapshot, world, shutdown) -> {
+            StreamingBackends backends = requireStreamingBackends(
+                    streamingBackends.apply(snapshot.metadata().saveGameId()));
+            return assembleRestoredProduction(
+                    snapshot, world, shutdown, environment, inputManager,
+                    mainThreadGuard, catalog, uiAssets, false, hooks, backends);
+        };
+    }
+
+    private static Vector3f originOffset(
+            SimulationOrigin oldOrigin, SimulationOrigin nextOrigin) {
+        long x = Math.subtractExact(oldOrigin.worldOriginX(), nextOrigin.worldOriginX());
+        long z = Math.subtractExact(oldOrigin.worldOriginZ(), nextOrigin.worldOriginZ());
+        float localX = (float) x;
+        float localZ = (float) z;
+        if (!Float.isFinite(localX) || !Float.isFinite(localZ)
+                || (long) localX != x || (long) localZ != z) {
+            throw new IllegalArgumentException("origin offset is not exactly representable");
+        }
+        return new Vector3f(localX, 0.0f, localZ);
+    }
+
+    private static GlobalPosition canonicalGlobalPosition(
+            double worldX, double worldY, double worldZ) {
+        if (!Double.isFinite(worldX)
+                || !Double.isFinite(worldY)
+                || !Double.isFinite(worldZ)) {
+            throw new IllegalArgumentException(
+                    "saved player position must be finite");
+        }
+        double chunkXValue = Math.floor(worldX / GameConfig.Chunk.SIZE);
+        double chunkZValue = Math.floor(worldZ / GameConfig.Chunk.SIZE);
+        if (chunkXValue < Integer.MIN_VALUE || chunkXValue > Integer.MAX_VALUE
+                || chunkZValue < Integer.MIN_VALUE || chunkZValue > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException(
+                    "saved player position exceeds safe Chunk coordinates");
+        }
+        ChunkKey key = new ChunkKey((int) chunkXValue, (int) chunkZValue);
+        double localX = worldX - key.worldOriginX();
+        double localZ = worldZ - key.worldOriginZ();
+        return new GlobalPosition(key, localX, worldY, localZ);
+    }
+
+    private static SaveGameSnapshot residentLocalRestore(
+            SaveGameSnapshot snapshot,
+            SimulationOrigin origin,
+            GlobalPosition playerGlobal) {
+        Vector3f local = origin.toLocal(playerGlobal);
+        PlayerSaveSnapshot player = snapshot.player();
+        return new SaveGameSnapshot(
+                snapshot.metadata(),
+                snapshot.fixedTick(),
+                snapshot.chunks(),
+                new PlayerSaveSnapshot(
+                        player.owner(),
+                        local.x, local.y, local.z,
+                        player.velocityX(), player.velocityY(), player.velocityZ(),
+                        player.yaw(), player.pitch(), player.gameMode(), player.noclip()),
+                snapshot.inventory(),
+                snapshot.worldItems());
+    }
+
+    private static SaveGameSnapshot bootstrapStreamedResidentChunks(
+            SaveGameSnapshot snapshot,
+            ChunkKey center,
+            WorldLoader generator,
+            int simulationRadius,
+            StreamedChunkStore store,
+            StreamedChunkIndex durableIndex) {
+        SaveGameSnapshot checkedSnapshot = Objects.requireNonNull(
+                snapshot, "snapshot");
+        ChunkKey checkedCenter = Objects.requireNonNull(center, "center");
+        WorldLoader checkedGenerator = Objects.requireNonNull(
+                generator, "generator");
+        StreamedChunkStore checkedStore = Objects.requireNonNull(store, "store");
+        StreamedChunkIndex checkedIndex = Objects.requireNonNull(
+                durableIndex, "durableIndex");
+        if (simulationRadius < 0) {
+            throw new IllegalArgumentException(
+                    "simulationRadius must not be negative");
+        }
+        ChunkRepositorySnapshot source = checkedSnapshot.chunks();
+        long revisionHighWater = source.revisionHighWater();
+        if (revisionHighWater < 0L || revisionHighWater == Long.MAX_VALUE) {
+            throw new IllegalArgumentException(
+                    "streamed restore Chunk revision high-water is invalid");
+        }
+        Map<ChunkKey, ChunkSnapshot> available = new java.util.HashMap<>();
+        for (ChunkSnapshot existing : source.chunks()) {
+            if (available.putIfAbsent(existing.key(), existing) != null) {
+                throw new IllegalArgumentException(
+                        "streamed restore contains duplicate Chunk key "
+                                + existing.key());
+            }
+        }
+        long durableHighWater = checkedIndex.entries().stream()
+                .mapToLong(StreamedChunkIndex.Entry::revision)
+                .max()
+                .orElse(0L);
+        revisionHighWater = Math.max(revisionHighWater, durableHighWater);
+        Map<ChunkKey, ChunkSnapshot> chunks = new java.util.LinkedHashMap<>();
+        long generatedRevision = Math.max(1L, revisionHighWater);
+        for (int offsetX = -simulationRadius;
+                offsetX <= simulationRadius;
+                offsetX++) {
+            for (int offsetZ = -simulationRadius;
+                    offsetZ <= simulationRadius;
+                    offsetZ++) {
+                ChunkKey key = new ChunkKey(
+                        Math.toIntExact(Math.addExact(
+                                (long) checkedCenter.x(), offsetX)),
+                        Math.toIntExact(Math.addExact(
+                                (long) checkedCenter.z(), offsetZ)));
+                StreamedChunkIndex.Entry durable = checkedIndex.entry(key)
+                        .orElse(null);
+                if (durable != null) {
+                    StreamedChunkStore.ReadResult read = checkedStore.read(
+                            checkedSnapshot.metadata().saveGameId(),
+                            key,
+                            new StreamedChunkStore.ExpectedBase(
+                                    durable.generatorVersion(),
+                                    durable.baseHash()));
+                    if (read.status() != StreamedChunkStore.ReadResult.Status.FOUND) {
+                        throw new IllegalStateException(
+                                "streamed restore selected Chunk is not readable: "
+                                        + key);
+                    }
+                    StreamedChunkPayload payload = read.payload().orElseThrow();
+                    if (payload.revision() != durable.revision()
+                            || payload.worldHeight() != source.worldHeight()) {
+                        throw new IllegalStateException(
+                                "streamed restore selected Chunk does not match its root");
+                    }
+                    chunks.put(key, ChunkSnapshot.of(
+                            key,
+                            payload.revision(),
+                            payload.worldHeight(),
+                            payload.copyCanonicalVoxels()));
+                    continue;
+                }
+                ChunkSnapshot existing = available.get(key);
+                if (existing != null) {
+                    chunks.put(key, existing);
+                    continue;
+                }
+                ChunkGenerationData generated =
+                        checkedGenerator.generateDetached(key);
+                if (generated.worldHeight() != source.worldHeight()) {
+                    throw new IllegalStateException(
+                            "streamed restore generated a mismatched world height");
+                }
+                chunks.put(key, ChunkSnapshot.of(
+                        key,
+                        generatedRevision,
+                        generated.worldHeight(),
+                        generated.copyBlocks()));
+            }
+        }
+        return new SaveGameSnapshot(
+                checkedSnapshot.metadata(),
+                checkedSnapshot.fixedTick(),
+                new ChunkRepositorySnapshot(
+                        source.worldHeight(),
+                        Math.max(revisionHighWater, generatedRevision),
+                        List.copyOf(chunks.values())),
+                checkedSnapshot.player(),
+                checkedSnapshot.inventory(),
+                checkedSnapshot.worldItems());
+    }
+
+    private static Map<ChunkKey, Long> persistedRevisionBindings(
+            ChunkRepositorySnapshot residentChunks,
+            StreamedChunkIndex publishedIndex) {
+        Objects.requireNonNull(residentChunks, "residentChunks");
+        Objects.requireNonNull(publishedIndex, "publishedIndex");
+        Set<ChunkKey> residentKeys = residentChunks.chunks().stream()
+                .map(ChunkSnapshot::key)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        Map<ChunkKey, Long> revisions = new java.util.LinkedHashMap<>();
+        for (StreamedChunkIndex.Entry entry : publishedIndex.entries()) {
+            if (residentKeys.contains(entry.key())) {
+                revisions.put(entry.key(), entry.revision());
+            }
+        }
+        return Map.copyOf(revisions);
+    }
+
+    private static SessionRuntime assembleRestoredProduction(
+            SaveGameSnapshot snapshot,
+            World world,
+            ShutdownCoordinator shutdown,
+            ProductionEnvironment environment,
+            InputManager inputManager,
+            MainThreadGuard mainThreadGuard,
+            GaiaAssetCatalog catalog,
+            GaiaUiAssets uiAssets,
+            boolean inventoryDebugShortcuts,
+            ProductionHooks hooks,
+            StreamingBackends backends) {
+        GameSessionConfig config = new GameSessionConfig(
+                snapshot.metadata().worldSeed(),
+                snapshot.metadata().chunkRadius(),
+                snapshot.player().gameMode(),
+                false);
+        StreamingBackends checked = requireStreamingBackends(backends);
+        return assembleProduction(
+                config, Optional.empty(), Optional.of(snapshot), world, shutdown,
+                environment, inputManager, mainThreadGuard, catalog, uiAssets,
+                inventoryDebugShortcuts, hooks,
+                Optional.of(checked.worldItems()), Optional.of(checked));
     }
 
     private static SessionRuntime assembleProduction(
@@ -508,8 +914,41 @@ public final class GameSessionFactory {
             GaiaUiAssets uiAssets,
             boolean inventoryDebugShortcuts,
             ProductionHooks hooks) {
+        return assembleProduction(
+                config,
+                newWorldRequest,
+                restoreSnapshot,
+                world,
+                shutdown,
+                environment,
+                inputManager,
+                mainThreadGuard,
+                catalog,
+                uiAssets,
+                 inventoryDebugShortcuts,
+                 hooks,
+                 Optional.empty(),
+                 Optional.empty());
+    }
+
+    private static SessionRuntime assembleProduction(
+            GameSessionConfig config,
+            Optional<NewWorldRequest> newWorldRequest,
+            Optional<SaveGameSnapshot> restoreSnapshot,
+            World world,
+            ShutdownCoordinator shutdown,
+            ProductionEnvironment environment,
+            InputManager inputManager,
+            MainThreadGuard mainThreadGuard,
+            GaiaAssetCatalog catalog,
+            GaiaUiAssets uiAssets,
+             boolean inventoryDebugShortcuts,
+             ProductionHooks hooks,
+             Optional<StreamedWorldItemPageBackend> pagingBackend,
+             Optional<StreamingBackends> streamingBackends) {
         Objects.requireNonNull(environment, "environment");
         Objects.requireNonNull(hooks, "hooks");
+        StreamingBackends backendGraph = streamingBackends.orElse(null);
         hooks.registerShutdown(shutdown);
         BlockCollisionShapeResolver shapes =
                 BlockCollisionShapeResolver.fullCubesForNonAir();
@@ -576,11 +1015,30 @@ public final class GameSessionFactory {
         InventoryDebugCommands inventoryDebugCommands =
                 createInventoryDebugCommands(
                         inventoryService, inventoryOwner);
-        LogicalWorldItemService worldItems =
-                new LogicalWorldItemService(
+        SaveIdentity pagingIdentity = restoreSnapshot
+                .map(SaveGameSnapshot::metadata)
+                .map(SaveGameSnapshot.StaticMetadata::saveGameId)
+                .or(() -> newWorldRequest.map(NewWorldRequest::saveGameId))
+                .map(SaveGameId::value)
+                .map(UUID::fromString)
+                .map(SaveIdentity::new)
+                .orElse(null);
+        LogicalWorldItemService worldItems = pagingBackend
+                .map(backend -> new LogicalWorldItemService(
                         mainThreadGuard,
                         GameConfig.Interaction.MAX_LOGICAL_WORLD_ITEMS,
-                        GameConfig.Interaction.WORLD_ITEM_PICKUP_DELAY_TICKS);
+                        GameConfig.Interaction.WORLD_ITEM_PICKUP_DELAY_TICKS,
+                        Objects.requireNonNull(pagingIdentity, "paging identity"),
+                        productionWorldItemPagePolicy(),
+                        backend.durabilityVerifier(),
+                        page -> worldItemPageDescriptor(
+                                Objects.requireNonNull(pagingIdentity), page),
+                        page -> new WorldItemPageCodec().encode(
+                                Objects.requireNonNull(pagingIdentity), page).length))
+                .orElseGet(() -> new LogicalWorldItemService(
+                        mainThreadGuard,
+                        GameConfig.Interaction.MAX_LOGICAL_WORLD_ITEMS,
+                        GameConfig.Interaction.WORLD_ITEM_PICKUP_DELAY_TICKS));
         PhysicalWorldItemSystem physicalWorldItems =
                 new PhysicalWorldItemSystem(
                         worldItems,
@@ -613,6 +1071,8 @@ public final class GameSessionFactory {
                                 ResourceLocation.parse("gaia:missing")),
                         visualRegionDiagnostics);
         ParticleSystem particles = new ParticleSystem();
+        com.gaia.interaction.feedback.TransientBlockVisualSystem transientBlocks =
+                new com.gaia.interaction.feedback.TransientBlockVisualSystem();
         WorldItemVisualTracker worldItemVisuals =
                 new WorldItemVisualTracker(worldItemFaces::resolve);
         VisualFeedbackDiagnostics visualDiagnostics =
@@ -634,10 +1094,10 @@ public final class GameSessionFactory {
                         particles,
                         worldItemVisuals,
                         visualRegions::resolve,
-                        worldItemFaces::resolve,
-                        new com.gaia.interaction.feedback.FirstPersonActionAnimator(),
-                        new com.gaia.interaction.feedback.CameraImpulseController(),
-                        new com.gaia.interaction.feedback.TransientBlockVisualSystem());
+                         worldItemFaces::resolve,
+                         new com.gaia.interaction.feedback.FirstPersonActionAnimator(),
+                         new com.gaia.interaction.feedback.CameraImpulseController(),
+                         transientBlocks);
         Consumer<Throwable> fatalSpawnBarrier =
                 failure -> {
                     throw new IllegalStateException(
@@ -664,8 +1124,14 @@ public final class GameSessionFactory {
                                 ignored -> BlockChangeDecision.ALLOW,
                                 ignored -> {},
                                 ignored -> {}));
-        GaiaBlockRaycastService blockRaycasts =
-                new GaiaBlockRaycastService(blockRaycast, blocks);
+        AtomicReference<SimulationOriginCoordinator> originCoordinatorReference =
+                new AtomicReference<>();
+        GaiaBlockRaycastService blockRaycasts = new GaiaBlockRaycastService(
+                blockRaycast,
+                blocks,
+                () -> Objects.requireNonNull(
+                        originCoordinatorReference.get(),
+                        "simulation origin coordinator").simulationOrigin());
         PlayerBlockTargeting blockTargeting =
                 new PlayerBlockTargeting(
                         blockRaycasts,
@@ -760,10 +1226,51 @@ public final class GameSessionFactory {
                                         blocks,
                                         meshExecutor,
                                         mainThreadGuard),
-                        ChunkMeshManager::close);
+                                         ChunkMeshManager::close);
+        ChunkStreamingPolicy streamingPolicy = backendGraph == null
+                ? null
+                : ChunkStreamingPolicy.productionDefaults();
+        WorldGenerationConfig streamingGenerationConfig = backendGraph == null
+                ? null
+                : configuredGeneration(config);
+        WorldLoader detachedGenerator = backendGraph == null
+                ? null
+                : new WorldLoader(
+                        GaiaWorldGenerator.createVisualRevisionCandidate(),
+                        blocks,
+                        streamingGenerationConfig,
+                        new SafeSpawnSelector(),
+                        meshExecutor);
+        SimulationOrigin zeroSimulation = new SimulationOrigin(new ChunkKey(0, 0));
+        RenderOrigin zeroRender = new RenderOrigin(new ChunkKey(0, 0));
+        SimulationOriginCoordinator originCoordinator =
+                new SimulationOriginCoordinator(
+                        Thread.currentThread(),
+                        zeroSimulation,
+                        zeroRender,
+                        List.of(
+                                (oldSim, nextSim, oldRenderOrigin, nextRenderOrigin) ->
+                                        playerController.prepareOriginRebase(oldSim, nextSim)::commit,
+                                (oldSim, nextSim, oldRenderOrigin, nextRenderOrigin) ->
+                                        physicsWorld.prepareOriginRebase(oldSim, nextSim)::commit,
+                                (oldSim, nextSim, oldRenderOrigin, nextRenderOrigin) ->
+                                        environment.camera().prepareOriginRebase(
+                                                originOffset(oldSim, nextSim))::commit,
+                                (oldSim, nextSim, oldRenderOrigin, nextRenderOrigin) ->
+                                        physicalWorldItems.prepareOriginRebase(
+                                                oldSim, nextSim)::commit,
+                                (oldSim, nextSim, oldRenderOrigin, nextRenderOrigin) ->
+                                        particles.prepareOriginRebase(
+                                                originOffset(oldSim, nextSim))::commit,
+                                (oldSim, nextSim, oldRenderOrigin, nextRenderOrigin) ->
+                                        chunkMeshes.prepareOriginRebase(
+                                                oldRenderOrigin, nextRenderOrigin)::commit));
+        originCoordinatorReference.set(originCoordinator);
 
         shutdown.register(
                 "interaction-feedback", feedback::close);
+        shutdown.register(
+                "logical-world-items", worldItems::close);
         shutdown.register(
                 "physical-world-items", physicalWorldItems::close);
         shutdown.register(
@@ -774,18 +1281,54 @@ public final class GameSessionFactory {
                 "block-break", blockBreak::close);
 
         Optional<WorldLoader> sessionWorldLoader = Optional.empty();
+        Optional<ExecutorService> sessionWorldExecutor = Optional.empty();
         Optional<CompletableFuture<WorldLoadResult>> worldLoad =
                 Optional.empty();
         Set<ChunkKey> meshReadiness = Set.of();
-        long initialFixedTick = 0L;
+        long restoreLatencyNanos = 0L;
+        SessionPersistenceClock persistenceClock =
+                SessionPersistenceClock.restored(0L, 0L);
         SaveGameSnapshot.StaticMetadata persistenceMetadata;
         PendingCameraOrientation cameraOrientation =
                 new PendingCameraOrientation(environment.camera());
         if (restoreSnapshot.isPresent()) {
             SaveGameSnapshot restored = restoreSnapshot.orElseThrow();
-            AtomicLong restoredFixedTick = new AtomicLong(-1L);
+            GlobalPosition restoredGlobal = canonicalGlobalPosition(
+                    restored.player().feetPositionX(),
+                    restored.player().feetPositionY(),
+                    restored.player().feetPositionZ());
+            SimulationOrigin restoredSimulation =
+                    new SimulationOrigin(restoredGlobal.chunkKey());
+            RenderOrigin restoredRender =
+                    new RenderOrigin(restoredGlobal.chunkKey());
+            if (!originCoordinator.initializeParticipants(
+                    restoredSimulation, restoredRender)) {
+                throw new IllegalStateException(
+                        "saved simulation origin could not initialize participants");
+            }
+            SaveGameSnapshot residentRestore = residentLocalRestore(
+                    restored, restoredSimulation, restoredGlobal);
+            StreamedChunkIndex restoredIndex = backendGraph == null
+                    ? null
+                    : backendGraph.chunkStore().readCurrentIndex();
+            if (backendGraph != null) {
+                residentRestore = bootstrapStreamedResidentChunks(
+                        residentRestore,
+                        restoredGlobal.chunkKey(),
+                        Objects.requireNonNull(detachedGenerator),
+                        Objects.requireNonNull(streamingPolicy).simulationRadius(),
+                        backendGraph.chunkStore(),
+                        Objects.requireNonNull(restoredIndex));
+            }
+            Map<ChunkKey, Long> restoredPersistedRevisions =
+                    backendGraph == null
+                            ? Map.of()
+                            : persistedRevisionBindings(
+                                    residentRestore.chunks(),
+                                    Objects.requireNonNull(restoredIndex));
             AtomicReference<Set<ChunkKey>> restoredReadiness =
                     new AtomicReference<>(Set.of());
+            long restoreStarted = System.nanoTime();
             new SessionRestoreCoordinator(
                             world.chunks(),
                             inventoryService,
@@ -795,16 +1338,33 @@ public final class GameSessionFactory {
                             environment.camera(),
                             gameModes,
                             physicalWorldItems,
-                            restoredFixedTick::set,
+                            persistenceClock::restoreAuthoritativeWorldTick,
                             keys -> restoredReadiness.set(Set.copyOf(keys)),
                             cameraOrientation::stage,
-                            stage -> beforeRestoreStage(hooks, stage))
-                    .restore(restored);
-            if (restoredFixedTick.get() != restored.fixedTick()) {
+                            stage -> beforeRestoreStage(hooks, stage),
+                            restoredSnapshot -> world.chunks().restoreCanonical(
+                                    restoredSnapshot.chunks(),
+                                    restoredPersistedRevisions),
+                            restoredSnapshot -> restoredSnapshot.worldItems().completeness()
+                                            == LogicalWorldItemSnapshot.Completeness.PAGED_PARTIAL
+                                    ? pagingBackend
+                                            .map(backend -> backend.restoreFresh(
+                                                    worldItems,
+                                                    Objects.requireNonNull(pagingIdentity),
+                                                    restoredSnapshot.fixedTick()))
+                                            .orElseThrow(() -> new IllegalStateException(
+                                                    "paged restore requires streamed backend"))
+                                    : worldItems.restoreCanonical(
+                                            restoredSnapshot.worldItems()
+                                                    .logicalSnapshot(),
+                                            restoredSnapshot.fixedTick()))
+                    .restore(residentRestore);
+            restoreLatencyNanos = Math.max(
+                    1L, System.nanoTime() - restoreStarted);
+            if (persistenceClock.fixedTick() != restored.fixedTick()) {
                 throw new IllegalStateException(
                         "restore did not preserve the fixed tick");
             }
-            initialFixedTick = restoredFixedTick.get();
             meshReadiness = restoredReadiness.get();
             persistenceMetadata = restored.metadata();
         } else {
@@ -825,6 +1385,7 @@ public final class GameSessionFactory {
                             });
             shutdownBarrier.registerWorldExecutor(
                     shutdown, worldExecutor);
+            sessionWorldExecutor = Optional.of(worldExecutor);
             WorldLoader worldLoader =
                     new WorldLoader(
                             generator,
@@ -839,24 +1400,91 @@ public final class GameSessionFactory {
             sessionWorldLoader = Optional.of(worldLoader);
             worldLoad = Optional.of(createdWorldLoad);
             persistenceMetadata =
-                    newSessionMetadata(
-                            config, worldGenerationConfig, newWorldRequest);
+                     newSessionMetadata(
+                             config, worldGenerationConfig, newWorldRequest);
         }
 
-        return new ProductionSessionRuntime(
-                environment,
+        ChunkStreamingController streamingController = null;
+        ChunkStreamingPipeline streamingPipeline = null;
+        ChunkStreamingMetricsRecorder streamingMetricsRecorder = null;
+        if (backendGraph != null) {
+            ProductionUnloadLifecycle unloadLifecycle =
+                    new ProductionUnloadLifecycle(
+                            persistenceMetadata,
+                            worldItems,
+                            physicalWorldItems,
+                            () -> captureUnloadSessionState(
+                                    inventoryOwner,
+                                    inventoryService,
+                                    playerController,
+                                    environment.camera(),
+                                    gameModes,
+                                    originCoordinator.simulationOrigin()));
+            streamingController = new ChunkStreamingController(
+                    Objects.requireNonNull(streamingPolicy));
+            streamingPipeline = new ChunkStreamingPipeline(
+                    world.chunks(),
+                    streamingPolicy,
+                    mainThreadGuard,
+                    work -> loadStreamingChunk(
+                            work, backendGraph.chunkStore(), persistenceMetadata,
+                            Objects.requireNonNull(detachedGenerator),
+                            Objects.requireNonNull(streamingGenerationConfig)),
+                    work -> {
+                        StreamedChunkUnloadPlan bound = work.plan();
+                        StreamedChunkPayload detachedPayload =
+                                work.plan().chunkCapture().payload();
+                        if (work.plan().voxelModified()
+                                || detachedPayload.persistedRevision() != 0L) {
+                            ChunkGenerationData generatedBase =
+                                    Objects.requireNonNull(detachedGenerator)
+                                            .generateDetached(work.key());
+                            bound = bindGeneratedBaseIdentity(
+                                    work.plan(), generatedBase,
+                                    Objects.requireNonNull(streamingGenerationConfig));
+                        }
+                        StreamedChunkUnloadResult durability =
+                                backendGraph.worldItems().persistUnload(bound);
+                        if (durability.status()
+                                == StreamedChunkUnloadResult.Status.SUCCESS) {
+                            work.markDurablePublication(durability);
+                        }
+                        return ChunkWorkResult.saveSuccess(
+                                work.workId(), work.key(), work.desiredEpoch(),
+                                work.expectedRevision(),
+                                durability);
+                    },
+                    unloadLifecycle);
+            streamingMetricsRecorder = new ChunkStreamingMetricsRecorder(
+                    restoreLatencyNanos);
+        }
+
+        ProductionSessionRuntime runtime = new ProductionSessionRuntime(
+                 environment,
                 inputManager,
-                world,
-                playerManager,
+                 world,
+                 blockWorld,
+                 worldMutations,
+                 playerManager,
                 physicsWorld,
                 playerController,
-                fixedStepClock,
-                chunkMeshes,
+                 fixedStepClock,
+                 chunkMeshes,
+                 meshExecutor,
+                 shutdownBarrier,
+                 sessionWorldExecutor,
+                 streamingController,
+                 streamingPipeline,
+                 backendGraph == null ? null : backendGraph.chunkStore(),
+                 backendGraph == null ? null : backendGraph.worldItems(),
+                 backendGraph == null ? Optional.empty() : backendGraph.saveTarget(),
+                 originCoordinator,
+                 streamingMetricsRecorder,
                 cameraOrientation,
                 sessionWorldLoader,
                 worldLoad,
                 meshReadiness,
-                initialFixedTick,
+                persistenceClock,
                 persistenceMetadata,
                 inventoryOwner,
                 inventoryService,
@@ -872,8 +1500,344 @@ public final class GameSessionFactory {
                 feedback,
                 InteractionBlockState.unblocked(),
                 hudFrames,
-                config.debugHudDefault(),
-                hooks);
+                 config.debugHudDefault(),
+                 hooks);
+        shutdown.register("production-streaming", runtime::shutdownStreaming);
+        return runtime;
+    }
+
+    private static ChunkWorkResult loadStreamingChunk(
+            ChunkStreamingPipeline.DetachedLoadWork work,
+            StreamedChunkStore store,
+            SaveGameSnapshot.StaticMetadata metadata,
+            WorldLoader generator,
+            WorldGenerationConfig generationConfig) {
+        ChunkGenerationData generated = generator.generateDetached(work.key());
+        StreamedChunkStore.ExpectedBase expectedBase = expectedGeneratedBase(
+                metadata, generated, generationConfig);
+        StreamedChunkStore.ReadResult read = store.read(
+                metadata.saveGameId(),
+                work.key(),
+                expectedBase);
+        if (read.status() == StreamedChunkStore.ReadResult.Status.FOUND) {
+            StreamedChunkPayload payload = read.payload().orElseThrow();
+            return ChunkWorkResult.loadSuccess(
+                    work.workId(), work.key(), work.desiredEpoch(),
+                    work.expectedRevision(),
+                    com.overlord.voxel.ChunkStreamingTicket.SourcePreference.LOAD,
+                    new ChunkGenerationData(
+                            payload.key(), payload.worldHeight(),
+                            payload.copyCanonicalVoxels()),
+                    payload.revision());
+        }
+        if (read.status() == StreamedChunkStore.ReadResult.Status.NOT_FOUND) {
+            return ChunkWorkResult.loadSuccess(
+                    work.workId(), work.key(), work.desiredEpoch(),
+                    work.expectedRevision(),
+                    com.overlord.voxel.ChunkStreamingTicket.SourcePreference.GENERATE,
+                    generated);
+        }
+        return ChunkWorkResult.loadFailure(
+                work.workId(), work.key(), work.desiredEpoch(),
+                work.expectedRevision(),
+                new ChunkStreamingDiagnostic(
+                        1L, work.key(), ChunkWorkResult.Kind.LOAD_GENERATE,
+                        "chunk-streaming.persisted-load-failed",
+                        "persisted Chunk validation failed closed"));
+    }
+
+    static StreamedChunkUnloadPlan bindGeneratedBaseIdentity(
+            StreamedChunkUnloadPlan plan,
+            ChunkGenerationData generatedBase,
+            WorldGenerationConfig generationConfig) {
+        StreamedChunkUnloadPlan checkedPlan = Objects.requireNonNull(plan, "plan");
+        ChunkGenerationData checkedBase = Objects.requireNonNull(
+                generatedBase, "generatedBase");
+        WorldGenerationConfig checkedConfig = Objects.requireNonNull(
+                generationConfig, "generationConfig");
+        StreamedChunkStore.ExactChunkCapture capture = checkedPlan.chunkCapture();
+        StreamedChunkPayload payload = capture.payload();
+        if (!payload.key().equals(checkedBase.key())) {
+            throw new IllegalArgumentException(
+                    "generated base key does not match unload capture");
+        }
+        if (payload.worldHeight() != checkedBase.worldHeight()) {
+            throw new IllegalArgumentException(
+                    "generated base height does not match unload capture");
+        }
+        if (!payload.generatorVersion().equals(
+                "gaia-v" + checkedConfig.algorithmVersion())) {
+            throw new IllegalArgumentException(
+                    "unload generator version does not match generation config");
+        }
+        boolean voxelModified = !java.util.Arrays.equals(
+                payload.copyCanonicalVoxels(), checkedBase.copyBlocks());
+        StreamedChunkPayload rebound = new StreamedChunkPayload(
+                payload.saveGameId(),
+                payload.key(),
+                payload.generatorVersion(),
+                WorldGenerationHasher.hashChunk(checkedConfig, checkedBase),
+                payload.revision(),
+                payload.persistedRevision(),
+                payload.persistenceRequired(),
+                payload.voxelModified(),
+                payload.worldHeight(),
+                payload.copyCanonicalVoxels(),
+                payload.extensions());
+        return new StreamedChunkUnloadPlan(
+                new StreamedChunkStore.ExactChunkCapture(
+                        rebound, capture.stillCurrent()),
+                checkedPlan.worldItems(),
+                checkedPlan.requiredGlobals(),
+                voxelModified);
+    }
+
+    static boolean requiresStreamingPersistence(
+            StreamedChunkUnloadPlan plan,
+            ChunkGenerationData generatedBase) {
+        StreamedChunkUnloadPlan checkedPlan = Objects.requireNonNull(plan, "plan");
+        ChunkGenerationData checkedBase = Objects.requireNonNull(
+                generatedBase, "generatedBase");
+        StreamedChunkPayload payload = checkedPlan.chunkCapture().payload();
+        if (!payload.key().equals(checkedBase.key())
+                || payload.worldHeight() != checkedBase.worldHeight()) {
+            throw new IllegalArgumentException(
+                    "generated base does not match unload capture");
+        }
+        return checkedPlan.worldItems().isPresent()
+                || !checkedPlan.requiredGlobals().isEmpty()
+                || !java.util.Arrays.equals(
+                        payload.copyCanonicalVoxels(),
+                        checkedBase.copyBlocks());
+    }
+
+    static StreamedChunkStore.ExpectedBase expectedGeneratedBase(
+            SaveGameSnapshot.StaticMetadata metadata,
+            ChunkGenerationData generated,
+            WorldGenerationConfig generationConfig) {
+        SaveGameSnapshot.StaticMetadata checkedMetadata = Objects.requireNonNull(
+                metadata, "metadata");
+        ChunkGenerationData checkedGenerated = Objects.requireNonNull(
+                generated, "generated");
+        WorldGenerationConfig checkedConfig = Objects.requireNonNull(
+                generationConfig, "generationConfig");
+        String generatorVersion = "gaia-v" + checkedConfig.algorithmVersion();
+        String generatorFingerprint = generationFingerprint(checkedConfig);
+        if (checkedMetadata.worldSeed() != checkedConfig.seed()
+                || checkedMetadata.chunkRadius() != checkedConfig.chunkRadius()
+                || !checkedMetadata.generatorVersion().equals(generatorVersion)
+                || !checkedMetadata.generatorConfigFingerprint().equals(
+                        generatorFingerprint)) {
+            throw new IllegalArgumentException(
+                    "save metadata does not match streaming generation config");
+        }
+        return new StreamedChunkStore.ExpectedBase(
+                generatorVersion,
+                WorldGenerationHasher.hashChunk(
+                        checkedConfig, checkedGenerated));
+    }
+
+    private static String sha256(byte[] bytes) {
+        try {
+            return HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
+    }
+
+    private static final class ProductionUnloadLifecycle
+            implements ChunkStreamingPipeline.UnloadLifecycle {
+        private final SaveGameSnapshot.StaticMetadata metadata;
+        private final LogicalWorldItemService logical;
+        private final PhysicalWorldItemSystem physical;
+        private final UnloadSessionCapture sessionCapture;
+        private final Map<StreamedChunkUnloadPlan, LinkedUnload> linked =
+                new IdentityHashMap<>();
+
+        private ProductionUnloadLifecycle(
+                SaveGameSnapshot.StaticMetadata metadata,
+                LogicalWorldItemService logical,
+                PhysicalWorldItemSystem physical,
+                UnloadSessionCapture sessionCapture) {
+            this.metadata = Objects.requireNonNull(metadata, "metadata");
+            this.logical = Objects.requireNonNull(logical, "logical");
+            this.physical = Objects.requireNonNull(physical, "physical");
+            this.sessionCapture = Objects.requireNonNull(
+                    sessionCapture, "sessionCapture");
+        }
+
+        @Override
+        public ChunkStreamingPipeline.PreparedUnload prepare(
+                ChunkUnloadPreparation repositoryPreparation) {
+            ChunkSnapshot capture = repositoryPreparation.capture().orElseThrow();
+            Map<com.overlord.worlditem.api.WorldItemId, Long> revisions =
+                    logical.activeRevisionsInChunk(capture.key());
+            WorldItemHibernateResult preparedItems = null;
+            WorldItemHibernateTicket preparedTicket = null;
+            Optional<WorldItemPersistencePlan> worldItemPlan = Optional.empty();
+            List<StreamedGlobalExtensionMutation> globals = List.of();
+            try {
+                if (!revisions.isEmpty()) {
+                    UnloadSessionState session = sessionCapture.capture();
+                    preparedItems = logical.prepareHibernate(capture.key(), revisions);
+                    if (preparedItems.status()
+                            != WorldItemHibernateResult.Status.PREPARED) {
+                        throw new IllegalStateException(
+                                "WorldItem hibernation preparation failed: "
+                                        + preparedItems.status());
+                    }
+                    preparedTicket = preparedItems.ticket().orElseThrow();
+                    WorldItemPersistencePlan plan =
+                            preparedItems.persistencePlan().orElseThrow();
+                    worldItemPlan = Optional.of(plan);
+                    StreamedSessionCheckpoint placeholder =
+                            new StreamedSessionCheckpoint(
+                                    metadata.saveGameId(),
+                                    plan.intendedCheckpoint().worldTick(),
+                                    plan.intendedCheckpoint().checkpointRevision(),
+                                    "00".repeat(32),
+                                    0L,
+                                    Instant.now(),
+                                    session.player(),
+                                    session.inventory());
+                    StreamedGlobalExtension extension = new StreamedGlobalExtension(
+                            SaveSectionId.STREAMED_SESSION_CHECKPOINT,
+                            StreamedSessionCheckpointCodec.CODEC_VERSION,
+                            true,
+                            Optional.empty(),
+                            new StreamedSessionCheckpointCodec().encode(placeholder));
+                    globals = List.of(
+                            new StreamedGlobalExtensionMutation.Upsert(extension));
+                }
+                StreamedChunkPayload payload = new StreamedChunkPayload(
+                        metadata.saveGameId(),
+                        capture.key(),
+                        metadata.generatorVersion(),
+                        sha256(capture.copyBlocks()),
+                        capture.revision(),
+                        repositoryPreparation.persistedRevision(),
+                        true,
+                        true,
+                        capture.worldHeight(),
+                        capture.copyBlocks(),
+                        List.of());
+                StreamedChunkUnloadPlan plan = new StreamedChunkUnloadPlan(
+                        new StreamedChunkStore.ExactChunkCapture(
+                                payload, repositoryPreparation.stillCurrent()),
+                        worldItemPlan,
+                        globals,
+                        repositoryPreparation.voxelModified());
+                if (preparedItems != null) {
+                    linked.put(plan, new LinkedUnload(
+                            preparedTicket,
+                            preparedItems.persistenceTicket().orElseThrow()));
+                    preparedTicket = null;
+                }
+                return new ChunkStreamingPipeline.PreparedUnload(
+                        plan, capture.revision());
+            } catch (RuntimeException | Error failure) {
+                if (preparedTicket != null) {
+                    try {
+                        logical.cancelHibernate(preparedTicket);
+                    } catch (RuntimeException | Error cancellationFailure) {
+                        if (failure != cancellationFailure) {
+                            failure.addSuppressed(cancellationFailure);
+                        }
+                    }
+                }
+                throw failure;
+            }
+        }
+
+        @Override
+        public boolean commit(
+                ChunkStreamingPipeline.PreparedUnload prepared,
+                StreamedChunkUnloadResult durability) {
+            LinkedUnload tickets = linked.get(prepared.plan());
+            if (tickets == null) {
+                return true;
+            }
+            WorldItemDurableProof proof = durability.durableProof().orElseThrow();
+            WorldItemHibernateResult result = physical.commitLinkedHibernate(
+                    logical,
+                    tickets.hibernateTicket(),
+                    tickets.persistenceTicket(),
+                    proof);
+            if (result.status() != WorldItemHibernateResult.Status.COMMITTED) {
+                return false;
+            }
+            linked.remove(prepared.plan());
+            return true;
+        }
+
+        @Override
+        public void cancel(ChunkStreamingPipeline.PreparedUnload prepared) {
+            LinkedUnload tickets = linked.get(prepared.plan());
+            if (tickets != null) {
+                WorldItemHibernateResult canceled =
+                        logical.cancelHibernate(tickets.hibernateTicket());
+                if (canceled.status()
+                        != WorldItemHibernateResult.Status.CANCELED) {
+                    throw new IllegalStateException(
+                            "linked WorldItem hibernation cancel failed: "
+                                    + canceled.status());
+                }
+                linked.remove(prepared.plan(), tickets);
+            }
+        }
+
+        private record LinkedUnload(
+                WorldItemHibernateTicket hibernateTicket,
+                WorldItemPersistenceTicket persistenceTicket) {}
+    }
+
+    @FunctionalInterface
+    interface UnloadSessionCapture {
+        UnloadSessionState capture();
+    }
+
+    record UnloadSessionState(
+            PlayerSaveSnapshot player,
+            InventorySaveSnapshot inventory) {
+        UnloadSessionState {
+            Objects.requireNonNull(player, "player");
+            Objects.requireNonNull(inventory, "inventory");
+        }
+    }
+
+    private static UnloadSessionState captureUnloadSessionState(
+            EntityRef inventoryOwner,
+            BodyInventoryService inventoryService,
+            PlayerController playerController,
+            Camera camera,
+            GameModeManager gameModes,
+            SimulationOrigin simulationOrigin) {
+        Objects.requireNonNull(inventoryOwner, "inventoryOwner");
+        Objects.requireNonNull(inventoryService, "inventoryService");
+        Objects.requireNonNull(playerController, "playerController");
+        Objects.requireNonNull(camera, "camera");
+        Objects.requireNonNull(gameModes, "gameModes");
+        Objects.requireNonNull(simulationOrigin, "simulationOrigin");
+
+        InventorySaveSnapshot inventory = new InventorySaveSnapshot(
+                inventoryService.canonicalSnapshot(inventoryOwner));
+        Vector3f feet = playerController.body().position(new Vector3f());
+        GlobalPosition globalFeet = simulationOrigin.toGlobal(feet);
+        Vector3f velocity = playerController.body().linearVelocity(new Vector3f());
+        PlayerSaveSnapshot player = new PlayerSaveSnapshot(
+                inventoryOwner,
+                globalFeet.chunkKey().worldOriginX() + globalFeet.localX(),
+                globalFeet.y(),
+                globalFeet.chunkKey().worldOriginZ() + globalFeet.localZ(),
+                velocity.x,
+                velocity.y,
+                velocity.z,
+                camera.getYaw(),
+                camera.getPitch(),
+                gameModes.mode(),
+                playerController.isNoclip());
+        return new UnloadSessionState(player, inventory);
     }
 
     static SessionSaveCaptureResult captureSave(
@@ -898,7 +1862,8 @@ public final class GameSessionFactory {
                 playerController,
                 camera,
                 gameModes,
-                SessionPersistenceClock.restored(0L, 0L));
+                SessionPersistenceClock.restored(0L, 0L),
+                new SimulationOrigin(new ChunkKey(0, 0)));
     }
 
     private static SessionSaveCaptureResult captureSave(
@@ -912,7 +1877,8 @@ public final class GameSessionFactory {
             PlayerController playerController,
             Camera camera,
             GameModeManager gameModes,
-            SessionPersistenceClock captureAuthority) {
+            SessionPersistenceClock captureAuthority,
+            SimulationOrigin simulationOrigin) {
         Objects.requireNonNull(metadata, "metadata");
         Objects.requireNonNull(persistenceRevision, "persistenceRevision");
         Objects.requireNonNull(fixedTick, "fixedTick");
@@ -924,6 +1890,7 @@ public final class GameSessionFactory {
         Objects.requireNonNull(camera, "camera");
         Objects.requireNonNull(gameModes, "gameModes");
         Objects.requireNonNull(captureAuthority, "captureAuthority");
+        Objects.requireNonNull(simulationOrigin, "simulationOrigin");
 
         long revisionBefore = requireNonnegativeRevision(persistenceRevision.getAsLong());
         long fixedTickBefore = requireNonnegativeFixedTick(fixedTick.getAsLong());
@@ -948,14 +1915,17 @@ public final class GameSessionFactory {
 
         Vector3f feet =
                 playerController.body().position(new Vector3f());
+        GlobalPosition globalFeet = simulationOrigin.toGlobal(feet);
         Vector3f velocity =
                 playerController.body().linearVelocity(new Vector3f());
         PlayerSaveSnapshot player =
                 new PlayerSaveSnapshot(
                         inventoryOwner,
-                        feet.x,
-                        feet.y,
-                        feet.z,
+                        globalFeet.chunkKey().worldOriginX()
+                                + globalFeet.localX(),
+                        globalFeet.y(),
+                        globalFeet.chunkKey().worldOriginZ()
+                                + globalFeet.localZ(),
                         velocity.x,
                         velocity.y,
                         velocity.z,
@@ -1230,6 +2200,15 @@ public final class GameSessionFactory {
 
         default void readyPublished() {}
 
+        default void originInitialized(List<String> trace) {}
+
+        default void playingFrameTrace(List<String> trace) {}
+
+        default void shutdownTrace(
+                List<String> trace, int retainedWork, int liveStreamingWorkers) {}
+
+        default void ownedWorkerTerminated(String lane) {}
+
         default void workerCreated(Thread worker) {}
     }
 
@@ -1384,6 +2363,12 @@ public final class GameSessionFactory {
         private BodyInventoryService inventory;
         private EntityRef inventoryOwner;
         private LogicalWorldItemService worldItems;
+        private List<String> lastPlayingFrameTrace = List.of();
+        private List<String> originInitializationTrace = List.of();
+        private List<String> lastShutdownTrace = List.of();
+        private int retainedStreamingWorkCount;
+        private int liveStreamingWorkerCount;
+        private List<String> ownedWorkerTerminationTrace = List.of();
 
         private ProductionInstrumentation(
                 ProductionFailurePoint failurePoint) {
@@ -1458,6 +2443,38 @@ public final class GameSessionFactory {
         @Override
         public void readyPublished() {
             readyPublications++;
+            if (!originInitializationTrace.isEmpty()
+                    && !originInitializationTrace.contains("publish-ready")) {
+                ArrayList<String> completed = new ArrayList<>(
+                        originInitializationTrace);
+                completed.add("publish-ready");
+                originInitializationTrace = List.copyOf(completed);
+            }
+        }
+
+        @Override
+        public void originInitialized(List<String> trace) {
+            originInitializationTrace = List.copyOf(trace);
+        }
+
+        @Override
+        public void playingFrameTrace(List<String> trace) {
+            lastPlayingFrameTrace = List.copyOf(trace);
+        }
+
+        @Override
+        public void shutdownTrace(
+                List<String> trace, int retainedWork, int liveStreamingWorkers) {
+            lastShutdownTrace = List.copyOf(trace);
+            retainedStreamingWorkCount = retainedWork;
+            liveStreamingWorkerCount = liveStreamingWorkers;
+        }
+
+        @Override
+        public void ownedWorkerTerminated(String lane) {
+            ArrayList<String> updated = new ArrayList<>(ownedWorkerTerminationTrace);
+            updated.add(Objects.requireNonNull(lane, "lane"));
+            ownedWorkerTerminationTrace = List.copyOf(updated);
         }
 
         @Override
@@ -1689,6 +2706,11 @@ public final class GameSessionFactory {
         private final GameSessionFactory factory;
 
         private ProductionSessionTestAccess() {
+            this(null);
+        }
+
+        private ProductionSessionTestAccess(
+                StreamedWorldItemPageBackend pagingBackend) {
             HeadlessProductionEnvironment environment =
                     new HeadlessProductionEnvironment();
             instrumentation = new ProductionInstrumentation();
@@ -1696,13 +2718,46 @@ public final class GameSessionFactory {
                     MainThreadGuard.captureCurrentThread();
             ProductionTestAssets assets =
                     ProductionTestAssetsHolder.ASSETS;
-            factory = new GameSessionFactory(
-                    environment,
-                    new InputManager(guard),
-                    guard,
-                    assets.catalog(),
-                    assets.uiAssets(),
-                    instrumentation);
+            InputManager inputManager = new InputManager(guard);
+            if (pagingBackend == null) {
+                Path root = Path.of(
+                        System.getProperty("java.io.tmpdir"),
+                        "gaia-task11-streaming-" + UUID.randomUUID());
+                try {
+                    Files.createDirectories(root);
+                } catch (java.io.IOException unavailable) {
+                    throw new IllegalStateException(
+                            "Could not create the production streaming test root",
+                            unavailable);
+                }
+                Function<SaveGameId, StreamingBackends> combined = id -> {
+                    StreamedChunkStore store = new StreamedChunkStore(
+                            root,
+                            id,
+                            new StreamedChunkCodec(),
+                            new StreamedChunkIndexCodec(),
+                            new JdkSaveFileOperations());
+                    return new StreamingBackends(
+                            store, new StreamedWorldItemPageBackend(store));
+                };
+                factory = new GameSessionFactory(
+                        environment,
+                        inputManager,
+                        guard,
+                        assets.catalog(),
+                        assets.uiAssets(),
+                        instrumentation,
+                        combined);
+            } else {
+                factory = new GameSessionFactory(
+                        environment,
+                        inputManager,
+                        guard,
+                        assets.catalog(),
+                        assets.uiAssets(),
+                        instrumentation,
+                        (WorldItemPagingBackendFactory) id -> pagingBackend);
+            }
         }
 
         GameSessionFactory factory() {
@@ -1737,10 +2792,142 @@ public final class GameSessionFactory {
             return instrumentation.worldItemPendingReservations();
         }
 
+        int worldItemLiveMetadataCount() {
+            return instrumentation.worldItems.liveMetadata().size();
+        }
+
+        com.overlord.worlditem.api.WorldItemPagingMetrics worldItemPagingMetrics() {
+            return instrumentation.worldItems.pagingMetrics();
+        }
+
         int liveWorkerCount() {
-            return (int) instrumentation.workers.stream()
-                    .filter(Thread::isAlive)
-                    .count();
+            return Math.addExact(
+                    instrumentation.liveWorkerCount(),
+                    instrumentation.liveStreamingWorkerCount);
+        }
+
+        List<String> lastPlayingFrameTrace() {
+            return List.copyOf(instrumentation.lastPlayingFrameTrace);
+        }
+
+        List<String> originInitializationTrace() {
+            return List.copyOf(instrumentation.originInitializationTrace);
+        }
+
+        List<String> lastShutdownTrace() {
+            return List.copyOf(instrumentation.lastShutdownTrace);
+        }
+
+        int retainedStreamingWorkCount() {
+            return instrumentation.retainedStreamingWorkCount;
+        }
+
+        List<String> ownedWorkerTerminationTrace() {
+            return List.copyOf(instrumentation.ownedWorkerTerminationTrace);
+        }
+
+        void injectShutdownFailures(
+                GameSession session,
+                RuntimeException saveQuiescenceFailure,
+                RuntimeException meshCloseFailure) {
+            if (!(Objects.requireNonNull(session, "session")
+                    instanceof OwnedGameSession owned)
+                    || !(owned.runtime instanceof ProductionSessionRuntime runtime)) {
+                throw new IllegalArgumentException(
+                        "session is not an actual production runtime");
+            }
+            runtime.injectedSaveQuiescenceFailure = Objects.requireNonNull(
+                    saveQuiescenceFailure, "saveQuiescenceFailure");
+            runtime.injectedMeshCloseFailure = Objects.requireNonNull(
+                    meshCloseFailure, "meshCloseFailure");
+        }
+
+        void injectActualBlockedMeshWorker(
+                GameSession session,
+                CountDownLatch started,
+                CountDownLatch terminated) {
+            if (!(Objects.requireNonNull(session, "session")
+                    instanceof OwnedGameSession owned)
+                    || !(owned.runtime instanceof ProductionSessionRuntime runtime)) {
+                throw new IllegalArgumentException(
+                        "session is not an actual production runtime");
+            }
+            CountDownLatch checkedStarted = Objects.requireNonNull(
+                    started, "started");
+            CountDownLatch checkedTerminated = Objects.requireNonNull(
+                    terminated, "terminated");
+            runtime.meshExecutor.execute(() -> {
+                checkedStarted.countDown();
+                try {
+                    new CountDownLatch(1).await();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    checkedTerminated.countDown();
+                }
+            });
+        }
+
+        void injectRetryableMeshFailure(GameSession session, ChunkKey key) {
+            if (!(Objects.requireNonNull(session, "session")
+                    instanceof OwnedGameSession owned)
+                    || !(owned.runtime instanceof ProductionSessionRuntime runtime)) {
+                throw new IllegalArgumentException(
+                        "session is not an actual production runtime");
+            }
+            ChunkKey checkedKey = Objects.requireNonNull(key, "key");
+            int worldX = checkedKey.worldOriginX();
+            int worldZ = checkedKey.worldOriginZ();
+            ResourceLocation observed = runtime.blockWorld.blockAt(worldX, 0, worldZ);
+            ResourceLocation air = ResourceLocation.parse("gaia:air");
+            ResourceLocation replacement = observed.equals(air)
+                    ? ResourceLocation.parse("gaia:stone")
+                    : air;
+            BlockChangeResult mutation = runtime.worldMutations.changeBlock(
+                    new BlockChangeRequest(
+                            new GaiaInteractionContext(
+                                    runtime.inventoryOwner,
+                                    runtime.inventoryService
+                                            .viewModel(runtime.inventoryOwner)
+                                            .orElseThrow()
+                                            .activeSlot(),
+                                    InteractionAction.PRIMARY,
+                                    runtime.persistenceClock.fixedTick(),
+                                    0L),
+                            worldX,
+                            0,
+                            worldZ,
+                            observed,
+                            replacement));
+            if (mutation.status() != BlockChangeResult.Status.APPLIED) {
+                throw new IllegalStateException(
+                        "test Chunk could not be dirtied: " + mutation.status());
+            }
+            var claimed = runtime.world.chunks().claimMeshing(checkedKey)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "test Chunk did not become a meshing candidate"));
+            try {
+                var failureMethod = ChunkRepository.class.getDeclaredMethod(
+                        "markMeshingFailureIfCurrent",
+                        ChunkKey.class,
+                        long.class,
+                        Throwable.class);
+                failureMethod.setAccessible(true);
+                boolean installed = (boolean) failureMethod.invoke(
+                        runtime.world.chunks(),
+                        checkedKey,
+                        claimed.center().revision(),
+                        new IllegalStateException(
+                                "injected mesh-only retry failure"));
+                if (!installed) {
+                    throw new IllegalStateException(
+                            "test Chunk mesh failure was not installed");
+                }
+            } catch (ReflectiveOperationException reflectionFailure) {
+                throw new IllegalStateException(
+                        "could not inject a retryable mesh failure",
+                        reflectionFailure);
+            }
         }
 
         int authorizationEntryCount(GameSession session) {
@@ -1755,6 +2942,12 @@ public final class GameSessionFactory {
 
     static ProductionSessionTestAccess productionSessionTestAccess() {
         return new ProductionSessionTestAccess();
+    }
+
+    static ProductionSessionTestAccess productionSessionTestAccess(
+            StreamedWorldItemPageBackend pagingBackend) {
+        return new ProductionSessionTestAccess(
+                Objects.requireNonNull(pagingBackend, "pagingBackend"));
     }
 
     private record ProductionTestAssets(
@@ -1899,6 +3092,68 @@ public final class GameSessionFactory {
                 ShutdownCoordinator shutdown);
     }
 
+    private static WorldItemPageCachePolicy productionWorldItemPagePolicy() {
+        return new WorldItemPageCachePolicy(
+                GameConfig.Interaction.MAX_LOGICAL_WORLD_ITEMS,
+                WorldItemPageCachePolicy.MAX_DECODED_PAGES,
+                WorldItemPageCachePolicy.MAX_DECODED_PAGE_BYTES,
+                WorldItemPageCachePolicy.MAX_PAGING_TICKETS,
+                WorldItemPageCachePolicy.MAX_DIRTY_ENTRIES,
+                WorldItemPageCachePolicy.MAX_DIRTY_CANDIDATE_BYTES,
+                WorldItemPageCachePolicy.MAX_CLEANUP_INTENTS,
+                WorldItemPageCachePolicy.MAX_CLEANUP_INTENT_BYTES);
+    }
+
+    private static WorldItemPageDescriptor worldItemPageDescriptor(
+            SaveIdentity identity,
+            com.overlord.worlditem.api.WorldItemPageSnapshot page) {
+        byte[] bytes = new WorldItemPageCodec().encode(identity, page);
+        try {
+            String hash = HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(bytes));
+            return new WorldItemPageDescriptor(
+                    page.chunkKey(),
+                    page.pageRevision(),
+                    hash,
+                    page.entries().size(),
+                    page.entries().size());
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
+    }
+
+    @FunctionalInterface
+    public interface WorldItemPagingBackendFactory {
+        StreamedWorldItemPageBackend open(SaveGameId saveGameId);
+    }
+
+    @FunctionalInterface
+    public interface StreamingBackendFactory {
+        StreamingBackends open(SaveGameId saveGameId);
+    }
+
+    public record StreamingBackends(
+            StreamedChunkStore chunkStore,
+            StreamedWorldItemPageBackend worldItems,
+            Optional<com.gaia.save.session.SaveCoordinator.SaveTarget> saveTarget) {
+        public StreamingBackends(
+                StreamedChunkStore chunkStore,
+                StreamedWorldItemPageBackend worldItems) {
+            this(chunkStore, worldItems, Optional.empty());
+        }
+
+        public StreamingBackends {
+            Objects.requireNonNull(chunkStore, "chunkStore");
+            Objects.requireNonNull(worldItems, "worldItems");
+            saveTarget = Objects.requireNonNull(saveTarget, "saveTarget");
+        }
+    }
+
+    private static StreamingBackends requireStreamingBackends(
+            StreamingBackends backends) {
+        return Objects.requireNonNull(backends, "streaming backend graph");
+    }
+
     interface SessionRuntime {
         boolean pollLoad();
 
@@ -1909,10 +3164,19 @@ public final class GameSessionFactory {
 
         GameSessionFrame capturePaused();
 
+        default boolean retryChunkStreaming(ChunkKey key) {
+            Objects.requireNonNull(key, "key");
+            return false;
+        }
+
         default SessionSaveCaptureResult captureSave() {
             throw new UnsupportedOperationException(
                     "This runtime does not provide persistence capture");
         }
+
+        default void prepareSaveCapture() {}
+
+        default void finishSaveCapture() {}
 
         default void markSaved(SessionPersistenceRevision revision) {
             throw new UnsupportedOperationException(
@@ -1921,6 +3185,32 @@ public final class GameSessionFactory {
 
         default long persistenceRevision() {
             return -1L;
+        }
+
+        default Optional<WorldItemPersistencePlan> prepareWorldItemPersistence() {
+            return Optional.empty();
+        }
+
+        default void commitWorldItemPersistence(WorldItemDurableProof proof) {
+            throw new UnsupportedOperationException(
+                    "This runtime has no paged WorldItem authority");
+        }
+
+        default void cancelWorldItemPersistence() {}
+
+        default List<SaveCoordinator.PreparedDirtyChunkCapture> preparedDirtyChunks() {
+            return List.of();
+        }
+
+        default void commitDirtyChunkPersistence() {}
+
+        default Optional<com.gaia.save.session.SaveCoordinator.SaveTarget>
+                streamedSaveTarget() {
+            return Optional.empty();
+        }
+
+        default Optional<ChunkSnapshot> captureWorldItemChunk(ChunkKey key) {
+            return Optional.empty();
         }
 
         void discardGameplayEligibility();
@@ -1998,6 +3288,13 @@ public final class GameSessionFactory {
         }
 
         @Override
+        public boolean retryChunkStreaming(ChunkKey key) {
+            requireOwnerThread("retry chunk streaming");
+            requireReady("retry chunk streaming");
+            return runtime.retryChunkStreaming(Objects.requireNonNull(key, "key"));
+        }
+
+        @Override
         public SessionSaveCaptureResult captureSave() {
             requireOwnerThread("capture save");
             requireReady("capture save");
@@ -2024,6 +3321,20 @@ public final class GameSessionFactory {
             lastCapturedRevision = revision;
             latestCapturedRevision = captured;
             return result;
+        }
+
+        @Override
+        public void prepareSaveCapture() {
+            requireOwnerThread("prepare save capture");
+            requireReady("prepare save capture");
+            runtime.prepareSaveCapture();
+        }
+
+        @Override
+        public void finishSaveCapture() {
+            requireOwnerThread("finish save capture");
+            requireReady("finish save capture");
+            runtime.finishSaveCapture();
         }
 
         @Override
@@ -2062,6 +3373,58 @@ public final class GameSessionFactory {
                 currentRevision = lastCapturedRevision;
             }
             return currentRevision != lastSavedRevision;
+        }
+
+        @Override
+        public Optional<WorldItemPersistencePlan> prepareWorldItemPersistence() {
+            requireOwnerThread("prepare world-item persistence");
+            requireReady("prepare world-item persistence");
+            return runtime.prepareWorldItemPersistence();
+        }
+
+        @Override
+        public void commitWorldItemPersistence(WorldItemDurableProof proof) {
+            requireOwnerThread("commit world-item persistence");
+            requireReady("commit world-item persistence");
+            runtime.commitWorldItemPersistence(
+                    Objects.requireNonNull(proof, "proof"));
+        }
+
+        @Override
+        public void cancelWorldItemPersistence() {
+            requireOwnerThread("cancel world-item persistence");
+            requireReady("cancel world-item persistence");
+            runtime.cancelWorldItemPersistence();
+        }
+
+        @Override
+        public List<SaveCoordinator.PreparedDirtyChunkCapture> preparedDirtyChunks() {
+            requireOwnerThread("capture prepared dirty Chunks");
+            requireReady("capture prepared dirty Chunks");
+            return runtime.preparedDirtyChunks();
+        }
+
+        @Override
+        public void commitDirtyChunkPersistence() {
+            requireOwnerThread("commit dirty Chunk persistence");
+            requireReady("commit dirty Chunk persistence");
+            runtime.commitDirtyChunkPersistence();
+        }
+
+        @Override
+        public Optional<com.gaia.save.session.SaveCoordinator.SaveTarget>
+                streamedSaveTarget() {
+            requireOwnerThread("read streamed save target");
+            requireReady("read streamed save target");
+            return runtime.streamedSaveTarget();
+        }
+
+        @Override
+        public Optional<ChunkSnapshot> captureWorldItemChunk(ChunkKey key) {
+            requireOwnerThread("capture world-item Chunk");
+            requireReady("capture world-item Chunk");
+            return runtime.captureWorldItemChunk(
+                    Objects.requireNonNull(key, "key"));
         }
 
         private int authorizationEntryCount() {
@@ -2114,14 +3477,29 @@ public final class GameSessionFactory {
 
     private static final class ProductionSessionRuntime
             implements SessionRuntime {
+        private static final Duration STREAMING_DURABILITY_TIMEOUT =
+                Duration.ofMinutes(5L);
         private final ProductionEnvironment environment;
         private final InputManager inputManager;
         private final World world;
+        private final GaiaBlockWorldAccess blockWorld;
+        private final DefaultWorldMutationService worldMutations;
         private final PlayerManager playerManager;
         private final PhysicsWorld physicsWorld;
         private final PlayerController playerController;
         private final FixedStepClock fixedStepClock;
         private final ChunkMeshManager chunkMeshes;
+        private final ExecutorService meshExecutor;
+        private final SessionShutdownBarrier shutdownBarrier;
+        private final Optional<ExecutorService> worldExecutor;
+        private final ChunkStreamingController streamingController;
+        private final ChunkStreamingPipeline streamingPipeline;
+        private final StreamedChunkStore streamedChunkStore;
+        private final StreamedWorldItemPageBackend streamedWorldItems;
+        private final Optional<com.gaia.save.session.SaveCoordinator.SaveTarget>
+                streamedSaveTarget;
+        private final SimulationOriginCoordinator originCoordinator;
+        private final ChunkStreamingMetricsRecorder streamingMetricsRecorder;
         private final PendingCameraOrientation cameraOrientation;
         private final Optional<WorldLoader> worldLoader;
         private final Optional<CompletableFuture<WorldLoadResult>> worldLoad;
@@ -2151,24 +3529,44 @@ public final class GameSessionFactory {
         private Set<ChunkKey> meshReadiness;
         private final SessionPersistenceClock persistenceClock;
         private long savedPersistenceRevision = -1L;
+        private WorldItemPersistenceTicket worldItemPersistenceTicket;
         private boolean hasAdvancedFrame;
         private boolean debugHudDefaultPending;
         private GameSessionFrame lastFrame;
+        private ChunkStreamingMetrics streamingMetrics = ChunkStreamingMetrics.empty();
+        private boolean streamingAdmissionsOpen = true;
+        private boolean saveCapturePrepared;
+        private List<PreparedDirtyChunk> preparedDirtyChunks = List.of();
+        private RuntimeException injectedSaveQuiescenceFailure;
+        private RuntimeException injectedMeshCloseFailure;
 
         private ProductionSessionRuntime(
                 ProductionEnvironment environment,
                 InputManager inputManager,
                 World world,
+                GaiaBlockWorldAccess blockWorld,
+                DefaultWorldMutationService worldMutations,
                 PlayerManager playerManager,
                 PhysicsWorld physicsWorld,
                 PlayerController playerController,
                 FixedStepClock fixedStepClock,
                 ChunkMeshManager chunkMeshes,
+                ExecutorService meshExecutor,
+                SessionShutdownBarrier shutdownBarrier,
+                Optional<ExecutorService> worldExecutor,
+                ChunkStreamingController streamingController,
+                ChunkStreamingPipeline streamingPipeline,
+                StreamedChunkStore streamedChunkStore,
+                StreamedWorldItemPageBackend streamedWorldItems,
+                Optional<com.gaia.save.session.SaveCoordinator.SaveTarget>
+                        streamedSaveTarget,
+                SimulationOriginCoordinator originCoordinator,
+                ChunkStreamingMetricsRecorder streamingMetricsRecorder,
                 PendingCameraOrientation cameraOrientation,
                 Optional<WorldLoader> worldLoader,
                 Optional<CompletableFuture<WorldLoadResult>> worldLoad,
                 Set<ChunkKey> meshReadiness,
-                long initialFixedTick,
+                SessionPersistenceClock persistenceClock,
                 SaveGameSnapshot.StaticMetadata persistenceMetadata,
                 EntityRef inventoryOwner,
                 BodyInventoryService inventoryService,
@@ -2190,11 +3588,29 @@ public final class GameSessionFactory {
                     environment, "environment");
             this.inputManager = inputManager;
             this.world = world;
+            this.blockWorld = Objects.requireNonNull(blockWorld, "blockWorld");
+            this.worldMutations = Objects.requireNonNull(
+                    worldMutations, "worldMutations");
             this.playerManager = playerManager;
             this.physicsWorld = physicsWorld;
             this.playerController = playerController;
             this.fixedStepClock = fixedStepClock;
             this.chunkMeshes = chunkMeshes;
+            this.meshExecutor = Objects.requireNonNull(
+                    meshExecutor, "meshExecutor");
+            this.shutdownBarrier = Objects.requireNonNull(
+                    shutdownBarrier, "shutdownBarrier");
+            this.worldExecutor = Objects.requireNonNull(
+                    worldExecutor, "worldExecutor");
+            this.streamingController = streamingController;
+            this.streamingPipeline = streamingPipeline;
+            this.streamedChunkStore = streamedChunkStore;
+            this.streamedWorldItems = streamedWorldItems;
+            this.streamedSaveTarget = Objects.requireNonNull(
+                    streamedSaveTarget, "streamedSaveTarget");
+            this.originCoordinator = Objects.requireNonNull(
+                    originCoordinator, "originCoordinator");
+            this.streamingMetricsRecorder = streamingMetricsRecorder;
             this.cameraOrientation = Objects.requireNonNull(
                     cameraOrientation, "cameraOrientation");
             this.worldLoader = Objects.requireNonNull(worldLoader, "worldLoader");
@@ -2203,10 +3619,8 @@ public final class GameSessionFactory {
                     Set.copyOf(
                             Objects.requireNonNull(
                                     meshReadiness, "meshReadiness"));
-            persistenceClock =
-                    SessionPersistenceClock.restored(
-                            requireNonnegativeFixedTick(initialFixedTick),
-                            0L);
+            this.persistenceClock = Objects.requireNonNull(
+                    persistenceClock, "persistenceClock");
             this.persistenceMetadata =
                     Objects.requireNonNull(
                             persistenceMetadata, "persistenceMetadata");
@@ -2226,6 +3640,19 @@ public final class GameSessionFactory {
             this.hudFrames = hudFrames;
             this.hooks = Objects.requireNonNull(hooks, "hooks");
             debugHudDefaultPending = debugHudDefault;
+            if (!originCoordinator.initializeParticipants()) {
+                throw new IllegalStateException(
+                        "production origin participants could not initialize");
+            }
+            hooks.originInitialized(List.of(
+                    "player",
+                    "physics",
+                    "camera",
+                    "world-items",
+                    "transient-blocks",
+                    "particles",
+                    "chunk-renders",
+                    "publish-simulation-and-render-origin"));
             if (worldLoad.isEmpty()) {
                 updateRenderCamera();
             }
@@ -2338,7 +3765,7 @@ public final class GameSessionFactory {
             }
             int fixedSteps = fixedStepClock.advance(frameDeltaSeconds);
             FixedBatch fixedBatch = runFixedBatch(fixedSteps);
-            pumpChunkMeshes();
+            advanceStreamingFrame();
             updateRenderCamera();
             GameSessionFrame captured =
                     captureFrame(
@@ -2352,9 +3779,311 @@ public final class GameSessionFactory {
             return captured;
         }
 
+        private void advanceStreamingFrame() {
+            List<String> trace = new ArrayList<>();
+            trace.add("fixed-step-mutation");
+            if (streamingPipeline == null) {
+                pumpChunkMeshes();
+                hooks.playingFrameTrace(trace);
+                return;
+            }
+            playerController.body().position(feetScratch);
+            trace.add("observe-player-global-position");
+            GlobalPosition playerGlobal = originCoordinator.simulationOrigin()
+                    .toGlobal(feetScratch);
+            if (!playerGlobal.chunkKey().equals(
+                    originCoordinator.simulationOrigin().chunkKey())) {
+                ChunkKey next = playerGlobal.chunkKey();
+                if (!originCoordinator.rebase(
+                        new SimulationOrigin(next), new RenderOrigin(next))) {
+                    throw new IllegalStateException("origin rebase preparation failed");
+                }
+            }
+            trace.add("compute-desired-decision");
+            ChunkStreamingDecision decision = streamingController.update(
+                    playerGlobal,
+                    new ChunkStreamingObservation(
+                            Set.copyOf(world.chunks().keys()),
+                            streamingPipeline.requestedKeys()));
+            trace.add("apply-streaming-decision");
+            if (streamingAdmissionsOpen) {
+                streamingPipeline.apply(decision);
+            }
+            trace.add("drain-owner-publications");
+            streamingPipeline.drainOwnerResults();
+            trace.add("pump-owner-mesh-work");
+            pumpChunkMeshes();
+            trace.add("capture-immutable-streaming-metrics");
+            streamingMetrics = streamingMetricsRecorder.capture(
+                    playerGlobal,
+                    originCoordinator.simulationOrigin(),
+                    decision,
+                    world.chunks().keys().size(),
+                    streamingPipeline,
+                    chunkMeshes,
+                    worldItems,
+                    streamedChunkStore,
+                    playerController);
+            hooks.playingFrameTrace(trace);
+        }
+
         @Override
         public GameSessionFrame capturePaused() {
             return lastFrame.copy();
+        }
+
+        @Override
+        public boolean retryChunkStreaming(ChunkKey key) {
+            Objects.requireNonNull(key, "key");
+            if (streamingPipeline == null || !streamingAdmissionsOpen) {
+                return false;
+            }
+            boolean pipelineRetry = streamingPipeline.retry(key);
+            boolean meshRetry = chunkMeshes.retry(key);
+            return pipelineRetry || meshRetry;
+        }
+
+        private void shutdownStreaming() {
+            if (streamingPipeline == null || !streamingAdmissionsOpen) {
+                return;
+            }
+            List<String> trace = new ArrayList<>();
+            streamingAdmissionsOpen = false;
+            trace.add("stop-streaming-admissions");
+            trace.add("freeze-final-observation");
+            streamingPipeline.prepareShutdown();
+            trace.add("cancel-discardable-work");
+            trace.add("complete-or-fail-modified-durability");
+            Throwable failure = null;
+            try {
+                if (injectedSaveQuiescenceFailure != null) {
+                    throw injectedSaveQuiescenceFailure;
+                }
+                streamingPipeline.awaitSaveWorkers(STREAMING_DURABILITY_TIMEOUT);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                failure = new IllegalStateException(
+                        "Interrupted while awaiting streaming durability",
+                        interrupted);
+            } catch (RuntimeException | Error saveFailure) {
+                failure = saveFailure;
+            }
+            try {
+                for (int drain = 0;
+                        drain < 1_024 && streamingPipeline.retainedWorkCount() > 0;
+                        drain++) {
+                    streamingPipeline.drainOwnerResults();
+                }
+            } catch (RuntimeException | Error drainFailure) {
+                failure = appendFailure(failure, drainFailure);
+            } finally {
+                trace.add("drain-owner-gpu-state");
+                trace.add("close-load-generation-executor");
+                try {
+                    streamingPipeline.shutdownOwnerOrdered(
+                            () -> {
+                                worldExecutor.ifPresent(
+                                        shutdownBarrier::stopWorldExecutor);
+                                hooks.ownedWorkerTerminated("load-generation");
+                            },
+                            () -> {
+                                trace.add("close-mesh-executor");
+                                shutdownBarrier.stopMeshExecutor(meshExecutor);
+                                shutdownBarrier.closeManager(chunkMeshes::close);
+                                hooks.ownedWorkerTerminated("mesh");
+                                if (injectedMeshCloseFailure != null) {
+                                    throw injectedMeshCloseFailure;
+                                }
+                            },
+                            () -> hooks.ownedWorkerTerminated("save"));
+                } catch (RuntimeException | Error closeFailure) {
+                    failure = appendFailure(failure, closeFailure);
+                }
+                trace.add("close-save-executor");
+                hooks.shutdownTrace(
+                        trace,
+                        streamingPipeline.retainedWorkCount(),
+                        streamingPipeline.liveWorkerCount());
+            }
+            rethrowFailure(failure);
+        }
+
+        @Override
+        public void prepareSaveCapture() {
+            if (streamingPipeline == null) {
+                return;
+            }
+            if (saveCapturePrepared || !streamingAdmissionsOpen) {
+                throw new IllegalStateException(
+                        "streaming save capture is already prepared");
+            }
+            streamingAdmissionsOpen = false;
+            boolean prepared = false;
+            try {
+                streamingPipeline.prepareSaveCapture();
+                streamingPipeline.awaitWorkers(STREAMING_DURABILITY_TIMEOUT);
+                for (int drain = 0;
+                        drain < 1_024
+                                && streamingPipeline.retainedWorkCount() > 0;
+                        drain++) {
+                    streamingPipeline.drainOwnerResults();
+                }
+                if (streamingPipeline.retainedWorkCount() != 0) {
+                    throw new IllegalStateException(
+                            "streaming work remained undrained before save capture");
+                }
+                preparedDirtyChunks = prepareDirtyChunks();
+                saveCapturePrepared = true;
+                prepared = true;
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(
+                        "Interrupted while preparing streamed save capture",
+                        interrupted);
+            } finally {
+                if (!prepared) {
+                    cancelPreparedDirtyChunks();
+                    streamingAdmissionsOpen = true;
+                }
+            }
+        }
+
+        @Override
+        public void finishSaveCapture() {
+            if (streamingPipeline == null) {
+                return;
+            }
+            if (!saveCapturePrepared) {
+                throw new IllegalStateException(
+                        "streaming save capture was not prepared");
+            }
+            try {
+                cancelPreparedDirtyChunks();
+            } finally {
+                saveCapturePrepared = false;
+                streamingAdmissionsOpen = true;
+            }
+        }
+
+        @Override
+        public List<SaveCoordinator.PreparedDirtyChunkCapture> preparedDirtyChunks() {
+            if (!saveCapturePrepared) {
+                throw new IllegalStateException(
+                        "streaming save capture was not prepared");
+            }
+            return preparedDirtyChunks.stream()
+                    .map(prepared -> new SaveCoordinator.PreparedDirtyChunkCapture(
+                            prepared.snapshot(), prepared.stillCurrent()))
+                    .toList();
+        }
+
+        @Override
+        public void commitDirtyChunkPersistence() {
+            if (!saveCapturePrepared) {
+                throw new IllegalStateException(
+                        "streaming save capture was not prepared");
+            }
+            for (PreparedDirtyChunk prepared : preparedDirtyChunks) {
+                ChunkUnloadResult acknowledged = world.chunks()
+                        .acknowledgeStreamingPersistence(
+                                prepared.ticket(),
+                                prepared.snapshot().revision());
+                if (acknowledged.status() != ChunkUnloadResult.Status.VALID) {
+                    throw new IllegalStateException(
+                            "dirty Chunk durable acknowledgement failed: "
+                                    + acknowledged.status());
+                }
+            }
+            cancelPreparedDirtyChunks();
+        }
+
+        private List<PreparedDirtyChunk> prepareDirtyChunks() {
+            List<PreparedDirtyChunk> prepared = new ArrayList<>();
+            List<ChunkKey> keys = world.chunks().keys().stream()
+                    .filter(world.chunks()::voxelModified)
+                    .sorted(java.util.Comparator
+                            .comparingInt(ChunkKey::x)
+                            .thenComparingInt(ChunkKey::z))
+                    .toList();
+            try {
+                for (ChunkKey key : keys) {
+                    ChunkUnloadPreparation preparation =
+                            world.chunks().prepareStreamingUnload(key);
+                    if (preparation.status()
+                            != ChunkUnloadPreparation.Status.PREPARED) {
+                        throw new IllegalStateException(
+                                "dirty resident Chunk could not be pinned: "
+                                        + preparation.status());
+                    }
+                    prepared.add(new PreparedDirtyChunk(
+                            preparation.ticket().orElseThrow(),
+                            preparation.capture().orElseThrow(),
+                            preparation.stillCurrent()));
+                }
+                return List.copyOf(prepared);
+            } catch (RuntimeException | Error failure) {
+                for (PreparedDirtyChunk value : prepared) {
+                    try {
+                        world.chunks().cancelStreamingUnload(value.ticket());
+                    } catch (RuntimeException | Error cleanup) {
+                        if (cleanup != failure) {
+                            failure.addSuppressed(cleanup);
+                        }
+                    }
+                }
+                throw failure;
+            }
+        }
+
+        private void cancelPreparedDirtyChunks() {
+            Throwable failure = null;
+            for (PreparedDirtyChunk prepared : preparedDirtyChunks) {
+                try {
+                    ChunkUnloadResult canceled = world.chunks()
+                            .cancelStreamingUnload(prepared.ticket());
+                    if (canceled.status() != ChunkUnloadResult.Status.CANCELED
+                            && canceled.status() != ChunkUnloadResult.Status.STALE) {
+                        throw new IllegalStateException(
+                                "dirty Chunk save pin cancellation failed: "
+                                        + canceled.status());
+                    }
+                } catch (RuntimeException | Error cleanup) {
+                    failure = appendFailure(failure, cleanup);
+                }
+            }
+            preparedDirtyChunks = List.of();
+            rethrowFailure(failure);
+        }
+
+        private record PreparedDirtyChunk(
+                ChunkUnloadTicket ticket,
+                ChunkSnapshot snapshot,
+                BooleanSupplier stillCurrent) {
+            private PreparedDirtyChunk {
+                Objects.requireNonNull(ticket, "ticket");
+                Objects.requireNonNull(snapshot, "snapshot");
+                Objects.requireNonNull(stillCurrent, "stillCurrent");
+            }
+        }
+
+        private static Throwable appendFailure(
+                Throwable primary, Throwable cleanup) {
+            if (primary == null) {
+                return cleanup;
+            }
+            if (primary != cleanup) {
+                primary.addSuppressed(cleanup);
+            }
+            return primary;
+        }
+
+        private static void rethrowFailure(Throwable failure) {
+            if (failure instanceof RuntimeException runtimeFailure) {
+                throw runtimeFailure;
+            }
+            if (failure instanceof Error error) {
+                throw error;
+            }
         }
 
         @Override
@@ -2370,7 +4099,8 @@ public final class GameSessionFactory {
                     playerController,
                     environment.camera(),
                     gameModes,
-                    persistenceClock);
+                    persistenceClock,
+                    originCoordinator.simulationOrigin());
         }
 
         @Override
@@ -2391,6 +4121,58 @@ public final class GameSessionFactory {
         @Override
         public long persistenceRevision() {
             return persistenceClock.revision();
+        }
+
+        @Override
+        public Optional<WorldItemPersistencePlan> prepareWorldItemPersistence() {
+            if (worldItems.savePersistenceReady()) {
+                return Optional.empty();
+            }
+            if (worldItemPersistenceTicket != null) {
+                throw new IllegalStateException(
+                        "WorldItem save persistence is already prepared");
+            }
+            var prepared = worldItems.prepareSavePersistence();
+            WorldItemPersistencePlan plan = prepared.persistencePlan()
+                    .orElseThrow(() -> new IllegalStateException(
+                            "WorldItem save persistence could not be prepared: "
+                                    + prepared.status()));
+            worldItemPersistenceTicket = prepared.persistenceTicket().orElseThrow();
+            return Optional.of(plan);
+        }
+
+        @Override
+        public void commitWorldItemPersistence(WorldItemDurableProof proof) {
+            WorldItemPersistenceTicket ticket = Objects.requireNonNull(
+                    worldItemPersistenceTicket,
+                    "WorldItem save persistence is not prepared");
+            var result = worldItems.commitPersistence(ticket, proof);
+            if (result.status()
+                    != com.overlord.worlditem.api.WorldItemHibernateResult.Status.COMMITTED) {
+                throw new IllegalStateException(
+                        "WorldItem save proof was not committed: " + result.status());
+            }
+            worldItemPersistenceTicket = null;
+        }
+
+        @Override
+        public void cancelWorldItemPersistence() {
+            if (worldItemPersistenceTicket == null) {
+                return;
+            }
+            worldItems.cancelPersistence(worldItemPersistenceTicket);
+            worldItemPersistenceTicket = null;
+        }
+
+        @Override
+        public Optional<com.gaia.save.session.SaveCoordinator.SaveTarget>
+                streamedSaveTarget() {
+            return streamedSaveTarget;
+        }
+
+        @Override
+        public Optional<ChunkSnapshot> captureWorldItemChunk(ChunkKey key) {
+            return world.chunks().snapshot(key);
         }
 
         @Override
@@ -2531,6 +4313,9 @@ public final class GameSessionFactory {
                     inventoryTick);
             ModuleManager.getInstance().updateAll(fixedDelta);
             EventBus.getInstance().processAll();
+            long nextWorldTick = Math.addExact(
+                    persistenceClock.fixedTick(), 1L);
+            physicalWorldItems.deliverWorldTick(worldItems, nextWorldTick);
             persistenceReservation.commit();
         }
 
@@ -2567,7 +4352,8 @@ public final class GameSessionFactory {
                                     running,
                                     true,
                                     focused,
-                                    blocked));
+                                    blocked),
+                            originCoordinator.renderOrigin());
             playerController.body().position(feetScratch);
             Optional<RenderMetricsSnapshot> previousMetrics =
                     hasAdvancedFrame
@@ -2605,10 +4391,11 @@ public final class GameSessionFactory {
                         new HudFrameCoordinator.FrameCapture(
                                 inventory,
                                 interaction,
-                                previousMetrics,
-                                feet,
-                                counts,
-                                Optional.of(debugHudDefaultInput()),
+                                 previousMetrics,
+                                 feet,
+                                 counts,
+                                 streamingMetrics,
+                                 Optional.of(debugHudDefaultInput()),
                                 0.0,
                                 lifecycle,
                                 focused,
@@ -2621,10 +4408,11 @@ public final class GameSessionFactory {
                             new HudFrameCoordinator.FrameCapture(
                                     inventory,
                                     interaction,
-                                    previousMetrics,
-                                    feet,
-                                    counts,
-                                    fixedBatch.presentationInput(),
+                             previousMetrics,
+                             feet,
+                             counts,
+                             streamingMetrics,
+                             fixedBatch.presentationInput(),
                                     frameDeltaSeconds,
                                     lifecycle,
                                     focused,
@@ -2632,7 +4420,7 @@ public final class GameSessionFactory {
                                     blocked,
                                     surface));
             GameSessionFrame frame = new GameSessionFrame(
-                    new RenderFrameInput(
+                     new RenderFrameInput(
                             running
                                     ? List.copyOf(
                                             chunkMeshes.renderObjects())
@@ -2640,7 +4428,8 @@ public final class GameSessionFactory {
                             frameDeltaSeconds,
                             chunkMeshes.meshQueueDepth(),
                             feedbackFrame,
-                            hud.frame()));
+                             hud.frame()),
+                    streamingMetrics);
             hooks.frameCaptured(lifecycle, frame);
             return frame;
         }
@@ -2665,11 +4454,21 @@ public final class GameSessionFactory {
             environment.camera().getForward(dropVelocityScratch);
             Vector3f right =
                     environment.camera().getRight(new Vector3f());
-            return WorldItemDropKinematics.qDrop(
+            InventoryDropLocation local = WorldItemDropKinematics.qDrop(
                     dropPositionScratch,
                     dropVelocityScratch,
                     right,
                     eventIdentity);
+            GlobalPosition global = originCoordinator.simulationOrigin().toGlobal(
+                    new Vector3f(
+                            (float) local.positionX(),
+                            (float) local.positionY(),
+                            (float) local.positionZ()));
+            return new InventoryDropLocation(
+                    global.chunkKey().worldOriginX() + global.localX(),
+                    global.y(),
+                    global.chunkKey().worldOriginZ() + global.localZ(),
+                    local.velocityX(), local.velocityY(), local.velocityZ());
         }
 
         private void runInventoryDebugShortcut(

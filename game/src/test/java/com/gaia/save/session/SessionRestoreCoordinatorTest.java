@@ -107,7 +107,7 @@ class SessionRestoreCoordinatorTest {
                 () -> assertEquals(540.5f, fixture.camera().getYaw()),
                 () -> assertEquals(-18.25f, fixture.camera().getPitch()),
                 () -> assertEquals(GameMode.SURVIVAL, fixture.gameModes().mode()),
-                () -> assertEquals(FIXED_TICK, fixture.restoredTick().get()),
+                () -> assertEquals(FIXED_TICK, fixture.restoredTick().getAsLong()),
                 () -> assertEquals(List.of(CHUNK_KEY), fixture.meshChunks().get()),
                 () -> assertEquals(1, fixture.physicsWorld().bodies().size()),
                 () ->
@@ -120,6 +120,7 @@ class SessionRestoreCoordinatorTest {
                                 List.of(
                                         SessionRestoreCoordinator.RestoreStage.CHUNKS,
                                         SessionRestoreCoordinator.RestoreStage.INVENTORY,
+                                        SessionRestoreCoordinator.RestoreStage.WORLD_TICK,
                                         SessionRestoreCoordinator.RestoreStage.WORLD_ITEMS,
                                         SessionRestoreCoordinator.RestoreStage.PLAYER,
                                         SessionRestoreCoordinator.RestoreStage.PROJECTIONS,
@@ -143,11 +144,11 @@ class SessionRestoreCoordinatorTest {
                                 List.of(),
                                 0L,
                                 false));
-        RestoreFixture fixture = new RestoreFixture(null);
+        RestoreFixture fixture = new RestoreFixture(null, Long.MAX_VALUE);
 
         fixture.coordinator().restore(maximumTick);
 
-        assertEquals(Long.MAX_VALUE, fixture.restoredTick().get());
+        assertEquals(Long.MAX_VALUE, fixture.restoredTick().getAsLong());
         fixture.physicalWorldItems().close();
     }
 
@@ -1141,7 +1142,8 @@ class SessionRestoreCoordinatorTest {
                         chunks,
                         guard,
                         WorldItemPhysicsConfig.production());
-        private final AtomicLong restoredTick = new AtomicLong(-1L);
+        private final GameSessionPersistenceTestFixture.ClockRestoreAccess clock =
+                GameSessionPersistenceTestFixture.freshClockRestoreAccess();
         private final AtomicReference<List<ChunkKey>> meshChunks =
                 new AtomicReference<>();
         private final List<SessionRestoreCoordinator.RestoreStage> stages =
@@ -1152,13 +1154,27 @@ class SessionRestoreCoordinatorTest {
 
         private RestoreFixture(
                 SessionRestoreCoordinator.RestoreStage failedStage) {
-            this(failedStage, new Camera(), ignored -> {});
+            this(failedStage, FIXED_TICK);
+        }
+
+        private RestoreFixture(
+                SessionRestoreCoordinator.RestoreStage failedStage,
+                long expectedWorldTick) {
+            this(failedStage, new Camera(), ignored -> {}, expectedWorldTick);
         }
 
         private RestoreFixture(
                 SessionRestoreCoordinator.RestoreStage failedStage,
                 Camera camera,
                 Consumer<List<ChunkKey>> meshReadiness) {
+            this(failedStage, camera, meshReadiness, FIXED_TICK);
+        }
+
+        private RestoreFixture(
+                SessionRestoreCoordinator.RestoreStage failedStage,
+                Camera camera,
+                Consumer<List<ChunkKey>> meshReadiness,
+                long expectedWorldTick) {
             this.camera = Objects.requireNonNull(camera, "camera");
             Consumer<List<ChunkKey>> additionalMeshReadiness =
                     Objects.requireNonNull(meshReadiness, "meshReadiness");
@@ -1172,7 +1188,7 @@ class SessionRestoreCoordinatorTest {
                             camera,
                             gameModes,
                             physicalWorldItems,
-                            restoredTick::set,
+                            clock.restoreAuthoritativeWorldTick(),
                             keys -> {
                                 List<ChunkKey> copy = List.copyOf(keys);
                                 meshChunks.set(copy);
@@ -1180,6 +1196,13 @@ class SessionRestoreCoordinatorTest {
                             },
                             stage -> {
                                 stages.add(stage);
+                                if (stage
+                                        == SessionRestoreCoordinator.RestoreStage.WORLD_ITEMS) {
+                                    assertEquals(
+                                            expectedWorldTick,
+                                            clock.fixedTick().getAsLong(),
+                                            "authoritative world tick must publish before WorldItems");
+                                }
                                 if (stage == failedStage) {
                                     throw injectedFailure;
                                 }
@@ -1226,8 +1249,8 @@ class SessionRestoreCoordinatorTest {
             return physicalWorldItems;
         }
 
-        private AtomicLong restoredTick() {
-            return restoredTick;
+        private java.util.function.LongSupplier restoredTick() {
+            return clock.fixedTick();
         }
 
         private AtomicReference<List<ChunkKey>> meshChunks() {

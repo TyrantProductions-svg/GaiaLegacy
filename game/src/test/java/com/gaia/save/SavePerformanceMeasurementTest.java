@@ -11,8 +11,13 @@ import com.gaia.save.codec.EncodedSaveGame;
 import com.gaia.save.codec.SaveSnapshotCodec;
 import com.gaia.save.snapshot.SaveGameSnapshot;
 import com.gaia.session.GameSessionPersistenceTestFixture;
+import com.overlord.voxel.ChunkKey;
+import com.overlord.voxel.ChunkSnapshot;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -57,7 +62,23 @@ class SavePerformanceMeasurementTest {
         long archiveBytes = Files.size(archive);
         assertEquals(81, captured.chunks().chunks().size());
         assertTrue(archiveBytes <= SaveArchiveLimits.MAX_ARCHIVE_FILE_BYTES);
-        assertEquals(captured, recaptured);
+        assertEquals(25, recaptured.chunks().chunks().size());
+        assertEquals(captured.chunks().revisionHighWater(),
+                recaptured.chunks().revisionHighWater());
+        Map<ChunkKey, ChunkSnapshot> capturedChunks = captured.chunks().chunks()
+                .stream()
+                .collect(Collectors.toMap(
+                        ChunkSnapshot::key, Function.identity()));
+        assertTrue(capturedChunks.entrySet().containsAll(
+                recaptured.chunks().chunks().stream()
+                        .collect(Collectors.toMap(
+                                ChunkSnapshot::key, Function.identity()))
+                        .entrySet()));
+        assertEquals(captured.metadata(), recaptured.metadata());
+        assertEquals(captured.fixedTick(), recaptured.fixedTick());
+        assertEquals(captured.player(), recaptured.player());
+        assertEquals(captured.inventory(), recaptured.inventory());
+        assertEquals(captured.worldItems(), recaptured.worldItems());
 
         System.out.printf(
                 "PHASE14_SAVE_PERF archiveBytes=%d captureMs=%.3f encodeMs=%.3f "

@@ -1,5 +1,42 @@
 # Changelog
 
+## Phase 15 bounded infinite-world streaming - 2026-08-24
+
+### Added
+
+- Checked global Chunk addressing, immutable global positions, distinct
+  simulation/render origins, availability-aware queries, and atomic rebasing.
+- Deterministic `2/4/5/7` streaming policy; bounded load/generate `32/4`, save
+  `8/1`, mesh `32/2`, and owner-thread GPU `2 uploads / 4 destructions` budgets.
+- Modified-only Chunk durability, bounded invisible prepublication staging,
+  one semantic root publication, streamed Save v2 restart, and v1 read
+  compatibility/fail-closed downgrade behavior.
+- Five-minute canonical ground-WorldItem TTL (`18,000` fixed ticks), bounded
+  live paging/cache state, durable-before-evict, stable-ID non-reuse, and
+  rollback-safe linked persistence/hibernation.
+- Typed Gate 15F production soak covering 500+ transitions, negative and
+  distant coordinates, rapid travel, multiple rebases, exact modified reload,
+  Save & Quit/restart, canonical spatial queries, and WorldItem expiry.
+
+### Verified
+
+- Formal Task 12 structural matrix: 3/3 GREEN with no FPS/latency threshold.
+- Final Windows clean build: 3,351 tests total, 3,350 passed, one conditional
+  tools skip, zero failures/errors; installDist and packaged resource/native
+  audits passed.
+- Windows development interaction passed. The generated installDist candidate
+  created a unique world, entered gameplay, placed a visible dirt block,
+  completed Save & Quit, exited 0, relaunched in a fresh process, loaded the
+  same sparse streamed-v2 world with that block still visible, completed a
+  second Save & Quit, and exited 0 again.
+- Native Apple Silicon macOS Phase 15 evidence is pending/not supplied and is
+  not inferred from historical platform results.
+
+### Deferred
+
+- User-configurable streaming distance, generic region/database storage,
+  cloud/multiplayer persistence, and Phase 16 content work.
+
 ## Phase 14 Save/Load v1 and World Slots - 2026-08-12
 
 ### Added

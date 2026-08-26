@@ -295,6 +295,32 @@ class ParticleSystemTest {
         assertTrue(system.snapshot().particles().isEmpty());
     }
 
+    @Test
+    void preparedOriginRebaseMovesOnlyExistingParticlePositionsAfterCommit() {
+        ParticleSystem system = new ParticleSystem();
+        system.emit(emission(ParticleCategory.BREAK_COMMITTED, 2, 44L));
+        ParticleRenderBatch before = system.snapshot();
+
+        var prepared = system.prepareOriginRebase(new org.joml.Vector3f(-16.0f, 0.0f, 32.0f));
+
+        assertEquals(before, system.snapshot());
+        prepared.commit();
+
+        List<ParticleVisual> after = system.snapshot().particles();
+        assertEquals(2, after.size());
+        for (int index = 0; index < after.size(); index++) {
+            ParticleVisual prior = before.particles().get(index);
+            ParticleVisual rebased = after.get(index);
+            assertEquals(prior.spawnSequence(), rebased.spawnSequence());
+            assertEquals(prior.x() - 16.0f, rebased.x());
+            assertEquals(prior.y(), rebased.y());
+            assertEquals(prior.z() + 32.0f, rebased.z());
+            assertEquals(prior.velocityX(), rebased.velocityX());
+            assertEquals(prior.velocityY(), rebased.velocityY());
+            assertEquals(prior.velocityZ(), rebased.velocityZ());
+        }
+    }
+
     private static boolean finite(ParticleVisual particle) {
         return Float.isFinite(particle.x())
                 && Float.isFinite(particle.y())

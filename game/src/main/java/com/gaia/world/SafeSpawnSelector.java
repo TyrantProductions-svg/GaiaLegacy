@@ -2,6 +2,7 @@ package com.gaia.world;
 
 import com.gaia.world.generation.WorldGenerationConfig;
 import com.overlord.config.GameConfig;
+import com.overlord.voxel.ChunkCoordinatePolicy;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.World;
 import java.util.Comparator;
@@ -41,16 +42,13 @@ public final class SafeSpawnSelector {
                                         Objects.requireNonNull(
                                                 chunk, "committed chunk"))
                         .sorted(
-                                Comparator.comparingInt(ChunkKey::x)
-                                        .thenComparingInt(ChunkKey::z))
+                                ChunkCoordinatePolicy.canonicalComparator())
                         .toList()) {
             if (!world.chunks().contains(key)) {
                 continue;
             }
-            long originX =
-                    (long) key.x() * GameConfig.Chunk.SIZE;
-            long originZ =
-                    (long) key.z() * GameConfig.Chunk.SIZE;
+            long originX = ChunkCoordinatePolicy.worldOriginX(key);
+            long originZ = ChunkCoordinatePolicy.worldOriginZ(key);
             for (int localX = 0;
                     localX < GameConfig.Chunk.SIZE;
                     localX++) {

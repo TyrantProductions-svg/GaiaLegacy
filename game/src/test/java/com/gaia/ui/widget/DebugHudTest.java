@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.gaia.ui.HudDebugSnapshot;
 import com.gaia.ui.HudPresentationSnapshot;
 import com.gaia.ui.HudVisibility;
+import com.gaia.world.streaming.ChunkStreamingMetrics;
 import com.overlord.renderer.metrics.RenderMetricsSnapshot;
 import com.overlord.renderer.ui.TextRenderer;
 import com.overlord.renderer.ui.UiDrawCommand;
@@ -94,6 +95,46 @@ class DebugHudTest {
                         "TARGET: NO",
                         "FEEDBACK: DAMAGE 0 | ITEMS 0 | PARTICLES 0"),
                 Task10WidgetTestSupport.fontLines(frame));
+    }
+
+    @Test
+    void streamingStateAddsOnlyTruthfulTerrainMessageWithoutPercentage() {
+        ChunkStreamingMetrics empty = ChunkStreamingMetrics.empty();
+        ChunkStreamingMetrics streaming = new ChunkStreamingMetrics(
+                empty.playerGlobalPosition(),
+                empty.simulationOrigin(),
+                empty.simulationChunks(),
+                empty.renderChunks(),
+                empty.preloadChunks(),
+                empty.residentChunks(),
+                empty.unloadPendingChunks(),
+                empty.loadGenerationWork(),
+                empty.meshWork(),
+                empty.saveWork(),
+                empty.publications(),
+                empty.canceled(),
+                empty.staleResults(),
+                empty.worldItems(),
+                empty.diagnosticCodes(),
+                true);
+        HudDebugSnapshot debug = new HudDebugSnapshot(
+                Optional.empty(),
+                new HudDebugSnapshot.FeetPosition(0, 0, 0),
+                new HudDebugSnapshot.Counts(0, 0, 0, 0, 0, 0),
+                streaming);
+
+        List<String> lines = Task10WidgetTestSupport.fontLines(render(
+                new DebugHud(Task10WidgetTestSupport.textRenderer()),
+                Task10WidgetTestSupport.debug(
+                        Task10WidgetTestSupport.visible(true), debug, false),
+                Task10WidgetTestSupport.layout(800, 600, 800, 600, 1, 1)));
+
+        assertEquals(1, lines.stream()
+                .filter("Streaming terrain..."::equals)
+                .count());
+        assertTrue(lines.stream().noneMatch(line ->
+                line.toLowerCase(Locale.ROOT).contains("percent")
+                        || line.contains("%")));
     }
 
     @Test

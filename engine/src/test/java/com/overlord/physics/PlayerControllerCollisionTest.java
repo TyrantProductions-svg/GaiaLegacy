@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.config.GameConfig;
 import com.overlord.voxel.World;
+import com.overlord.voxel.ChunkKey;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
@@ -356,6 +357,43 @@ class PlayerControllerCollisionTest {
         assertEquals(15, GameConfig.Player.NOCLIP_DOUBLE_TAP_STEPS);
         assertEquals(4, GameConfig.Physics.MAX_SLIDE_ITERATIONS);
         assertEquals(8, GameConfig.Physics.MAX_DEPENETRATION_ITERATIONS);
+    }
+
+    @Test
+    void preparedPlayerOriginRebaseIsPublishLastAndUsesDistantCanonicalTerrain() {
+        ChunkKey key = new ChunkKey(100_000_000, -100_000_000);
+        World world = new World();
+        world.generate(key, chunk -> chunk.setBlock(0, 0, 0, (byte) 1));
+        PlayerController player = controller(world);
+        player.teleport(new Vector3f(1_600_000_000f, 1, -1_600_000_000f));
+        SimulationOrigin zero = new SimulationOrigin(new ChunkKey(0, 0));
+        SimulationOrigin distant = new SimulationOrigin(key);
+
+        PlayerController.PreparedOriginRebase prepared =
+                player.prepareOriginRebase(zero, distant);
+        assertEquals(
+                new Vector3f(1_600_000_000f, 1, -1_600_000_000f),
+                player.body().position(new Vector3f()));
+        prepared.commit();
+        assertEquals(new Vector3f(0, 1, 0), player.body().position(new Vector3f()));
+
+        player.fixedUpdate(FIXED_STEP, 0, 0, false, false, false);
+        assertTrue(player.body().position(new Vector3f()).y >= 1.0f - EPSILON);
+    }
+
+    @Test
+    void committedPlayerOriginFailsClosedBeforeUnknownNeighbor() {
+        World world = new World();
+        world.generate(new ChunkKey(0, 0), ignored -> {});
+        PlayerController player = controller(world, 60, 0, -60);
+        SimulationOrigin zero = new SimulationOrigin(new ChunkKey(0, 0));
+        player.prepareOriginRebase(zero, zero).commit();
+        player.teleport(new Vector3f(15.5f, 2, 8));
+
+        player.fixedUpdate(FIXED_STEP, 1, 0, false, false, false);
+
+        assertEquals(new Vector3f(15.5f, 2, 8), player.body().position(new Vector3f()));
+        assertEquals(new Vector3f(), player.body().linearVelocity(new Vector3f()));
     }
 
     private static PlayerController controller(World world) {

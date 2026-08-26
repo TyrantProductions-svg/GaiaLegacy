@@ -7,6 +7,8 @@ import java.util.Optional;
 public final class BlendedHeightProvider implements HeightProvider {
     private static final ResourceLocation ID =
             ResourceLocation.parse("gaia:blended_heights");
+    private static final GenerationStageContract CONTRACT =
+            new GenerationStageContract(ID, 1, 0);
     private static final long DETAIL_SALT = 0L;
     private static final long RUGGEDNESS_SALT = 1L;
 
@@ -16,10 +18,15 @@ public final class BlendedHeightProvider implements HeightProvider {
     }
 
     @Override
+    public GenerationStageContract contract() {
+        return CONTRACT;
+    }
+
+    @Override
     public int sampleHeight(
             GenerationContext context,
-            int worldX,
-            int worldZ,
+            long worldX,
+            long worldZ,
             BiomeSample biome) {
         WorldGenerationConfig.HeightSettings settings =
                 context.config().height();
@@ -49,8 +56,8 @@ public final class BlendedHeightProvider implements HeightProvider {
         int samples = 0;
         for (int localZ = 0; localZ < GameConfig.Chunk.SIZE; localZ++) {
             for (int localX = 0; localX < GameConfig.Chunk.SIZE; localX++) {
-                int worldX = region.worldX(localX);
-                int worldZ = region.worldZ(localZ);
+                long worldX = region.worldXLong(localX);
+                long worldZ = region.worldZLong(localZ);
                 region.setHeight(
                         localX,
                         localZ,
@@ -72,12 +79,12 @@ public final class BlendedHeightProvider implements HeightProvider {
 
     private static double centeredNoise(
             GenerationContext context,
-            int worldX,
-            int worldZ,
+            long worldX,
+            long worldZ,
             double scale,
             long salt) {
         return context.sampler().valueNoise2D(
-                        ID, worldX, worldZ, scale, salt)
+                        CONTRACT, worldX, worldZ, scale, salt)
                 * 2.0
                 - 1.0;
     }

@@ -6,6 +6,10 @@ import com.gaia.save.format.SaveGameManifest;
 import com.gaia.save.format.SaveSectionDescriptor;
 import com.gaia.save.format.SaveSectionId;
 import com.gaia.save.snapshot.SaveGameSnapshot;
+import com.gaia.save.format.SaveGameId;
+import com.gaia.save.store.JdkSaveFileOperations;
+import com.gaia.save.streaming.Phase14MigrationResult;
+import com.gaia.save.streaming.Phase14SaveMigrator;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -23,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -59,6 +64,23 @@ public final class SaveArchiveReader {
 
     public SaveArchiveReadResult read(Path archive) {
         Objects.requireNonNull(archive, "archive");
+        Phase14SaveMigrator.PublicationObservation migrated =
+                readPublishedMigration(archive);
+        if (migrated.status()
+                == Phase14SaveMigrator.PublicationStatus.PUBLISHED_VALID) {
+            return SaveArchiveReadResult.valid(
+                    migrated.migration().snapshot(), List.of());
+        }
+        if (migrated.status()
+                == Phase14SaveMigrator.PublicationStatus.PUBLISHED_INVALID) {
+            return SaveArchiveReadResult.corrupt(migrated.diagnostic());
+        }
+        return readPhase14(archive);
+    }
+
+    /** Reads the exact Phase 14 archive without consulting adjacent v2 authority. */
+    public SaveArchiveReadResult readPhase14(Path archive) {
+        Objects.requireNonNull(archive, "archive");
         try {
             return readValidated(archive);
         } catch (ArchiveFailure failure) {
@@ -70,6 +92,27 @@ public final class SaveArchiveReader {
                     "save-archive.truncated",
                     "The save archive is truncated or unreadable",
                     failure));
+        }
+    }
+
+    private Phase14SaveMigrator.PublicationObservation
+            readPublishedMigration(Path archive) {
+        try {
+            Path normalized = archive.toAbsolutePath().normalize();
+            if (normalized.getFileName() == null
+                    || !normalized.getFileName().toString().equals("current.glsave")) {
+                return Phase14SaveMigrator.PublicationObservation.absent();
+            }
+            Path world = normalized.getParent();
+            Path root = world == null ? null : world.getParent();
+            if (root == null || world.getFileName() == null) {
+                return Phase14SaveMigrator.PublicationObservation.absent();
+            }
+            SaveGameId id = SaveGameId.parse(world.getFileName().toString());
+            return Phase14SaveMigrator.observePublished(
+                    root, id, this, new JdkSaveFileOperations());
+        } catch (RuntimeException invalidOrUnpublished) {
+            return Phase14SaveMigrator.PublicationObservation.absent();
         }
     }
 

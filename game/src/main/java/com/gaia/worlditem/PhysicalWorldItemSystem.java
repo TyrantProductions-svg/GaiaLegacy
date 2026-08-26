@@ -7,14 +7,23 @@ import com.overlord.physics.CollisionWorld;
 import com.overlord.physics.MassProperties;
 import com.overlord.physics.PhysicsBody;
 import com.overlord.physics.PhysicsWorld;
+import com.overlord.physics.SimulationOrigin;
+import com.overlord.physics.SpatialQueryResult;
 import com.overlord.physics.SweepResult;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkRepository;
+import com.overlord.worlditem.LogicalWorldItemService;
+import com.overlord.worlditem.api.WorldItemActivationResult;
+import com.overlord.worlditem.api.WorldItemActivationTicket;
+import com.overlord.worlditem.api.WorldItemHibernateResult;
+import com.overlord.worlditem.api.WorldItemHibernateTicket;
+import com.overlord.worlditem.api.WorldItemDurableProof;
 import com.overlord.worlditem.api.WorldItemId;
 import com.overlord.worlditem.api.WorldItemMotionUpdate;
 import com.overlord.worlditem.api.WorldItemMotionUpdateResult;
 import com.overlord.worlditem.api.WorldItemPhysicalSnapshot;
 import com.overlord.worlditem.api.WorldItemPhysicalState;
+import com.overlord.worlditem.api.WorldItemPersistenceTicket;
 import com.overlord.worlditem.api.WorldItemRuntimeAccess;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -23,6 +32,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import org.joml.Vector3f;
 
@@ -53,7 +63,19 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
         void reached(ProjectionConstructionStage stage);
     }
 
+    enum ProjectionRemovalStage {
+        AFTER_BODY_REMOVAL,
+        AFTER_MAP_REMOVAL
+    }
+
+    @FunctionalInterface
+    interface ProjectionRemovalObserver {
+        void reached(ProjectionRemovalStage stage, WorldItemId id);
+    }
+
     private static final ProjectionConstructionObserver NO_CONSTRUCTION_OBSERVER = stage -> {
+    };
+    private static final ProjectionRemovalObserver NO_REMOVAL_OBSERVER = (stage, id) -> {
     };
 
     private final WorldItemRuntimeAccess runtimeAccess;
@@ -63,6 +85,7 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
     private final WorldItemPhysicsConfig config;
     private final ProjectionFactory projectionFactory;
     private final ProjectionConstructionObserver constructionObserver;
+    private final ProjectionRemovalObserver removalObserver;
     private final Map<WorldItemId, Projection> projections = new LinkedHashMap<>();
     private final Map<WorldItemId, RecoveryBlock> recoveryBlocks = new LinkedHashMap<>();
     private final Set<WorldItemId> pendingLostIds = new HashSet<>();
@@ -79,6 +102,8 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
     private List<WorldItemId> capacitySkippedIds = List.of();
     private boolean prepared;
     private boolean closed;
+    private SimulationOrigin simulationOrigin = new SimulationOrigin(new ChunkKey(0, 0));
+    private boolean originAware;
 
     public PhysicalWorldItemSystem(
             WorldItemRuntimeAccess runtimeAccess,
@@ -92,7 +117,8 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
                 mainThreadGuard,
                 config,
                 snapshot -> createDefaultBody(snapshot, config),
-                NO_CONSTRUCTION_OBSERVER);
+                NO_CONSTRUCTION_OBSERVER,
+                NO_REMOVAL_OBSERVER);
     }
 
     public PhysicalWorldItemSystem(
@@ -108,7 +134,8 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
                 mainThreadGuard,
                 config,
                 snapshot -> createDefaultBody(snapshot, config),
-                NO_CONSTRUCTION_OBSERVER);
+                NO_CONSTRUCTION_OBSERVER,
+                NO_REMOVAL_OBSERVER);
     }
 
     public PhysicalWorldItemSystem(
@@ -138,7 +165,8 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
                 mainThreadGuard,
                 config,
                 projectionFactory,
-                NO_CONSTRUCTION_OBSERVER);
+                NO_CONSTRUCTION_OBSERVER,
+                NO_REMOVAL_OBSERVER);
     }
 
     PhysicalWorldItemSystem(
@@ -155,7 +183,8 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
                 mainThreadGuard,
                 config,
                 projectionFactory,
-                constructionObserver);
+                constructionObserver,
+                NO_REMOVAL_OBSERVER);
     }
 
     PhysicalWorldItemSystem(
@@ -166,6 +195,45 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
             WorldItemPhysicsConfig config,
             ProjectionFactory projectionFactory,
             ProjectionConstructionObserver constructionObserver) {
+        this(
+                runtimeAccess,
+                physicsWorld,
+                chunks,
+                mainThreadGuard,
+                config,
+                projectionFactory,
+                constructionObserver,
+                NO_REMOVAL_OBSERVER);
+    }
+
+    PhysicalWorldItemSystem(
+            WorldItemRuntimeAccess runtimeAccess,
+            PhysicsWorld physicsWorld,
+            MainThreadGuard mainThreadGuard,
+            WorldItemPhysicsConfig config,
+            ProjectionFactory projectionFactory,
+            ProjectionConstructionObserver constructionObserver,
+            ProjectionRemovalObserver removalObserver) {
+        this(
+                runtimeAccess,
+                physicsWorld,
+                null,
+                mainThreadGuard,
+                config,
+                projectionFactory,
+                constructionObserver,
+                removalObserver);
+    }
+
+    private PhysicalWorldItemSystem(
+            WorldItemRuntimeAccess runtimeAccess,
+            PhysicsWorld physicsWorld,
+            ChunkRepository chunks,
+            MainThreadGuard mainThreadGuard,
+            WorldItemPhysicsConfig config,
+            ProjectionFactory projectionFactory,
+            ProjectionConstructionObserver constructionObserver,
+            ProjectionRemovalObserver removalObserver) {
         this.runtimeAccess = Objects.requireNonNull(runtimeAccess, "runtimeAccess");
         this.physicsWorld = Objects.requireNonNull(physicsWorld, "physicsWorld");
         this.chunks = chunks;
@@ -174,6 +242,8 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
         this.projectionFactory = Objects.requireNonNull(projectionFactory, "projectionFactory");
         this.constructionObserver = Objects.requireNonNull(
                 constructionObserver, "constructionObserver");
+        this.removalObserver = Objects.requireNonNull(
+                removalObserver, "removalObserver");
     }
 
     public void prepareStep(long tick) {
@@ -309,6 +379,11 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
                     "cannot reconcile restored projections during a prepared step");
         }
 
+        runProjectionTransaction(
+                () -> reconcileRestoredCanonicalStateTransaction(tick));
+    }
+
+    private void reconcileRestoredCanonicalStateTransaction(long tick) {
         List<WorldItemPhysicalSnapshot> snapshots = orderedSnapshots();
         snapshots = List.copyOf(indexSnapshots(snapshots).values());
         List<WorldItemPhysicalSnapshot> candidates = snapshots.stream()
@@ -326,6 +401,7 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
                 .toList();
 
         List<Projection> replacements = new ArrayList<>();
+        List<Projection> registeredReplacements = new ArrayList<>();
         long nextCreated = created;
         for (WorldItemPhysicalSnapshot snapshot : admitted) {
             Projection existing = projections.get(snapshot.id());
@@ -349,18 +425,48 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
                 PhysicsBody body = Objects.requireNonNull(
                         projectionFactory.create(snapshot),
                         "projection factory result");
+                body.teleport(new Vector3f(
+                        localX(snapshot.runtime().item().positionX()),
+                        finiteFloat(
+                                snapshot.runtime().item().positionY(),
+                                "positionY"),
+                        localZ(snapshot.runtime().item().positionZ())));
+                constructionObserver.reached(
+                        ProjectionConstructionStage.AFTER_BODY_CREATION);
                 Projection replacement = new Projection(snapshot, body);
+                constructionObserver.reached(
+                        ProjectionConstructionStage.AFTER_PROJECTION_CONSTRUCTION);
+                replacements.add(replacement);
+                constructionObserver.reached(
+                        ProjectionConstructionStage.AFTER_ROLLBACK_TRACKING);
                 if (!recoverRestoredProjection(replacement)) {
                     throw new IllegalStateException(
                             "restored projection overlap recovery failed for "
                                     + snapshot.id());
                 }
-                if (!physicsWorld.addBody(body)) {
+            }
+
+            Set<PhysicsBody> detachedBodies = java.util.Collections.newSetFromMap(
+                    new java.util.IdentityHashMap<>());
+            for (Projection replacement : replacements) {
+                if (!detachedBodies.add(replacement.body)
+                        || physicsWorld.containsBody(replacement.body)) {
                     throw new IllegalStateException(
                             "restored projection body was already registered for "
-                                    + snapshot.id());
+                                    + replacement.id);
                 }
-                replacements.add(replacement);
+            }
+            for (Projection replacement : replacements) {
+                if (!physicsWorld.addBody(replacement.body)) {
+                    throw new IllegalStateException(
+                            "restored projection body was already registered for "
+                                    + replacement.id);
+                }
+                registeredReplacements.add(replacement);
+            }
+            for (Projection replacement : replacements) {
+                constructionObserver.reached(
+                        ProjectionConstructionStage.AFTER_REGISTRATION);
             }
 
             Set<WorldItemId> replacementIds = replacements.stream()
@@ -380,6 +486,10 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
                                     + replacement.id);
                 }
             }
+            for (Projection replacement : replacements) {
+                constructionObserver.reached(
+                        ProjectionConstructionStage.AFTER_MAP_INSERTION);
+            }
 
             created = nextCreated;
             capacitySkippedIds = List.copyOf(skipped);
@@ -388,10 +498,127 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
             for (int index = replacements.size() - 1; index >= 0; index--) {
                 Projection replacement = replacements.get(index);
                 projections.remove(replacement.id, replacement);
-                physicsWorld.removeBody(replacement.body);
+                if (registeredReplacements.contains(replacement)) {
+                    physicsWorld.removeBody(replacement.body);
+                }
             }
             throw failure;
         }
+    }
+
+    /** Removes projections whose canonical lifecycle ended at this authoritative tick. */
+    public void removeExpiredProjections(List<WorldItemId> expiredIds) {
+        assertMainThread("physical world-item expiry reconciliation");
+        ensureOpen();
+        if (prepared) {
+            throw new IllegalStateException(
+                    "cannot reconcile expired projections during a prepared step");
+        }
+        List<WorldItemId> ordered = Objects.requireNonNull(expiredIds, "expiredIds")
+                .stream()
+                .map(id -> Objects.requireNonNull(id, "expired WorldItem ID"))
+                .distinct()
+                .sorted(Comparator.comparingLong(WorldItemId::value))
+                .toList();
+        for (WorldItemId id : ordered) {
+            if (runtimeAccess.physicalSnapshot(id).isPresent()) {
+                throw new IllegalArgumentException(
+                        "cannot remove a projection for a live canonical WorldItem");
+            }
+        }
+        runProjectionTransaction(() -> {
+            for (WorldItemId id : ordered) {
+                removeProjection(id);
+                recoveryBlocks.remove(id);
+                pendingLostIds.remove(id);
+                unreportedLostIds.remove(id);
+            }
+        });
+    }
+
+    /** Commits logical hibernation and projection removal as one rollback-safe transaction. */
+    public WorldItemHibernateResult commitHibernate(
+            LogicalWorldItemService logical,
+            WorldItemHibernateTicket ticket) {
+        assertMainThread("physical world-item hibernation commit");
+        ensureOpen();
+        requireLogicalAuthority(logical);
+        if (prepared) {
+            throw new IllegalStateException(
+                    "cannot hibernate world items during a prepared physics step");
+        }
+
+        return logical.commitHibernate(
+                ticket,
+                () -> runProjectionTransaction(this::removeNonCanonicalProjections));
+    }
+
+    /** Commits one durable linked hibernation across logical and physical ownership. */
+    public WorldItemHibernateResult commitLinkedHibernate(
+            LogicalWorldItemService logical,
+            WorldItemHibernateTicket hibernateTicket,
+            WorldItemPersistenceTicket persistenceTicket,
+            WorldItemDurableProof proof) {
+        assertMainThread("physical linked world-item hibernation commit");
+        ensureOpen();
+        requireLogicalAuthority(logical);
+        if (prepared) {
+            throw new IllegalStateException(
+                    "cannot hibernate world items during a prepared physics step");
+        }
+
+        return logical.commitLinkedHibernate(
+                hibernateTicket,
+                persistenceTicket,
+                proof,
+                () -> runProjectionTransaction(this::removeNonCanonicalProjections));
+    }
+
+    private void removeNonCanonicalProjections() {
+        Set<WorldItemId> activeIds = runtimeAccess.physicalSnapshots().stream()
+                .map(WorldItemPhysicalSnapshot::id)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        for (WorldItemId id : new ArrayList<>(projections.keySet())) {
+            if (!activeIds.contains(id)) {
+                removeProjection(id);
+                recoveryBlocks.remove(id);
+                pendingLostIds.remove(id);
+                unreportedLostIds.remove(id);
+            }
+        }
+    }
+
+    /** Commits activation and rolls it back exactly if projection construction fails. */
+    public WorldItemActivationResult commitActivate(
+            LogicalWorldItemService logical,
+            WorldItemActivationTicket ticket,
+            long tick) {
+        assertMainThread("physical world-item activation commit");
+        ensureOpen();
+        requireLogicalAuthority(logical);
+        if (prepared) {
+            throw new IllegalStateException(
+                    "cannot activate world items during a prepared physics step");
+        }
+
+        return logical.commitActivate(
+                ticket,
+                () -> reconcileRestoredCanonicalState(tick));
+    }
+
+    /** Expires canonical items and their projections as one owner-thread transaction. */
+    public List<WorldItemId> deliverWorldTick(
+            LogicalWorldItemService logical, long worldTick) {
+        assertMainThread("physical world-item expiry transaction");
+        ensureOpen();
+        requireLogicalAuthority(logical);
+        if (prepared) {
+            throw new IllegalStateException(
+                    "cannot expire world items during a prepared physics step");
+        }
+        return logical.deliverWorldTick(
+                worldTick,
+                () -> runProjectionTransaction(this::removeNonCanonicalProjections));
     }
 
     /** Runs one complete deterministic world-item fixed step at 1/60 second. */
@@ -422,6 +649,11 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
         }
         try {
             for (Projection projection : orderedProjections()) {
+                if (runtimeAccess.motionPinnedForPersistence(projection.id)) {
+                    runtimeAccess.physicalSnapshot(projection.id)
+                            .ifPresent(snapshot -> synchronize(projection, snapshot));
+                    continue;
+                }
                 Vector3f position = projection.body.position(new Vector3f());
                 Vector3f velocity = projection.body.linearVelocity(new Vector3f());
                 if (!finite(position) || !finite(velocity)) {
@@ -448,9 +680,9 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
                         new WorldItemMotionUpdate(
                                 projection.id,
                                 projection.revision,
-                                position.x,
+                                globalX(position.x),
                                 position.y,
-                                position.z,
+                                globalZ(position.z),
                                 velocity.x,
                                 velocity.y,
                                 velocity.z,
@@ -485,6 +717,51 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
         return orderedProjections().stream()
                 .map(Projection::presentation)
                 .toList();
+    }
+
+    /** Prepares a bounded projection-only rebase without mutating canonical item state. */
+    public PreparedOriginRebase prepareOriginRebase(
+            SimulationOrigin oldOrigin, SimulationOrigin newOrigin) {
+        assertMainThread("physical world-item origin rebase");
+        ensureOpen();
+        Objects.requireNonNull(oldOrigin, "oldOrigin");
+        Objects.requireNonNull(newOrigin, "newOrigin");
+        if (!simulationOrigin.equals(oldOrigin)) {
+            throw new IllegalStateException("old origin does not match the committed origin");
+        }
+        float offsetX = preciseOffset(oldOrigin.worldOriginX(), newOrigin.worldOriginX(), "x");
+        float offsetZ = preciseOffset(oldOrigin.worldOriginZ(), newOrigin.worldOriginZ(), "z");
+        List<Projection> preparedProjections = orderedProjections();
+        List<PreparedProjectionRebase> replacements =
+                new ArrayList<>(preparedProjections.size());
+        for (Projection projection : preparedProjections) {
+            PhysicsBody.PreparedRebase preparedBody = projection.body.prepareRebase(
+                    new Vector3f(offsetX, 0.0f, offsetZ));
+            double previousX = projection.previousX + offsetX;
+            double currentX = projection.currentX + offsetX;
+            double previousZ = projection.previousZ + offsetZ;
+            double currentZ = projection.currentZ + offsetZ;
+            if (!Double.isFinite(previousX)
+                    || !Double.isFinite(currentX)
+                    || !Double.isFinite(previousZ)
+                    || !Double.isFinite(currentZ)) {
+                throw new IllegalArgumentException("rebased WorldItem projection must remain finite");
+            }
+            replacements.add(new PreparedProjectionRebase(
+                    projection, preparedBody, previousX, currentX, previousZ, currentZ));
+        }
+        return () -> {
+            for (int index = 0; index < replacements.size(); index++) {
+                PreparedProjectionRebase replacement = replacements.get(index);
+                replacement.body.commit();
+                replacement.projection.previousX = replacement.previousX;
+                replacement.projection.currentX = replacement.currentX;
+                replacement.projection.previousZ = replacement.previousZ;
+                replacement.projection.currentZ = replacement.currentZ;
+            }
+            simulationOrigin = newOrigin;
+            originAware = chunks != null;
+        };
     }
 
     public WorldItemPhysicsMetrics metrics() {
@@ -634,10 +911,13 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
         }
         Vector3f position = projection.body.position(new Vector3f());
         Aabb bounds = projection.body.collider().translated(position);
+        SpatialQueryResult<Boolean> overlap = overlapsQuery(
+                physicsWorld.collisionWorld(), bounds);
         if (!collisionBoundsRepresentable(bounds)
                 || (chunks != null
                         && !collisionDataAvailable(projection.body, false))
-                || physicsWorld.collisionWorld().overlapsSolid(bounds)) {
+                || overlap.status() != SpatialQueryResult.Status.AVAILABLE
+                || overlap.result().orElseThrow()) {
             return false;
         }
         projection.previousX = position.x;
@@ -659,24 +939,35 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
         if (!collisionBoundsRepresentable(worldBounds)) {
             return false;
         }
-        boolean overlaps = !outsideBounds && collisions.overlapsSolid(worldBounds);
+        SpatialQueryResult<Boolean> overlapQuery = overlapsQuery(collisions, worldBounds);
+        if (overlapQuery.status() != SpatialQueryResult.Status.AVAILABLE) {
+            return false;
+        }
+        boolean overlaps = !outsideBounds && overlapQuery.result().orElseThrow();
         if (!outsideBounds && !overlaps) {
             return true;
         }
 
         if (overlaps) {
-            var recovered = collisions.depenetrate(
+            SpatialQueryResult<Vector3f> recovered = depenetrateQuery(
+                    collisions,
                     projection.body.collider(),
                     position,
                     config.depenetrationIterations());
-            if (recovered.isPresent()) {
-                Vector3f candidate = recovered.orElseThrow();
+            if (recovered.status() != SpatialQueryResult.Status.AVAILABLE) {
+                return false;
+            }
+            if (recovered.result().isPresent()) {
+                Vector3f candidate = recovered.result().orElseThrow();
                 Aabb candidateBounds =
                         projection.body.collider().translated(candidate);
+                SpatialQueryResult<Boolean> candidateOverlap =
+                        overlapsQuery(collisions, candidateBounds);
                 if (candidate.y >= half
                         && candidate.y <= topCenter
                         && collisionBoundsRepresentable(candidateBounds)
-                        && !collisions.overlapsSolid(candidateBounds)) {
+                        && candidateOverlap.status() == SpatialQueryResult.Status.AVAILABLE
+                        && !candidateOverlap.result().orElseThrow()) {
                     projection.body.setPosition(candidate);
                     return true;
                 }
@@ -689,8 +980,15 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
             float candidateY = start + step * 0.25f;
             Vector3f candidate = new Vector3f(position.x, candidateY, position.z);
             Aabb candidateBounds = projection.body.collider().translated(candidate);
-            if (collisionBoundsRepresentable(candidateBounds)
-                    && !collisions.overlapsSolid(candidateBounds)) {
+            if (!collisionBoundsRepresentable(candidateBounds)) {
+                continue;
+            }
+            SpatialQueryResult<Boolean> candidateOverlap =
+                    overlapsQuery(collisions, candidateBounds);
+            if (candidateOverlap.status() != SpatialQueryResult.Status.AVAILABLE) {
+                return false;
+            }
+            if (!candidateOverlap.result().orElseThrow()) {
                 projection.body.setPosition(candidate);
                 return true;
             }
@@ -705,15 +1003,18 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
         if (probeDistance == 0 || velocity.y > settleSpeed) {
             return false;
         }
-        var contact = physicsWorld.collisionWorld().sweep(
+        SpatialQueryResult<SweepResult> contact = sweepQuery(
+                physicsWorld.collisionWorld(),
                 projection.body.collider(),
                 position,
                 new Vector3f(0.0f, -probeDistance, 0.0f));
-        if (contact.isEmpty() || contact.orElseThrow().normalY() <= 0) {
+        if (contact.status() != SpatialQueryResult.Status.AVAILABLE
+                || contact.result().isEmpty()
+                || contact.result().orElseThrow().normalY() <= 0) {
             return false;
         }
 
-        SweepResult hit = contact.orElseThrow();
+        SweepResult hit = contact.result().orElseThrow();
         float safeDistance = probeDistance * hit.fraction();
         if (Float.isFinite(safeDistance) && safeDistance > 0) {
             projection.body.setPosition(new Vector3f(
@@ -736,12 +1037,43 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
             return false;
         }
         Vector3f position = projection.body.position(new Vector3f());
-        return physicsWorld.collisionWorld().sweep(
+        SpatialQueryResult<SweepResult> contact = sweepQuery(
+                        physicsWorld.collisionWorld(),
                         projection.body.collider(),
                         position,
-                        new Vector3f(0.0f, -config.groundProbeDistance(), 0.0f))
-                .map(SweepResult::normalY)
-                .orElse(0.0f) > 0;
+                        new Vector3f(0.0f, -config.groundProbeDistance(), 0.0f));
+        return contact.status() == SpatialQueryResult.Status.AVAILABLE
+                && contact.result().map(SweepResult::normalY).orElse(0.0f) > 0;
+    }
+
+    private SpatialQueryResult<SweepResult> sweepQuery(
+            CollisionWorld collisions,
+            Aabb collider,
+            Vector3f position,
+            Vector3f displacement) {
+        return originAware
+                ? collisions.sweep(simulationOrigin, collider, position, displacement)
+                : SpatialQueryResult.available(
+                        collisions.sweep(collider, position, displacement));
+    }
+
+    private SpatialQueryResult<Boolean> overlapsQuery(
+            CollisionWorld collisions, Aabb bounds) {
+        return originAware
+                ? collisions.overlapsSolid(simulationOrigin, bounds)
+                : SpatialQueryResult.available(
+                        Optional.of(collisions.overlapsSolid(bounds)));
+    }
+
+    private SpatialQueryResult<Vector3f> depenetrateQuery(
+            CollisionWorld collisions,
+            Aabb collider,
+            Vector3f position,
+            int iterations) {
+        return originAware
+                ? collisions.depenetrate(simulationOrigin, collider, position, iterations)
+                : SpatialQueryResult.available(
+                        collisions.depenetrate(collider, position, iterations));
     }
 
     private WorldItemPhysicalState updateSleepState(
@@ -778,14 +1110,12 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
 
     private boolean collisionDataAvailable(
             WorldItemPhysicalSnapshot snapshot, boolean includeSweep) {
-        float half = config.edgeLength() * 0.5f;
+        double half = config.edgeLength() * 0.5;
         var item = snapshot.runtime().item();
-        Vector3f position = new Vector3f(
-                finiteFloat(item.positionX(), "positionX"),
-                finiteFloat(item.positionY(), "positionY"),
-                finiteFloat(item.positionZ(), "positionZ"));
-        Aabb bounds = new Aabb(-half, -half, -half, half, half, half)
-                .translated(position);
+        double minX = item.positionX() - half;
+        double maxX = item.positionX() + half;
+        double minZ = item.positionZ() - half;
+        double maxZ = item.positionZ() + half;
         if (includeSweep) {
             Vector3f velocity = new Vector3f(
                     finiteFloat(item.velocityX(), "velocityX"),
@@ -793,11 +1123,14 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
                     finiteFloat(item.velocityZ(), "velocityZ"));
             velocity.y += GameConfig.Physics.GRAVITY * FIXED_STEP_SECONDS;
             clampTerminalVelocity(velocity);
-            bounds = bounds.sweptBounds(
-                    new Vector3f(velocity).mul(FIXED_STEP_SECONDS));
+            double displacementX = velocity.x * FIXED_STEP_SECONDS;
+            double displacementZ = velocity.z * FIXED_STEP_SECONDS;
+            minX += Math.min(0.0, displacementX);
+            maxX += Math.max(0.0, displacementX);
+            minZ += Math.min(0.0, displacementZ);
+            maxZ += Math.max(0.0, displacementZ);
         }
-        return collisionDataAvailable(
-                bounds.minX(), bounds.maxX(), bounds.minZ(), bounds.maxZ());
+        return collisionDataAvailable(minX, maxX, minZ, maxZ);
     }
 
     private boolean recoveryBlocked(WorldItemPhysicalSnapshot snapshot) {
@@ -830,7 +1163,8 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
         ChunkKey minimum = ChunkKey.fromWorld(
                 (int) Math.floor(minX), (int) Math.floor(minZ));
         ChunkKey maximum = ChunkKey.fromWorld(
-                (int) Math.floor(maxX), (int) Math.floor(maxZ));
+                (int) Math.floor(exclusiveMaximum(minX, maxX)),
+                (int) Math.floor(exclusiveMaximum(minZ, maxZ)));
         Map<ChunkKey, Long> revisions = new LinkedHashMap<>();
         for (long chunkX = minimum.x(); chunkX <= maximum.x(); chunkX++) {
             for (long chunkZ = minimum.z(); chunkZ <= maximum.z(); chunkZ++) {
@@ -857,7 +1191,10 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
             bounds = bounds.sweptBounds(new Vector3f(velocity).mul(FIXED_STEP_SECONDS));
         }
         return collisionDataAvailable(
-                bounds.minX(), bounds.maxX(), bounds.minZ(), bounds.maxZ());
+                bounds.minX() + simulationOrigin.worldOriginX(),
+                bounds.maxX() + simulationOrigin.worldOriginX(),
+                bounds.minZ() + simulationOrigin.worldOriginZ(),
+                bounds.maxZ() + simulationOrigin.worldOriginZ());
     }
 
     private boolean collisionDataAvailable(
@@ -872,7 +1209,8 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
         ChunkKey minimum = ChunkKey.fromWorld(
                 (int) Math.floor(minX), (int) Math.floor(minZ));
         ChunkKey maximum = ChunkKey.fromWorld(
-                (int) Math.floor(maxX), (int) Math.floor(maxZ));
+                (int) Math.floor(exclusiveMaximum(minX, maxX)),
+                (int) Math.floor(exclusiveMaximum(minZ, maxZ)));
         for (long chunkX = minimum.x(); chunkX <= maximum.x(); chunkX++) {
             for (long chunkZ = minimum.z(); chunkZ <= maximum.z(); chunkZ++) {
                 if (!chunks.contains(new ChunkKey((int) chunkX, (int) chunkZ))) {
@@ -900,6 +1238,11 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
     }
 
     private void freezeProjection(Projection projection) {
+        if (runtimeAccess.motionPinnedForPersistence(projection.id)) {
+            runtimeAccess.physicalSnapshot(projection.id)
+                    .ifPresent(snapshot -> synchronize(projection, snapshot));
+            return;
+        }
         Vector3f position = projection.body.position(new Vector3f());
         Vector3f velocity = projection.body.linearVelocity(new Vector3f());
         if (!finite(position) || !finite(velocity)) {
@@ -909,9 +1252,9 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
                 new WorldItemMotionUpdate(
                         projection.id,
                         projection.revision,
-                        position.x,
+                        globalX(position.x),
                         position.y,
-                        position.z,
+                        globalZ(position.z),
                         velocity.x,
                         velocity.y,
                         velocity.z,
@@ -929,6 +1272,9 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
     }
 
     private void freezeUnprojected(WorldItemPhysicalSnapshot snapshot) {
+        if (runtimeAccess.motionPinnedForPersistence(snapshot.id())) {
+            return;
+        }
         if (snapshot.state() == WorldItemPhysicalState.FROZEN_UNLOADED) {
             return;
         }
@@ -983,6 +1329,10 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
             List<ProjectionConstruction> rollbackOwnership) {
         PhysicsBody body = Objects.requireNonNull(
                 projectionFactory.create(snapshot), "projection factory result");
+        body.teleport(new Vector3f(
+                localX(snapshot.runtime().item().positionX()),
+                finiteFloat(snapshot.runtime().item().positionY(), "positionY"),
+                localZ(snapshot.runtime().item().positionZ())));
         constructionObserver.reached(ProjectionConstructionStage.AFTER_BODY_CREATION);
         Projection projection = new Projection(snapshot, body);
         constructionObserver.reached(ProjectionConstructionStage.AFTER_PROJECTION_CONSTRUCTION);
@@ -1041,9 +1391,9 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
 
     private void synchronize(Projection projection, WorldItemPhysicalSnapshot snapshot) {
         Vector3f candidatePosition = new Vector3f(
-                finiteFloat(snapshot.runtime().item().positionX(), "positionX"),
+                localX(snapshot.runtime().item().positionX()),
                 finiteFloat(snapshot.runtime().item().positionY(), "positionY"),
-                finiteFloat(snapshot.runtime().item().positionZ(), "positionZ"));
+                localZ(snapshot.runtime().item().positionZ()));
         Vector3f candidateVelocity = new Vector3f(
                 finiteFloat(snapshot.runtime().item().velocityX(), "velocityX"),
                 finiteFloat(snapshot.runtime().item().velocityY(), "velocityY"),
@@ -1058,21 +1408,94 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
                 ? config.sleepStableSteps()
                 : 0;
         projection.body.setSleeping(projection.state == WorldItemPhysicalState.SLEEPING);
-        projection.previousX = snapshot.runtime().item().positionX();
+        projection.previousX = localX(snapshot.runtime().item().positionX());
         projection.previousY = snapshot.runtime().item().positionY();
-        projection.previousZ = snapshot.runtime().item().positionZ();
+        projection.previousZ = localZ(snapshot.runtime().item().positionZ());
         projection.currentX = projection.previousX;
         projection.currentY = projection.previousY;
         projection.currentZ = projection.previousZ;
     }
 
     private void removeProjection(WorldItemId id) {
-        Projection projection = projections.remove(id);
+        Projection projection = projections.get(id);
         if (projection != null) {
             if (physicsWorld.removeBody(projection.body)) {
                 destroyed++;
             }
+            removalObserver.reached(ProjectionRemovalStage.AFTER_BODY_REMOVAL, id);
+            projections.remove(id, projection);
+            removalObserver.reached(ProjectionRemovalStage.AFTER_MAP_REMOVAL, id);
         }
+    }
+
+    private static double exclusiveMaximum(double minimum, double maximum) {
+        return maximum > minimum ? Math.nextDown(maximum) : maximum;
+    }
+
+    private void runProjectionTransaction(Runnable publication) {
+        ProjectionStateSnapshot before = captureProjectionState();
+        try {
+            publication.run();
+        } catch (RuntimeException | Error failure) {
+            try {
+                restoreProjectionState(before);
+            } catch (RuntimeException | Error rollbackFailure) {
+                appendFailure(failure, rollbackFailure);
+            }
+            rethrow(failure);
+        }
+    }
+
+    private ProjectionStateSnapshot captureProjectionState() {
+        return new ProjectionStateSnapshot(
+                new LinkedHashMap<>(projections),
+                physicsWorld.bodies(),
+                new LinkedHashMap<>(recoveryBlocks),
+                Set.copyOf(pendingLostIds),
+                Set.copyOf(unreportedLostIds),
+                created,
+                rebuilt,
+                destroyed,
+                appliedWrites,
+                staleRejections,
+                lost,
+                capacitySkipped,
+                recoveryFailures,
+                capacitySkippedIds,
+                prepared);
+    }
+
+    private void restoreProjectionState(ProjectionStateSnapshot before) {
+        for (PhysicsBody body : physicsWorld.bodies()) {
+            if (!physicsWorld.removeBody(body)) {
+                throw new IllegalStateException(
+                        "failed to detach projection body during rollback");
+            }
+        }
+        for (PhysicsBody body : before.physicsBodies) {
+            if (!physicsWorld.addBody(body)) {
+                throw new IllegalStateException(
+                        "failed to restore projection body during rollback");
+            }
+        }
+        projections.clear();
+        projections.putAll(before.projections);
+        recoveryBlocks.clear();
+        recoveryBlocks.putAll(before.recoveryBlocks);
+        pendingLostIds.clear();
+        pendingLostIds.addAll(before.pendingLostIds);
+        unreportedLostIds.clear();
+        unreportedLostIds.addAll(before.unreportedLostIds);
+        created = before.created;
+        rebuilt = before.rebuilt;
+        destroyed = before.destroyed;
+        appliedWrites = before.appliedWrites;
+        staleRejections = before.staleRejections;
+        lost = before.lost;
+        capacitySkipped = before.capacitySkipped;
+        recoveryFailures = before.recoveryFailures;
+        capacitySkippedIds = before.capacitySkippedIds;
+        prepared = before.prepared;
     }
 
     private List<WorldItemPhysicalSnapshot> orderedSnapshots() {
@@ -1132,8 +1555,41 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
         return converted;
     }
 
+    private float localX(double globalX) {
+        return finiteFloat(globalX - simulationOrigin.worldOriginX(), "local positionX");
+    }
+
+    private float localZ(double globalZ) {
+        return finiteFloat(globalZ - simulationOrigin.worldOriginZ(), "local positionZ");
+    }
+
+    private double globalX(float localX) {
+        return simulationOrigin.worldOriginX() + (double) localX;
+    }
+
+    private double globalZ(float localZ) {
+        return simulationOrigin.worldOriginZ() + (double) localZ;
+    }
+
+    private static float preciseOffset(long oldOrigin, long newOrigin, String axis) {
+        long difference = Math.subtractExact(oldOrigin, newOrigin);
+        float converted = difference;
+        if (!Float.isFinite(converted) || (long) converted != difference) {
+            throw new IllegalArgumentException(axis + " origin delta is not precisely representable");
+        }
+        return converted;
+    }
+
     private void assertMainThread(String operation) {
         mainThreadGuard.assertMainThread(operation);
+    }
+
+    private void requireLogicalAuthority(LogicalWorldItemService logical) {
+        Objects.requireNonNull(logical, "logical");
+        if (runtimeAccess != logical) {
+            throw new IllegalArgumentException(
+                    "paging must use this projection system's logical authority");
+        }
     }
 
     private void ensureOpen() {
@@ -1169,12 +1625,46 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
         }
     }
 
+    private record ProjectionStateSnapshot(
+            Map<WorldItemId, Projection> projections,
+            List<PhysicsBody> physicsBodies,
+            Map<WorldItemId, RecoveryBlock> recoveryBlocks,
+            Set<WorldItemId> pendingLostIds,
+            Set<WorldItemId> unreportedLostIds,
+            long created,
+            long rebuilt,
+            long destroyed,
+            long appliedWrites,
+            long staleRejections,
+            long lost,
+            long capacitySkipped,
+            long recoveryFailures,
+            List<WorldItemId> capacitySkippedIds,
+            boolean prepared) {
+        private ProjectionStateSnapshot {
+            projections = new LinkedHashMap<>(projections);
+            physicsBodies = List.copyOf(physicsBodies);
+            recoveryBlocks = new LinkedHashMap<>(recoveryBlocks);
+            pendingLostIds = Set.copyOf(pendingLostIds);
+            unreportedLostIds = Set.copyOf(unreportedLostIds);
+            capacitySkippedIds = List.copyOf(capacitySkippedIds);
+        }
+    }
+
     private record RecoveryBlock(
             long itemRevision, Map<ChunkKey, Long> collisionRevisions) {
         private RecoveryBlock {
             collisionRevisions = Map.copyOf(collisionRevisions);
         }
     }
+
+    private record PreparedProjectionRebase(
+            Projection projection,
+            PhysicsBody.PreparedRebase body,
+            double previousX,
+            double currentX,
+            double previousZ,
+            double currentZ) {}
 
     private final class Projection {
         private final WorldItemId id;
@@ -1200,9 +1690,9 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
                     ? config.sleepStableSteps()
                     : 0;
             this.body.setSleeping(snapshot.state() == WorldItemPhysicalState.SLEEPING);
-            this.previousX = snapshot.runtime().item().positionX();
+            this.previousX = localX(snapshot.runtime().item().positionX());
             this.previousY = snapshot.runtime().item().positionY();
-            this.previousZ = snapshot.runtime().item().positionZ();
+            this.previousZ = localZ(snapshot.runtime().item().positionZ());
             this.currentX = previousX;
             this.currentY = previousY;
             this.currentZ = previousZ;
@@ -1245,5 +1735,10 @@ public final class PhysicalWorldItemSystem implements AutoCloseable {
                     currentY,
                     currentZ);
         }
+    }
+
+    @FunctionalInterface
+    public interface PreparedOriginRebase {
+        void commit();
     }
 }
