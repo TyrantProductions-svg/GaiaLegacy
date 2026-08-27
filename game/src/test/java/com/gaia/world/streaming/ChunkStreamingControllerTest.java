@@ -1,6 +1,7 @@
 package com.gaia.world.streaming;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -12,6 +13,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
@@ -239,6 +241,93 @@ class ChunkStreamingControllerTest {
                         position(new ChunkKey(0, 0)),
                         observation(Set.of(), Set.of())).desiredEpoch(),
                 "failed checked enumeration must not consume an epoch");
+    }
+
+    @Test
+    void decisionPublishesCompleteCurrentDesiredPriorityOrder() {
+        ChunkKey center = new ChunkKey(0, 0);
+        ChunkStreamingDecision decision = controller().update(
+                position(center), observation(Set.of(), Set.of()));
+
+        List<ChunkKey> priority = desiredPriorityOrder(decision);
+
+        assertEquals(121, priority.size());
+        assertEquals(121, new HashSet<>(priority).size());
+        assertEquals(decision.desiredSets().preload(), Set.copyOf(priority));
+        assertEquals(center, priority.get(0));
+        assertTrue(priority.indexOf(new ChunkKey(2, 2))
+                < priority.indexOf(new ChunkKey(3, 0)),
+                "every simulation key must precede render-only work");
+        assertTrue(priority.indexOf(new ChunkKey(4, 0))
+                < priority.indexOf(new ChunkKey(5, 0)),
+                "every render key must precede preload-only work");
+        assertTrue(priority.indexOf(new ChunkKey(-1, 0))
+                < priority.indexOf(new ChunkKey(1, 0)),
+                "equal-distance ties use canonical ChunkKey order");
+    }
+
+    @Test
+    void requestedLoadPhasesArePublishedAsDefensiveBoundedMetadata() {
+        ChunkStreamingObservation observation = observation(
+                Set.of(), Set.of(new ChunkKey(1, 0), new ChunkKey(2, 0)));
+
+        Object raw = assertDoesNotThrow(() -> observation.getClass()
+                .getMethod("requestedLoadPhases")
+                .invoke(observation));
+
+        @SuppressWarnings("unchecked")
+        Map<ChunkKey, ?> phases = (Map<ChunkKey, ?>) raw;
+        assertEquals(observation.requested(), phases.keySet());
+        assertTrue(phases.size() <= 32);
+        assertThrows(UnsupportedOperationException.class,
+                () -> phases.clear());
+    }
+
+    @Test
+    void newSimulationKeyDisplacesLowerPriorityQueuedWorkAtCapacity() {
+        ChunkKey oldCenter = new ChunkKey(0, 0);
+        ChunkKey newCenter = new ChunkKey(1, 0);
+        ChunkKey newlyCritical = new ChunkKey(3, 0);
+        LinkedHashSet<ChunkKey> queued = new LinkedHashSet<>();
+        for (int x = newCenter.x() - 5; x <= newCenter.x() + 5; x++) {
+            for (int z = newCenter.z() - 5; z <= newCenter.z() + 5; z++) {
+                ChunkKey key = new ChunkKey(x, z);
+                int ring = Math.max(
+                        Math.abs(x - newCenter.x()),
+                        Math.abs(z - newCenter.z()));
+                if (ring >= 4 && !key.equals(newlyCritical)) {
+                    queued.add(key);
+                    if (queued.size() == 32) {
+                        break;
+                    }
+                }
+            }
+            if (queued.size() == 32) {
+                break;
+            }
+        }
+        assertEquals(32, queued.size());
+        ChunkStreamingController controller = controller();
+        controller.update(position(oldCenter), observation(Set.of(), Set.of()));
+
+        ChunkStreamingDecision moved = controller.update(
+                position(newCenter), observation(Set.of(), queued));
+
+        assertTrue(moved.admissions().contains(newlyCritical),
+                "new simulation work must enter ahead of queued preload work");
+        assertFalse(moved.cancellations().isEmpty());
+        assertTrue(queued.containsAll(moved.cancellations()),
+                "capacity preemption may remove only previously queued work");
+        assertTrue(moved.admissions().size() + queued.size()
+                - moved.cancellations().size() <= 32);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<ChunkKey> desiredPriorityOrder(
+            ChunkStreamingDecision decision) {
+        return assertDoesNotThrow(() -> (List<ChunkKey>) decision.getClass()
+                .getMethod("desiredPriorityOrder")
+                .invoke(decision));
     }
 
     private static ChunkStreamingController controller() {

@@ -69,7 +69,7 @@ class GameLoopStructureTest {
                                         + "GameLoop.java"));
 
         assertTrue(productLoop.contains("GameSession"));
-        assertTrue(productLoop.contains("session.pollLoad()"));
+        assertTrue(productLoop.contains("session.pollLoadResponsive()"));
         assertTrue(productLoop.contains("session.advancePlaying("));
         assertTrue(productLoop.contains("session.capturePaused()"));
         assertTrue(productLoop.contains("session.discardFixedTime()"));
@@ -84,6 +84,10 @@ class GameLoopStructureTest {
         assertFalse(productLoop.contains("completeLoadingIfReady("));
         assertFalse(productLoop.contains("fixedStepClock().advance("));
         assertFalse(productLoop.contains("new World("));
+        assertFalse(productLoop.contains("ChunkRepository"));
+        assertFalse(productLoop.contains("SessionPersistenceClock"));
+        assertFalse(productLoop.contains("StreamedChunkStore"));
+        assertFalse(productLoop.contains("StreamedWorldItemPageBackend"));
         assertFalse(productLoop.contains("BlockInteractionController"));
         assertFalse(productLoop.contains("InteractionFeedbackCoordinator"));
         assertEquals(1, occurrences(productLoop, "while ("));

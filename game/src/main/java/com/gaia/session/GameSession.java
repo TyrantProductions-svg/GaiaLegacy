@@ -14,6 +14,27 @@ public interface GameSession extends AutoCloseable {
 
     void pollLoad();
 
+    /** Responsive product-loop load step; legacy sessions may use the synchronous path. */
+    default void pollLoadResponsive() {
+        pollLoad();
+    }
+
+    /** Owner-prepared initial archive write, when readiness awaits first persistence. */
+    default Optional<SaveCoordinator.PreparedSave> preparedInitialSave() {
+        return Optional.empty();
+    }
+
+    /** Publishes the result of the exact prepared initial save. */
+    default void completeInitialSave(GameSessionSaveResult result) {
+        throw new UnsupportedOperationException(
+                "This session has no prepared initial save");
+    }
+
+    /** Cancels and clears the exact owner-prepared initial save, if present. */
+    default void cancelPreparedInitialSave() {
+        // A legacy session has no initial persistence ticket.
+    }
+
     GameSessionFrame advancePlaying(
             double frameDeltaSeconds,
             MouseDelta look,
@@ -78,6 +99,12 @@ public interface GameSession extends AutoCloseable {
     default GameSessionSaveResult save() {
         throw new UnsupportedOperationException(
                 "This session does not own a save coordinator");
+    }
+
+    /** Captures a regular save on the owner for detached storage execution. */
+    default SaveCoordinator.PreparedSave prepareDetachedSave() {
+        throw new UnsupportedOperationException(
+                "This session does not own a detached save coordinator");
     }
 
     default boolean hasUnsavedChanges() {

@@ -4,6 +4,7 @@ import com.gaia.settings.SettingsDefaults;
 import com.gaia.settings.SettingsDraftSnapshot;
 import com.gaia.settings.SettingsSnapshot;
 import com.gaia.shell.ModalId;
+import com.gaia.shell.OperationProgressSnapshot;
 import com.gaia.shell.ProductShellSnapshot;
 import com.gaia.shell.ScreenCommand;
 import com.gaia.shell.ScreenId;
@@ -130,6 +131,8 @@ public final class ProductScreenPresenter {
         } else {
             presentScreen(
                     snapshot.screen(),
+                    snapshot.operationProgress(),
+                    snapshot.operationAnimationStep(),
                     focusedAction,
                     focusedControl,
                     context,
@@ -141,6 +144,8 @@ public final class ProductScreenPresenter {
 
     private void presentScreen(
             ScreenId screen,
+            Optional<OperationProgressSnapshot> operationProgress,
+            int operationAnimationStep,
             Optional<UiActionId> focusedAction,
             Optional<UiControlId> focusedControl,
             UiLayoutContext context,
@@ -160,10 +165,26 @@ public final class ProductScreenPresenter {
                     context,
                     draw,
                     hitRegions);
-            case LOADING -> presentLoading(focusedAction, context, draw, hitRegions);
-            case SAVING -> {
-                // Static no-input frame; Task 5 supplies its final presentation timing.
-            }
+            case LOADING -> presentOperation(
+                    operationProgress.orElseGet(() -> fallbackProgress(
+                            OperationProgressSnapshot.Kind.LOAD_WORLD,
+                            "PREPARING", "Waiting for load work", true)),
+                    "LOADING WORLD",
+                    operationAnimationStep,
+                    focusedAction,
+                    context,
+                    draw,
+                    hitRegions);
+            case SAVING -> presentOperation(
+                    operationProgress.orElseGet(() -> fallbackProgress(
+                            OperationProgressSnapshot.Kind.SAVE_WORLD,
+                            "PREPARING", "Waiting for save work", false)),
+                    "SAVING WORLD",
+                    operationAnimationStep,
+                    focusedAction,
+                    context,
+                    draw,
+                    hitRegions);
             case PLAYING -> {
                 // Gameplay and its HUD are composed by the session rather than the product shell.
             }
@@ -739,20 +760,69 @@ public final class ProductScreenPresenter {
                 hitRegions);
     }
 
-    private void presentLoading(
+    private void presentOperation(
+            OperationProgressSnapshot progress,
+            String title,
+            int animationStep,
             Optional<UiActionId> focusedAction,
             UiLayoutContext context,
             UiDrawList draw,
             List<UiHitRegion> hitRegions) {
         double centerY = context.logicalHeight() / 2.0d;
-        appendCenteredText("LOADING", centerY - 42.0d, TEXT, context, draw);
-        appendButtons(
-                List.of(new Button(UiActionId.DISMISS, "CANCEL", true)),
-                centerY + 8.0d,
-                focusedAction,
-                context,
-                draw,
-                hitRegions);
+        appendCenteredText(title, centerY - 92.0d, TEXT, context, draw);
+        appendCenteredText(progress.phase(), centerY - 58.0d, TEXT, context, draw);
+        appendCenteredText(progress.status(), centerY - 34.0d, TEXT, context, draw);
+        progress.exactUnitsText().ifPresent(units ->
+                appendCenteredText(units, centerY - 10.0d, TEXT, context, draw));
+        UiRect track = new UiRect(
+                context.logicalWidth() / 2.0d - 180.0d,
+                centerY + 16.0d,
+                context.logicalWidth() / 2.0d + 180.0d,
+                centerY + 34.0d);
+        appendSolid(track, DISABLED_BUTTON, context, draw);
+        if (progress.fraction().isPresent()) {
+            double right = track.left()
+                    + (track.right() - track.left())
+                            * progress.fraction().orElseThrow();
+            if (right > track.left()) {
+                appendSolid(
+                        new UiRect(track.left(), track.top(), right, track.bottom()),
+                        SELECTED_BUTTON,
+                        context,
+                        draw);
+            }
+        } else {
+            double segmentWidth = 72.0d;
+            double travel = track.right() - track.left() - segmentWidth;
+            double left = track.left() + travel * animationStep / 59.0d;
+            appendSolid(
+                    new UiRect(left, track.top(), left + segmentWidth, track.bottom()),
+                    SELECTED_BUTTON,
+                    context,
+                    draw);
+        }
+        progress.detail().ifPresent(detail ->
+                appendCenteredText(detail, centerY + 52.0d, DISABLED_TEXT, context, draw));
+        if (progress.cancelable()
+                && progress.terminalState()
+                        == OperationProgressSnapshot.TerminalState.RUNNING) {
+            appendButtons(
+                    List.of(new Button(UiActionId.DISMISS, "CANCEL", true)),
+                    centerY + 74.0d,
+                    focusedAction,
+                    context,
+                    draw,
+                    hitRegions);
+        }
+    }
+
+    private static OperationProgressSnapshot fallbackProgress(
+            OperationProgressSnapshot.Kind kind,
+            String phase,
+            String status,
+            boolean cancelable) {
+        return OperationProgressSnapshot.indeterminate(
+                kind, phase, status, cancelable);
     }
 
     private void presentModal(

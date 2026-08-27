@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.gaia.shell.ModalId;
+import com.gaia.shell.OperationProgressSnapshot;
 import com.gaia.shell.ProductShellSnapshot;
 import com.gaia.shell.ScreenId;
 import com.gaia.shell.ScreenReturnTarget;
@@ -131,6 +132,50 @@ class ProductScreenPresenterTest {
     }
 
     @Test
+    void loadingPresentsTruthfulExactUnitsAndOnlyProvenCancellation() {
+        ProductScreenPresenter capturing = new ProductScreenPresenter(
+                new EmptySaveCatalog(), capturingTextRenderer());
+        OperationProgressSnapshot progress = new OperationProgressSnapshot(
+                OperationProgressSnapshot.Kind.LOAD_WORLD,
+                "RESTORING CHUNKS",
+                "Preparing simulation neighborhood",
+                java.util.OptionalLong.of(13),
+                java.util.OptionalLong.of(25),
+                OperationProgressSnapshot.TerminalState.RUNNING,
+                true,
+                Optional.empty());
+
+        ProductUiLayout layout = capturing.present(
+                snapshot(ScreenId.LOADING, progress), CONTEXT);
+
+        assertTrue(allText(layout).contains("LOADING WORLD"));
+        assertTrue(allText(layout).contains("RESTORING CHUNKS"));
+        assertTrue(allText(layout).contains("13 / 25"));
+        assertEquals(List.of(UiActionId.DISMISS), enabledActions(layout));
+    }
+
+    @Test
+    void savingUnknownTotalUsesAnimatedIndeterminateBarAndNoCancelAction() {
+        ProductScreenPresenter capturing = new ProductScreenPresenter(
+                new EmptySaveCatalog(), capturingTextRenderer());
+        OperationProgressSnapshot first = OperationProgressSnapshot.indeterminate(
+                OperationProgressSnapshot.Kind.SAVE_AND_QUIT,
+                "VALIDATING CANDIDATE",
+                "Checking the complete save root",
+                false);
+        ProductUiLayout firstLayout = capturing.present(
+                snapshot(ScreenId.SAVING, first, 0), CONTEXT);
+        ProductUiLayout laterLayout = capturing.present(
+                snapshot(ScreenId.SAVING, first, 20), CONTEXT);
+
+        assertTrue(allText(firstLayout).contains("SAVING WORLD"));
+        assertTrue(allText(firstLayout).contains("VALIDATING CANDIDATE"));
+        assertTrue(actions(firstLayout).isEmpty());
+        assertFalse(firstLayout.frame().commands().equals(
+                laterLayout.frame().commands()));
+    }
+
+    @Test
     void everyHitRegionUsesBoundsPaintedByTheSameLayout() {
         for (ProductShellSnapshot snapshot : List.of(MAIN_MENU, PAUSED)) {
             ProductUiLayout layout = presenter.present(snapshot, CONTEXT);
@@ -193,12 +238,37 @@ class ProductScreenPresenterTest {
         return text.toString();
     }
 
+    private static String allText(ProductUiLayout layout) {
+        StringBuilder text = new StringBuilder();
+        layout.frame().commands().stream()
+                .filter(command -> command.texture() == UiTextureId.FONT_ATLAS)
+                .forEach(command -> text.append((char) Math.round(
+                        command.uv().left() * 128.0f)));
+        return text.toString();
+    }
+
     static UiLayoutContext context() {
         return new UiLayoutContext(new RenderSurfaceMetrics(1280, 720, 1280, 720, 1.0f, 1.0f));
     }
 
     static ProductShellSnapshot snapshot(ScreenId screen) {
         return new ProductShellSnapshot(screen, Optional.empty(), Optional.empty());
+    }
+
+    private static ProductShellSnapshot snapshot(
+            ScreenId screen, OperationProgressSnapshot progress) {
+        return new ProductShellSnapshot(
+                screen, Optional.empty(), Optional.empty(), Optional.of(progress));
+    }
+
+    private static ProductShellSnapshot snapshot(
+            ScreenId screen, OperationProgressSnapshot progress, int animationStep) {
+        return new ProductShellSnapshot(
+                screen,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.of(progress),
+                animationStep);
     }
 
     private static List<UiActionId> actions(ProductUiLayout layout) {

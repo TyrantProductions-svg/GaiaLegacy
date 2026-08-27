@@ -5,10 +5,12 @@ import com.gaia.save.streaming.StreamedChunkUnloadResult;
 import com.gaia.save.streaming.StreamedChunkStore;
 import com.overlord.core.thread.MainThreadGuard;
 import com.overlord.voxel.ChunkGenerationData;
+import com.overlord.voxel.ChunkAvailability;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkRepository;
 import com.overlord.voxel.ChunkStreamingPublication;
 import com.overlord.voxel.ChunkStreamingTicket;
+import com.overlord.voxel.ChunkState;
 import com.overlord.voxel.ChunkUnloadPreparation;
 import com.overlord.voxel.ChunkUnloadResult;
 import com.overlord.voxel.ChunkUnloadTicket;
@@ -176,11 +178,16 @@ public final class ChunkStreamingPipeline implements AutoCloseable {
         for (ChunkKey key : checked.cancellations()) {
             cancelLoad(key);
         }
-        int priority = 0;
+        loadScheduler.reprioritizeQueued(checked.desiredPriorityOrder());
         for (ChunkKey key : checked.admissions()) {
-            admitLoad(key, checked.desiredEpoch(), priority++);
+            int priority = checked.desiredPriorityOrder().indexOf(key);
+            if (priority < 0) {
+                throw new IllegalStateException(
+                        "admission is missing from desired priority order");
+            }
+            admitLoad(key, checked.desiredEpoch(), priority);
         }
-        priority = 0;
+        int priority = 0;
         List<ChunkKey> orderedUnloads = new ArrayList<>(
                 checked.unloadCandidates().size());
         checked.unloadCandidates().stream()
@@ -305,6 +312,41 @@ public final class ChunkStreamingPipeline implements AutoCloseable {
         LinkedHashMap<ChunkKey, Boolean> requested = new LinkedHashMap<>();
         loads.values().forEach(context -> requested.put(context.key, Boolean.TRUE));
         return Set.copyOf(requested.keySet());
+    }
+
+    public Map<ChunkKey, RequestedLoadPhase> requestedLoadPhases() {
+        assertOwner("Chunk streaming requested-phase observation");
+        Map<Long, RequestedLoadPhase> phasesByWork =
+                loadScheduler.phasesByWorkId();
+        LinkedHashMap<ChunkKey, RequestedLoadPhase> current =
+                new LinkedHashMap<>();
+        loads.forEach((workId, context) -> {
+            RequestedLoadPhase phase = phasesByWork.get(workId);
+            if (phase != null) {
+                current.put(context.key, phase);
+            }
+        });
+        return Map.copyOf(current);
+    }
+
+    public boolean resident(ChunkKey key) {
+        assertOwner("Chunk streaming resident observation");
+        return repository.contains(Objects.requireNonNull(key, "key"));
+    }
+
+    public ChunkAvailability availability(ChunkKey key) {
+        assertOwner("Chunk streaming availability observation");
+        return repository.availability(Objects.requireNonNull(key, "key"));
+    }
+
+    public ChunkState chunkState(ChunkKey key) {
+        assertOwner("Chunk streaming state observation");
+        return repository.state(Objects.requireNonNull(key, "key"));
+    }
+
+    public boolean renderable(ChunkKey key) {
+        assertOwner("Chunk streaming renderable observation");
+        return repository.isRenderable(Objects.requireNonNull(key, "key"));
     }
 
     public int retainedWorkCount() {
@@ -559,7 +601,7 @@ public final class ChunkStreamingPipeline implements AutoCloseable {
         LoadContext context = selected.orElseThrow().getValue();
         context.canceled.set(true);
         ChunkWorkScheduler.Cancellation result = loadScheduler.cancel(workId);
-        if (result == ChunkWorkScheduler.Cancellation.REMOVED_QUEUED) {
+        if (result != ChunkWorkScheduler.Cancellation.NOT_FOUND) {
             rethrowCleanup(cancelLoadCapability(
                     workId, context, context.ticket, null));
         }
@@ -624,7 +666,6 @@ public final class ChunkStreamingPipeline implements AutoCloseable {
             return;
         }
         if (result.status() == ChunkWorkResult.Status.CANCELED
-                || result.desiredEpoch() != desiredEpoch
                 || !desiredPreload.contains(result.key())) {
             rethrowCleanup(cancelLoadCapability(
                     result.workId(), context, context.ticket, null));

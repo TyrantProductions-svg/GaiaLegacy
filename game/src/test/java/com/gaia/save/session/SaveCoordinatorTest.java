@@ -22,8 +22,18 @@ import com.overlord.worlditem.api.SaveIdentity;
 import com.overlord.worlditem.api.WorldItemDurableProof;
 import com.overlord.worlditem.api.WorldItemPagingCheckpoint;
 import com.overlord.worlditem.api.WorldItemPersistencePlan;
+import com.overlord.worlditem.api.WorldItemPageMutation;
+import com.overlord.worlditem.api.WorldItemPageSnapshot;
+import com.overlord.worlditem.api.WorldItemPhysicalState;
+import com.overlord.worlditem.api.WorldItemRestoreEntry;
+import com.overlord.worlditem.api.WorldItemRuntimeSnapshot;
+import com.overlord.worlditem.api.WorldItemSnapshot;
+import com.overlord.worlditem.api.WorldItemId;
+import com.overlord.assets.ResourceLocation;
+import com.overlord.inventory.api.ItemStack;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -32,6 +42,95 @@ import org.junit.jupiter.api.Test;
 
 class SaveCoordinatorTest {
     private static final Instant MODIFIED = Instant.parse("2026-08-12T01:00:00Z");
+
+    @Test
+    void ownerPreparationWorkerWriteAndOwnerAcknowledgementAreSeparated()
+            throws Exception {
+        Thread owner = Thread.currentThread();
+        var snapshot = GameSessionSaveLifecycleTest.snapshot();
+        var harness = GameSessionPersistenceTestFixture.sessionHarness(
+                new GameSessionConfig(12345L, 2, GameMode.SURVIVAL, false),
+                List.of(GameSessionPersistenceTestFixture.runtimeCaptured(snapshot, 5L)));
+        harness.makeReady();
+        AtomicReference<Thread> writerThread = new AtomicReference<>();
+        SaveCoordinator coordinator = new SaveCoordinator(id -> (captured, modified) -> {
+            writerThread.set(Thread.currentThread());
+            assertFalse(Thread.currentThread() == owner);
+            assertEquals(snapshot, captured);
+            return SaveWriteResult.success(GameSessionSaveLifecycleTest.manifest());
+        });
+
+        SaveCoordinator.PreparedSave prepared = coordinator.prepareSave(
+                harness.session(), MODIFIED);
+        assertTrue(harness.runtime().marked().isEmpty());
+        AtomicReference<SaveCoordinator.AtomicSaveWrite> detached =
+                new AtomicReference<>();
+        Thread worker = new Thread(
+                () -> detached.set(prepared.writeDetached()),
+                "detached-save-test");
+        worker.start();
+        worker.join();
+
+        assertEquals(worker, writerThread.get());
+        assertTrue(harness.runtime().marked().isEmpty(),
+                "worker must not acknowledge owner tickets or revision");
+        GameSessionSaveResult result = prepared.completeOnOwner(
+                detached.get());
+
+        assertEquals(GameSessionSaveResult.Status.SUCCESS, result.status());
+        assertEquals(List.of(5L), harness.runtime().marked().stream()
+                .map(SessionPersistenceRevision::value).toList());
+        harness.session().close();
+    }
+
+    @Test
+    void maximumOwnerPlanDoesNotEagerlyCaptureOneChunkPerWorldItemPage() {
+        var snapshot = GameSessionSaveLifecycleTest.snapshot();
+        WorldItemPersistencePlan plan = maximumOwnerPlan(snapshot);
+        List<String> events = new java.util.ArrayList<>();
+        RecordingStreamedSession session = new RecordingStreamedSession(
+                snapshot, plan, events, null);
+        SaveCoordinator.SaveTarget target = new SaveCoordinator.SaveTarget() {
+            @Override
+            public SaveCoordinator.AtomicSaveWrite saveAtomically(
+                    com.gaia.save.snapshot.SaveGameSnapshot captured,
+                    Instant modified,
+                    Optional<WorldItemPersistencePlan> actual,
+                    java.util.function.Function<com.overlord.voxel.ChunkKey,
+                            Optional<com.overlord.voxel.ChunkSnapshot>> chunks) {
+                assertEquals(1_024, actual.orElseThrow().pageMutations().size());
+                Map<com.overlord.voxel.ChunkKey, com.overlord.voxel.ChunkSnapshot>
+                        snapshotChunks = captured.chunks().chunks().stream()
+                                .collect(java.util.stream.Collectors.toMap(
+                                        com.overlord.voxel.ChunkSnapshot::key,
+                                        java.util.function.Function.identity()));
+                for (int owner = 0; owner < 1_024; owner++) {
+                    com.overlord.voxel.ChunkKey key =
+                            new com.overlord.voxel.ChunkKey(owner, 0);
+                    assertEquals(Optional.ofNullable(snapshotChunks.get(key)),
+                            chunks.apply(key));
+                }
+                return new SaveCoordinator.AtomicSaveWrite(
+                        SaveWriteResult.failed(SaveDiagnostic.of(
+                                "test.no-publication", "No publication required")),
+                        Optional.empty());
+            }
+
+            @Override
+            public SaveWriteResult save(
+                    com.gaia.save.snapshot.SaveGameSnapshot captured,
+                    Instant modified) {
+                throw new AssertionError("atomic path required");
+            }
+        };
+
+        GameSessionSaveResult result = new SaveCoordinator(ignored -> target)
+                .save(session, MODIFIED);
+
+        assertEquals(GameSessionSaveResult.Status.WRITE_FAILED, result.status());
+        assertEquals(0, session.worldItemChunkCaptureCalls,
+                "save preparation must not copy every owner Chunk onto the owner heap");
+    }
 
     @Test
     void successCapturesAndWritesOnceThenMarksOnlyTheExactCapturedRevision() {
@@ -367,6 +466,45 @@ class SaveCoordinatorTest {
                 () -> true);
     }
 
+    private static WorldItemPersistencePlan maximumOwnerPlan(
+            com.gaia.save.snapshot.SaveGameSnapshot snapshot) {
+        List<WorldItemPageMutation> mutations = new java.util.ArrayList<>(1_024);
+        for (int owner = 0; owner < 1_024; owner++) {
+            WorldItemRestoreEntry entry = new WorldItemRestoreEntry(
+                    new WorldItemRuntimeSnapshot(
+                            new WorldItemSnapshot(
+                                    new WorldItemId(owner + 1L),
+                                    new ItemStack(ResourceLocation.of(
+                                            "gaia", "test/item"), 1),
+                                    owner * 16.0d + 0.5d, 4.0d, 0.5d,
+                                    0.0d, 0.0d, 0.0d,
+                                    1L),
+                            Optional.empty(),
+                            1L, 1L, 18_001L),
+                    WorldItemPhysicalState.SLEEPING);
+            mutations.add(new WorldItemPageMutation.Upsert(
+                    new WorldItemPageSnapshot(
+                            new com.overlord.voxel.ChunkKey(owner, 0),
+                            1L,
+                            List.of(entry)),
+                    Optional.empty()));
+        }
+        return new WorldItemPersistencePlan(
+                0L,
+                new WorldItemPagingCheckpoint(
+                        new SaveIdentity(UUID.fromString(
+                                snapshot.metadata().saveGameId().value())),
+                        1L,
+                        snapshot.fixedTick(),
+                        1_025L,
+                        false,
+                        0,
+                        List.of()),
+                mutations,
+                "66".repeat(32),
+                () -> true);
+    }
+
     private static final class BackendProof implements WorldItemDurableProof {}
 
     private static final class ForeignProof implements WorldItemDurableProof {}
@@ -379,6 +517,7 @@ class SaveCoordinatorTest {
         private boolean committed;
         private boolean closed;
         private long visibleCheckpointRevision;
+        private int worldItemChunkCaptureCalls;
 
         private RecordingStreamedSession(
                 com.gaia.save.snapshot.SaveGameSnapshot snapshot,
@@ -410,6 +549,13 @@ class SaveCoordinatorTest {
         @Override
         public void cancelWorldItemPersistence() {
             events.add("cancel-world-items");
+        }
+
+        @Override
+        public Optional<com.overlord.voxel.ChunkSnapshot> captureWorldItemChunk(
+                com.overlord.voxel.ChunkKey key) {
+            worldItemChunkCaptureCalls++;
+            return Optional.empty();
         }
 
         @Override

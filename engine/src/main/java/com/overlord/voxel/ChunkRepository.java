@@ -37,6 +37,8 @@ public final class ChunkRepository {
             new AtomicLong();
     private final AtomicLong streamingRequestSequence =
             new AtomicLong();
+    private final AtomicLong meshingClaimSequence =
+            new AtomicLong();
     private final GenerationAttempts generationAttempts =
             new GenerationAttempts();
     private final Object streamingUnloadIssuer = new Object();
@@ -1260,6 +1262,10 @@ public final class ChunkRepository {
     }
 
     public Optional<ChunkMeshInput> claimMeshing(ChunkKey key) {
+        return claimMeshingCapability(key).map(ChunkMeshingClaim::input);
+    }
+
+    Optional<ChunkMeshingClaim> claimMeshingCapability(ChunkKey key) {
         Objects.requireNonNull(key, "key");
         Entry entry = entries.get(key);
         if (entry == null) {
@@ -1267,6 +1273,7 @@ public final class ChunkRepository {
         }
 
         long claimedRevision;
+        long claimedId;
         synchronized (entry) {
             if (entries.get(key) != entry
                     || !isMeshingCandidate(entry)
@@ -1274,7 +1281,10 @@ public final class ChunkRepository {
                 return Optional.empty();
             }
             claimedRevision = entry.revision;
+            claimedId = nextMeshingClaimId();
             entry.state = ChunkState.MESHING;
+            entry.meshingClaimId = claimedId;
+            entry.meshingClaimQueued = true;
         }
 
         Optional<ChunkSnapshot> center = snapshot(key);
@@ -1349,6 +1359,8 @@ public final class ChunkRepository {
             }
             if (entry.state != ChunkState.MESHING
                     || entry.revision != claimedRevision
+                    || entry.meshingClaimId != claimedId
+                    || !entry.meshingClaimQueued
                     || center.isEmpty()
                     || center.orElseThrow().revision()
                             != claimedRevision) {
@@ -1356,21 +1368,82 @@ public final class ChunkRepository {
                         && entry.revision == claimedRevision) {
                     if (prepareEntryMutation(key, entry)) {
                         entry.state = ChunkState.DIRTY;
+                        entry.meshingClaimId = 0L;
+                        entry.meshingClaimQueued = false;
                     }
                 }
                 return Optional.empty();
             }
             return Optional.of(
-                    new ChunkMeshInput(
-                            center.orElseThrow(),
-                            north,
-                            northEast,
-                            east,
-                            southEast,
-                            south,
-                            southWest,
-                            west,
-                            northWest));
+                    new ChunkMeshingClaim(
+                            claimedId,
+                            key,
+                            claimedRevision,
+                            new ChunkMeshInput(
+                                    center.orElseThrow(),
+                                    north,
+                                    northEast,
+                                    east,
+                                    southEast,
+                                    south,
+                                    southWest,
+                                    west,
+                                    northWest)));
+        }
+    }
+
+    /**
+     * Releases one exact not-yet-started meshing claim selected by its owner.
+     * The key and revision bind the resident incarnation; stale/replayed calls
+     * fail without changing repository state.
+     */
+    boolean releaseQueuedMeshingClaim(
+            ChunkKey key, long revision, long claimId) {
+        requireStreamingOwnerThread();
+        if (claimId <= 0L) {
+            return false;
+        }
+        ChunkKey checked = ChunkCoordinatePolicy.requireSafe(key);
+        Entry entry = entries.get(checked);
+        if (entry == null) {
+            return false;
+        }
+        synchronized (entry) {
+            if (entries.get(checked) != entry
+                    || entry.state != ChunkState.MESHING
+                    || entry.revision != revision
+                    || entry.meshingClaimId != claimId
+                    || !entry.meshingClaimQueued
+                    || !prepareEntryMutation(checked, entry)) {
+                return false;
+            }
+            entry.state = ChunkState.DIRTY;
+            entry.meshingClaimId = 0L;
+            entry.meshingClaimQueued = false;
+            return true;
+        }
+    }
+
+    boolean markMeshingClaimActive(
+            ChunkKey key, long revision, long claimId) {
+        if (claimId <= 0L) {
+            return false;
+        }
+        ChunkKey checked = ChunkCoordinatePolicy.requireSafe(key);
+        Entry entry = entries.get(checked);
+        if (entry == null) {
+            return false;
+        }
+        synchronized (entry) {
+            if (entries.get(checked) != entry
+                    || entry.state != ChunkState.MESHING
+                    || entry.revision != revision
+                    || entry.meshingClaimId != claimId
+                    || !entry.meshingClaimQueued) {
+                return false;
+            }
+            entry.meshingClaimQueued = false;
+            return true;
         }
     }
 
@@ -1948,6 +2021,14 @@ public final class ChunkRepository {
         return new Entry(worldHeight);
     }
 
+    private long nextMeshingClaimId() {
+        long next = meshingClaimSequence.incrementAndGet();
+        if (next <= 0L) {
+            throw new IllegalStateException("meshing claim id space exhausted");
+        }
+        return next;
+    }
+
     private ChunkGenerationResult terminalConflict(
             ChunkGenerationTicket ticket) {
         ChunkKey key =
@@ -2248,6 +2329,8 @@ public final class ChunkRepository {
         private long persistedRevision;
         private Throwable failure;
         private boolean voxelModified;
+        private long meshingClaimId;
+        private boolean meshingClaimQueued;
 
         private Entry(int worldHeight) {
             chunk = new Chunk(worldHeight);

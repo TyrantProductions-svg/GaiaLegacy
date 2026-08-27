@@ -1,14 +1,16 @@
 package com.gaia.interaction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.assets.ResourceLocation;
 import com.overlord.interaction.api.BlockHitResult;
-import com.overlord.interaction.api.BlockRaycastService;
+import com.overlord.interaction.api.SpatialBlockRaycastService;
 import com.overlord.physics.Aabb;
 import com.overlord.physics.MassProperties;
 import com.overlord.physics.PhysicsBody;
+import com.overlord.physics.SpatialQueryResult;
 import com.overlord.renderer.Camera;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkRepository;
@@ -30,7 +32,7 @@ class PlayerBlockTargetingTest {
         PlayerBlockTargeting targeting = new PlayerBlockTargeting(
                 raycast, body, camera, chunks, 1.6f, 6.0f);
 
-        Optional<BlockHitResult> target = targeting.target();
+        Optional<BlockHitResult> target = targeting.target().result();
 
         assertTrue(target.isPresent());
         assertEquals(new Vector3f(2, 11.6f, 3), raycast.origin);
@@ -39,7 +41,7 @@ class PlayerBlockTargetingTest {
     }
 
     @Test
-    void rejectsHitWhoseChunkIsNotLoaded() {
+    void preservesUnknownWhenHitChunkLosesResidentAuthority() {
         PlayerBlockTargeting targeting = new PlayerBlockTargeting(
                 new CapturingRaycast(hitAt(64, 5, 64)),
                 bodyAt(0, 0, 0),
@@ -48,7 +50,32 @@ class PlayerBlockTargetingTest {
                 1.6f,
                 6.0f);
 
-        assertTrue(targeting.target().isEmpty());
+        SpatialQueryResult<BlockHitResult> result = targeting.target();
+
+        assertEquals(SpatialQueryResult.Status.UNKNOWN, result.status());
+        assertEquals(new ChunkKey(4, 4), result.unavailableKey().orElseThrow());
+        assertTrue(result.result().isEmpty());
+    }
+
+    @Test
+    void targetingPublishesTypedAvailableResultToItsOwner() {
+        ChunkRepository chunks = new ChunkRepository();
+        chunks.generate(new ChunkKey(0, 0), ignored -> {});
+        PlayerBlockTargeting targeting = new PlayerBlockTargeting(
+                new CapturingRaycast(hitAt(4, 5, 4)),
+                bodyAt(0, 0, 0),
+                new Camera(),
+                chunks,
+                1.6f,
+                6.0f);
+
+        Object raw = targeting.target();
+
+        SpatialQueryResult<?> query = assertInstanceOf(
+                SpatialQueryResult.class, raw,
+                "PlayerBlockTargeting must not erase spatial-query status");
+        assertEquals(SpatialQueryResult.Status.AVAILABLE, query.status());
+        assertEquals(hitAt(4, 5, 4), query.result().orElseThrow());
     }
 
     private static PhysicsBody bodyAt(float x, float y, float z) {
@@ -69,7 +96,7 @@ class PlayerBlockTargetingTest {
                 2);
     }
 
-    private static final class CapturingRaycast implements BlockRaycastService {
+    private static final class CapturingRaycast implements SpatialBlockRaycastService {
         private final BlockHitResult hit;
         private Vector3f origin;
         private Vector3f direction;
@@ -80,12 +107,12 @@ class PlayerBlockTargetingTest {
         }
 
         @Override
-        public Optional<BlockHitResult> raycast(
+        public SpatialQueryResult<BlockHitResult> query(
                 Vector3fc origin, Vector3fc direction, float maxDistance) {
             this.origin = new Vector3f(origin);
             this.direction = new Vector3f(direction);
             this.maxDistance = maxDistance;
-            return Optional.of(hit);
+            return SpatialQueryResult.available(Optional.of(hit));
         }
     }
 }

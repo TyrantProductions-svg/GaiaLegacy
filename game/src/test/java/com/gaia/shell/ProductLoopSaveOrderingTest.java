@@ -48,6 +48,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 class ProductLoopSaveOrderingTest {
@@ -68,6 +70,22 @@ class ProductLoopSaveOrderingTest {
     }
 
     @Test
+    void cancelingNewWorldLoadingReleasesItsProgressOperationBeforeMainMenu() {
+        Fixture fixture = new Fixture();
+        fixture.raw.completeLoadOnPoll = false;
+        fixture.click(UiActionId.NEW_WORLD);
+        fixture.click(UiActionId.CREATE_WORLD);
+
+        fixture.click(UiActionId.DISMISS);
+
+        assertEquals(ScreenId.MAIN_MENU, fixture.shell.snapshot().screen());
+        assertTrue(fixture.shell.snapshot().operationProgress().isEmpty());
+        assertDoesNotThrow(fixture::frame,
+                "a canceled create operation must not republish into the main-menu route");
+        assertEquals(1, fixture.raw.closeCalls);
+    }
+
+    @Test
     void saveRendersOneStaticSavingFrameThenWritesAndCheckpointsNextFrame() {
         Fixture fixture = new Fixture();
         fixture.enterPaused();
@@ -84,13 +102,17 @@ class ProductLoopSaveOrderingTest {
 
         fixture.events.clear();
         fixture.releaseButton();
-        fixture.frame();
+        fixture.awaitScreen(ScreenId.PAUSED);
 
         assertEquals(ScreenId.PAUSED, fixture.shell.snapshot().screen());
         assertEquals(1, fixture.manualWrites());
         assertFalse(fixture.raw.dirty);
         assertOrder(fixture.events, "write:2", "checkpoint", "render-product:PAUSED", "swap");
         assertEquals(0, fixture.raw.advanceCalls);
+        assertTrue(fixture.shell.snapshot().operationProgress().isEmpty());
+        assertEquals(0, fixture.acceptedOperationCount());
+        assertDoesNotThrow(fixture::frame,
+                "save success must not forward progress after PAUSED");
     }
 
     @Test
@@ -107,18 +129,79 @@ class ProductLoopSaveOrderingTest {
 
         fixture.events.clear();
         fixture.releaseButton();
-        fixture.frame();
+        fixture.awaitScreen(ScreenId.MAIN_MENU);
 
         assertEquals(ScreenId.MAIN_MENU, fixture.shell.snapshot().screen());
         assertEquals(1, fixture.manualWrites());
         assertEquals(1, fixture.raw.closeCalls);
         assertOrder(fixture.events, "write:2", "checkpoint", "close-session", "render-product:MAIN_MENU");
+        assertTrue(fixture.shell.snapshot().operationProgress().isEmpty());
+        assertEquals(0, fixture.acceptedOperationCount());
+        assertDoesNotThrow(fixture::frame,
+                "save-and-quit must not forward progress after MAIN_MENU");
+    }
+
+    @Test
+    void blockedSaveKeepsPollingRenderingAndSwappingWithoutEarlyCheckpoint()
+            throws Exception {
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        Fixture fixture = new Fixture(entered, release);
+        fixture.enterPaused();
+        fixture.raw.dirty = true;
+
+        fixture.pressButton(UiActionId.SAVE);
+        fixture.releaseButton();
+        fixture.frame();
+        assertTrue(entered.await(2, TimeUnit.SECONDS));
+        fixture.events.clear();
+        fixture.frame();
+        fixture.frame();
+        fixture.frame();
+
+        assertEquals(ScreenId.SAVING, fixture.shell.snapshot().screen());
+        assertTrue(fixture.raw.dirty);
+        assertEquals(3, fixture.events.stream().filter("poll"::equals).count());
+        assertEquals(3, fixture.events.stream().filter("swap"::equals).count());
+        assertEquals(3, fixture.events.stream()
+                .filter("render-product:SAVING"::equals).count());
+
+        release.countDown();
+        fixture.awaitScreen(ScreenId.PAUSED);
+        assertFalse(fixture.raw.dirty);
+    }
+
+    @Test
+    void closeDuringBlockedInitialSaveStopsWorkerThenClosesSessionExactlyOnce()
+            throws Exception {
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        Fixture fixture = new Fixture(entered, release, 1);
+
+        fixture.click(UiActionId.NEW_WORLD);
+        fixture.pressButton(UiActionId.CREATE_WORLD);
+        fixture.releaseButton();
+        fixture.frame();
+        assertTrue(entered.await(2, TimeUnit.SECONDS));
+
+        fixture.host.shouldClose = true;
+        fixture.loop.run();
+
+        assertEquals(1, fixture.raw.closeCalls,
+                "the initial-save ticket and wrapped session must close once");
+        assertEquals(GameSessionState.CLOSED, fixture.raw.state());
     }
 
     private static void assertOrder(List<String> events, String... expected) {
         int previous = -1;
         for (String event : expected) {
-            int index = events.indexOf(event);
+            int index = -1;
+            for (int candidate = previous + 1; candidate < events.size(); candidate++) {
+                if (events.get(candidate).equals(event)) {
+                    index = candidate;
+                    break;
+                }
+            }
             assertTrue(index > previous, () -> event + " was out of order in " + events);
             previous = index;
         }
@@ -140,9 +223,31 @@ class ProductLoopSaveOrderingTest {
         private final ProductLoop loop;
 
         private Fixture() {
+            this(null, null, Integer.MIN_VALUE);
+        }
+
+        private Fixture(CountDownLatch entered, CountDownLatch release) {
+            this(entered, release, 2);
+        }
+
+        private Fixture(
+                CountDownLatch entered,
+                CountDownLatch release,
+                int blockedWriteNumber) {
             SaveCoordinator coordinator = new SaveCoordinator(id -> (snapshot, modified) -> {
                 writes[0]++;
                 events.add("write:" + writes[0]);
+                if (entered != null && writes[0] == blockedWriteNumber) {
+                    entered.countDown();
+                    try {
+                        if (!release.await(2, TimeUnit.SECONDS)) {
+                            throw new IllegalStateException("timed out awaiting save release");
+                        }
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException(interrupted);
+                    }
+                }
                 return SaveWriteResult.success(GameSessionSaveLifecycleTest.manifest());
             });
             GameSessionLauncher launcher = new GameSessionLauncher(
@@ -186,10 +291,20 @@ class ProductLoopSaveOrderingTest {
             return Math.max(0, writes[0] - 1);
         }
 
+        private int acceptedOperationCount() {
+            try {
+                var field = ProductLoop.class.getDeclaredField("operations");
+                field.setAccessible(true);
+                return ((ProductOperationRunner) field.get(loop)).acceptedCount();
+            } catch (ReflectiveOperationException failure) {
+                throw new AssertionError(failure);
+            }
+        }
+
         private void enterPaused() {
             click(UiActionId.NEW_WORLD);
             click(UiActionId.CREATE_WORLD);
-            assertEquals(ScreenId.PLAYING, shell.snapshot().screen());
+            awaitScreen(ScreenId.PLAYING);
             InputManagerTestDriver.key(input, GLFW_KEY_ESCAPE, GLFW_PRESS);
             frame();
             InputManagerTestDriver.key(input, GLFW_KEY_ESCAPE, GLFW_RELEASE);
@@ -218,6 +333,24 @@ class ProductLoopSaveOrderingTest {
 
         private void frame() {
             loop.runFrame(DELTA);
+        }
+
+        private void awaitScreen(ScreenId expected) {
+            for (int attempt = 0; attempt < 500; attempt++) {
+                frame();
+                if (shell.snapshot().screen() == expected) {
+                    return;
+                }
+                try {
+                    Thread.sleep(1L);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(interrupted);
+                }
+            }
+            throw new AssertionError(
+                    "screen did not become " + expected + ": " + shell.snapshot()
+                            + ", writes=" + writes[0] + ", events=" + events);
         }
     }
 
@@ -278,13 +411,14 @@ class ProductLoopSaveOrderingTest {
         private final ProductShellController shell;
         private final UiLayoutContext context = new UiLayoutContext(
                 new RenderSurfaceMetrics(1280, 720, 1280, 720, 1.0f, 1.0f));
+        private boolean shouldClose;
 
         private RecordingHost(List<String> events, ProductShellController shell) {
             this.events = events;
             this.shell = shell;
         }
 
-        @Override public boolean shouldClose() { return false; }
+        @Override public boolean shouldClose() { return shouldClose; }
         @Override public void pollEvents() { events.add("poll"); }
         @Override public UiLayoutContext layoutContext() { return context; }
         @Override public void setCursorCaptured(boolean captured) {}

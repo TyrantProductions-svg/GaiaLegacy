@@ -552,9 +552,9 @@ public final class Renderer implements ChunkRenderBackend {
         Objects.requireNonNull(canonicalView, "canonicalView");
         Objects.requireNonNull(impulse, "impulse");
         return new Matrix4f(canonicalView)
-                .rotateX((float) Math.toRadians(impulse.pitchDegrees()))
-                .rotateY((float) Math.toRadians(impulse.yawDegrees()))
-                .translate(0.0f, impulse.translationY(), 0.0f);
+                .rotateLocalX((float) Math.toRadians(impulse.pitchDegrees()))
+                .rotateLocalY((float) Math.toRadians(impulse.yawDegrees()))
+                .translateLocal(0.0f, impulse.translationY(), 0.0f);
     }
 
     /**
@@ -569,11 +569,11 @@ public final class Renderer implements ChunkRenderBackend {
         Objects.requireNonNull(movement, "movement");
         Objects.requireNonNull(actionImpulse, "actionImpulse");
         Matrix4f movementView = new Matrix4f(canonicalView)
-                .translate(
+                .translateLocal(
                         -movement.translationX(),
                         -movement.translationY(),
                         0.0f)
-                .rotateZ((float) Math.toRadians(-movement.rollDegrees()));
+                .rotateLocalZ((float) Math.toRadians(-movement.rollDegrees()));
         return applyVisualCameraImpulse(movementView, actionImpulse);
     }
 

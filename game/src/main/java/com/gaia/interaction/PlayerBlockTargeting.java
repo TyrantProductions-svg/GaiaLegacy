@@ -1,17 +1,17 @@
 package com.gaia.interaction;
 
 import com.overlord.interaction.api.BlockHitResult;
-import com.overlord.interaction.api.BlockRaycastService;
+import com.overlord.interaction.api.SpatialBlockRaycastService;
 import com.overlord.physics.PhysicsBody;
+import com.overlord.physics.SpatialQueryResult;
 import com.overlord.renderer.Camera;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkRepository;
 import java.util.Objects;
-import java.util.Optional;
 import org.joml.Vector3f;
 
 public final class PlayerBlockTargeting implements BlockTargetProvider {
-    private final BlockRaycastService raycast;
+    private final SpatialBlockRaycastService raycast;
     private final PhysicsBody body;
     private final Camera camera;
     private final ChunkRepository chunks;
@@ -21,7 +21,7 @@ public final class PlayerBlockTargeting implements BlockTargetProvider {
     private final Vector3f direction = new Vector3f();
 
     public PlayerBlockTargeting(
-            BlockRaycastService raycast,
+            SpatialBlockRaycastService raycast,
             PhysicsBody body,
             Camera camera,
             ChunkRepository chunks,
@@ -42,16 +42,23 @@ public final class PlayerBlockTargeting implements BlockTargetProvider {
     }
 
     @Override
-    public Optional<BlockHitResult> target() {
+    public SpatialQueryResult<BlockHitResult> target() {
         body.position(origin);
         origin.y += eyeHeight;
         camera.getForward(direction);
-        Optional<BlockHitResult> hit = raycast.raycast(origin, direction, maxDistance);
-        if (hit.isEmpty()) {
-            return Optional.empty();
+        SpatialQueryResult<BlockHitResult> query = Objects.requireNonNull(
+                raycast.query(origin, direction, maxDistance), "raycast result");
+        if (query.status() != SpatialQueryResult.Status.AVAILABLE) {
+            return query;
         }
-        BlockHitResult result = hit.orElseThrow();
+        if (query.result().isEmpty()) {
+            return query;
+        }
+        BlockHitResult result = query.result().orElseThrow();
         ChunkKey key = ChunkKey.fromWorld(result.blockX(), result.blockZ());
-        return chunks.snapshot(key).isPresent() ? hit : Optional.empty();
+        return chunks.snapshot(key).isPresent()
+                ? query
+                : SpatialQueryResult.unavailable(
+                        SpatialQueryResult.Status.UNKNOWN, key);
     }
 }

@@ -6,7 +6,9 @@ import com.overlord.renderer.ChunkRenderObject;
 import com.overlord.renderer.RenderOrigin;
 import java.util.ArrayDeque;
 import java.util.Collection;
+import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -24,7 +26,7 @@ public final class ChunkMeshManager implements AutoCloseable {
     private final ChunkRenderBackend renderBackend;
     private final MainThreadGuard mainThreadGuard;
     private final ChunkMeshBudget budget;
-    private final Queue<ChunkMeshInput> queuedMeshing = new ArrayDeque<>();
+    private final Deque<ChunkMeshingClaim> queuedMeshing = new ArrayDeque<>();
     private final Queue<MeshingCompletion> completed =
             new ConcurrentLinkedQueue<>();
     private final Queue<MeshingFailure> failed =
@@ -45,6 +47,7 @@ public final class ChunkMeshManager implements AutoCloseable {
     private int pumpDepth;
     private int remainingUploadsInPump;
     private int remainingDestructionsInPump;
+    private int remainingCompletionDrainsInPump;
     private long uploadedTotal;
     private long bytesUploadedTotal;
     private long destroyedTotal;
@@ -84,29 +87,72 @@ public final class ChunkMeshManager implements AutoCloseable {
     }
 
     public int scheduleEligible() {
+        return scheduleEligible(repository.meshingCandidates().stream()
+                .sorted(ChunkCoordinatePolicy.canonicalComparator())
+                .toList(), false);
+    }
+
+    /**
+     * Claims only the supplied visible candidates and keeps queued CPU work in
+     * the caller-authored order. Already active work is never disturbed.
+     */
+    public int scheduleEligible(List<ChunkKey> orderedEligibleKeys) {
+        return scheduleEligible(orderedEligibleKeys, true);
+    }
+
+    private int scheduleEligible(
+            List<ChunkKey> orderedEligibleKeys,
+            boolean releaseLowerPriorityQueuedClaim) {
         mainThreadGuard.assertMainThread("schedule chunk meshing");
         if (closed) {
             return 0;
         }
+        List<ChunkKey> ordered = List.copyOf(Objects.requireNonNull(
+                orderedEligibleKeys, "orderedEligibleKeys"));
+        if (ordered.size() > 121) {
+            throw new IllegalArgumentException(
+                    "ordered mesh candidates exceed the desired-set bound");
+        }
+        Set<ChunkKey> unique = new HashSet<>();
+        for (ChunkKey key : ordered) {
+            if (!unique.add(ChunkCoordinatePolicy.requireSafe(key))) {
+                throw new IllegalArgumentException(
+                        "ordered mesh candidates repeat a Chunk key");
+            }
+        }
+        reorderQueuedMeshing(ordered);
         int scheduled = 0;
-        for (ChunkKey key : repository.meshingCandidates()) {
-            synchronized (lifecycleLock) {
-                if (closed || acceptedMeshing >= budget.maxAccepted()) {
-                    break;
-                }
-            }
-            Optional<ChunkMeshInput> claimed =
-                    repository.claimMeshing(key);
-            if (claimed.isEmpty()) {
-                continue;
-            }
-            ChunkMeshInput input = claimed.orElseThrow();
+        for (ChunkKey key : ordered) {
+            boolean candidate = repository.meshingCandidates().contains(key);
             synchronized (lifecycleLock) {
                 if (closed) {
                     break;
                 }
-                queuedMeshing.add(input);
+            }
+            if (releaseLowerPriorityQueuedClaim
+                    && acceptedAtCapacity()
+                    && candidate
+                    && !releaseWorstQueuedClaim(key, ordered)) {
+                continue;
+            }
+            if (acceptedAtCapacity()) {
+                continue;
+            }
+            Optional<ChunkMeshingClaim> claimed =
+                    repository.claimMeshingCapability(key);
+            if (claimed.isEmpty()) {
+                continue;
+            }
+            ChunkMeshingClaim claim = claimed.orElseThrow();
+            synchronized (lifecycleLock) {
+                if (closed) {
+                    break;
+                }
+                queuedMeshing.add(claim);
                 acceptedMeshing++;
+            }
+            if (releaseLowerPriorityQueuedClaim) {
+                reorderQueuedMeshing(ordered);
             }
             DispatchOutcome outcome = dispatchOne(true);
             if (outcome != DispatchOutcome.REJECTED) {
@@ -116,14 +162,87 @@ public final class ChunkMeshManager implements AutoCloseable {
         return scheduled;
     }
 
+    private boolean acceptedAtCapacity() {
+        synchronized (lifecycleLock) {
+            return acceptedMeshing >= budget.maxAccepted();
+        }
+    }
+
+    private boolean releaseWorstQueuedClaim(
+            ChunkKey candidate, List<ChunkKey> orderedKeys) {
+        Map<ChunkKey, Integer> ranks = new HashMap<>();
+        for (int index = 0; index < orderedKeys.size(); index++) {
+            ranks.put(orderedKeys.get(index), index);
+        }
+        int candidateRank = ranks.get(candidate);
+        ChunkMeshingClaim selected = null;
+        synchronized (lifecycleLock) {
+            var descending = queuedMeshing.descendingIterator();
+            while (descending.hasNext()) {
+                ChunkMeshingClaim claim = descending.next();
+                int queuedRank = ranks.getOrDefault(
+                        claim.key(), Integer.MAX_VALUE);
+                if (queuedRank > candidateRank) {
+                    selected = claim;
+                    descending.remove();
+                    break;
+                }
+            }
+        }
+        if (selected == null) {
+            return false;
+        }
+        boolean released = repository.releaseQueuedMeshingClaim(
+                selected.key(),
+                selected.revision(),
+                selected.claimId());
+        synchronized (lifecycleLock) {
+            if (released) {
+                if (acceptedMeshing <= 0) {
+                    throw new IllegalStateException(
+                            "chunk mesh capacity token underflow");
+                }
+                acceptedMeshing--;
+            } else if (!closed) {
+                queuedMeshing.addLast(selected);
+            }
+        }
+        if (!released) {
+            reorderQueuedMeshing(orderedKeys);
+        }
+        return released;
+    }
+
+    private void reorderQueuedMeshing(List<ChunkKey> orderedKeys) {
+        Map<ChunkKey, Integer> ranks = new HashMap<>();
+        for (int index = 0; index < orderedKeys.size(); index++) {
+            ranks.put(orderedKeys.get(index), index);
+        }
+        synchronized (lifecycleLock) {
+            List<ChunkMeshingClaim> reordered =
+                    new java.util.ArrayList<>(queuedMeshing);
+            reordered.sort(java.util.Comparator.comparingInt(claim ->
+                    ranks.getOrDefault(claim.key(), Integer.MAX_VALUE)));
+            queuedMeshing.clear();
+            queuedMeshing.addAll(reordered);
+        }
+    }
+
     public int drainCompletedCpuWork() {
+        return drainCompletedCpuWork(Integer.MAX_VALUE);
+    }
+
+    private int drainCompletedCpuWork(int maximum) {
         mainThreadGuard.assertMainThread("drain completed chunk meshes");
+        if (maximum < 0) {
+            throw new IllegalArgumentException("maximum must be non-negative");
+        }
         if (closed) {
             return 0;
         }
         int drained = 0;
         MeshingCompletion completion;
-        while ((completion = completed.poll()) != null) {
+        while (drained < maximum && (completion = completed.poll()) != null) {
             drained++;
             boolean ready =
                     repository.markReadyForUpload(
@@ -138,7 +257,7 @@ public final class ChunkMeshManager implements AutoCloseable {
         }
 
         MeshingFailure failure;
-        while ((failure = failed.poll()) != null) {
+        while (drained < maximum && (failure = failed.poll()) != null) {
             drained++;
             if (repository.markMeshingFailureIfCurrent(
                     failure.key(),
@@ -167,11 +286,14 @@ public final class ChunkMeshManager implements AutoCloseable {
         if (outermostPump) {
             remainingUploadsInPump = budget.maxUploadsPerFrame();
             remainingDestructionsInPump = budget.maxDestructionsPerFrame();
+            remainingCompletionDrainsInPump = budget.maxUploadsPerFrame();
         }
         pumpDepth++;
         try {
             drainDestructions();
-            drainCompletedCpuWork();
+            int completionsDrained = drainCompletedCpuWork(
+                    remainingCompletionDrainsInPump);
+            remainingCompletionDrainsInPump -= completionsDrained;
 
             int processed = 0;
             ChunkMeshData data;
@@ -200,6 +322,7 @@ public final class ChunkMeshManager implements AutoCloseable {
             if (outermostPump) {
                 remainingUploadsInPump = 0;
                 remainingDestructionsInPump = 0;
+                remainingCompletionDrainsInPump = 0;
             }
         }
     }
@@ -259,6 +382,44 @@ public final class ChunkMeshManager implements AutoCloseable {
                     awaitingUpload.size(),
                     failedUploads.size(),
                     pendingDestructions.size());
+        }
+    }
+
+    /** Current read-only phase for bounded owner-thread diagnostics. */
+    public MeshPhase meshPhase(ChunkKey key) {
+        mainThreadGuard.assertMainThread("read chunk mesh phase");
+        ChunkKey checked = ChunkCoordinatePolicy.requireSafe(key);
+        synchronized (lifecycleLock) {
+            if (queuedMeshing.stream().anyMatch(
+                    claim -> claim.key().equals(checked))) {
+                return MeshPhase.QUEUED;
+            }
+            if (completed.stream().anyMatch(item -> item.key().equals(checked))) {
+                return MeshPhase.COMPLETED;
+            }
+            if (failed.stream().anyMatch(item -> item.key().equals(checked))) {
+                return MeshPhase.FAILED;
+            }
+            if (awaitingUpload.stream().anyMatch(data -> data.key().equals(checked))) {
+                return MeshPhase.AWAITING_UPLOAD;
+            }
+            if (failedUploads.containsKey(checked)) {
+                return MeshPhase.FAILED;
+            }
+            if (installedRenderObjects.containsKey(checked)) {
+                return MeshPhase.INSTALLED;
+            }
+        }
+        return repository.state(checked) == ChunkState.MESHING
+                ? MeshPhase.ACTIVE
+                : MeshPhase.NONE;
+    }
+
+    public boolean hasInstalledRenderObject(ChunkKey key) {
+        mainThreadGuard.assertMainThread("read installed chunk render object");
+        synchronized (lifecycleLock) {
+            return installedRenderObjects.containsKey(
+                    ChunkCoordinatePolicy.requireSafe(key));
         }
     }
 
@@ -399,18 +560,25 @@ public final class ChunkMeshManager implements AutoCloseable {
     }
 
     private DispatchOutcome dispatchOne(boolean ownerPublicationAllowed) {
-        ChunkMeshInput input;
+        ChunkMeshingClaim claim;
         synchronized (lifecycleLock) {
             if (closed
                     || activeMeshing >= budget.maxActive()
                     || queuedMeshing.isEmpty()) {
                 return DispatchOutcome.NONE;
             }
-            input = queuedMeshing.remove();
+            claim = queuedMeshing.remove();
             activeMeshing++;
         }
         try {
-            meshExecutor.execute(() -> buildMesh(input));
+            if (!repository.markMeshingClaimActive(
+                    claim.key(),
+                    claim.revision(),
+                    claim.claimId())) {
+                throw new IllegalStateException(
+                        "queued meshing claim is no longer current");
+            }
+            meshExecutor.execute(() -> buildMesh(claim.input()));
             return DispatchOutcome.SUBMITTED;
         } catch (RuntimeException | Error failure) {
             boolean report;
@@ -422,16 +590,16 @@ public final class ChunkMeshManager implements AutoCloseable {
                         acceptedMeshing--;
                     } else {
                         failed.add(new MeshingFailure(
-                                input.center().key(),
-                                input.center().revision(),
+                                claim.key(),
+                                claim.revision(),
                                 failure));
                     }
                 }
             }
             if (report && ownerPublicationAllowed
                     && repository.markMeshingFailureIfCurrent(
-                            input.center().key(),
-                            input.center().revision(),
+                            claim.key(),
+                            claim.revision(),
                             failure)) {
                 reportFailure(failure);
             }
@@ -620,7 +788,7 @@ public final class ChunkMeshManager implements AutoCloseable {
     private void removeQueuedMeshing(ChunkKey key) {
         synchronized (lifecycleLock) {
             int before = queuedMeshing.size();
-            queuedMeshing.removeIf(input -> input.center().key().equals(key));
+            queuedMeshing.removeIf(claim -> claim.key().equals(key));
             acceptedMeshing -= before - queuedMeshing.size();
         }
     }
@@ -700,6 +868,16 @@ public final class ChunkMeshManager implements AutoCloseable {
                         "chunk mesh lifecycle metrics are negative");
             }
         }
+    }
+
+    public enum MeshPhase {
+        NONE,
+        QUEUED,
+        ACTIVE,
+        COMPLETED,
+        AWAITING_UPLOAD,
+        INSTALLED,
+        FAILED
     }
 
     @FunctionalInterface

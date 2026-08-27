@@ -36,6 +36,7 @@ import com.overlord.interaction.api.InteractionMode;
 import com.overlord.physics.Aabb;
 import com.overlord.physics.MassProperties;
 import com.overlord.physics.PhysicsBody;
+import com.overlord.physics.SpatialQueryResult;
 import com.overlord.renderer.RenderFrameInput;
 import com.overlord.renderer.feedback.FeedbackVisibility;
 import com.overlord.renderer.feedback.InteractionFeedbackFrame;
@@ -311,7 +312,7 @@ class GameSessionEligibilityBoundaryTest {
                 };
         return new BlockInteractionController(
                 new GameModeManager(GameMode.SURVIVAL, event -> {}),
-                () -> Optional.of(hit()),
+                () -> SpatialQueryResult.available(Optional.of(hit())),
                 chunks,
                 blocks,
                 inventory,

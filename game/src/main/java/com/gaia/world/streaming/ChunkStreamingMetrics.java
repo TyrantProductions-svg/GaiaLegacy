@@ -37,6 +37,7 @@ public record ChunkStreamingMetrics(
         long saveLatencyNanos,
         long restoreLatencyNanos,
         List<BlockedUnknownObservation> blockedUnknownDirections,
+        List<ChunkGapObservation> gaps,
         boolean streamingTerrain) {
     public ChunkStreamingMetrics {
         Objects.requireNonNull(playerGlobalPosition, "playerGlobalPosition");
@@ -49,6 +50,11 @@ public record ChunkStreamingMetrics(
                 Objects.requireNonNull(diagnosticCodes, "diagnosticCodes"));
         blockedUnknownDirections = List.copyOf(Objects.requireNonNull(
                 blockedUnknownDirections, "blockedUnknownDirections"));
+        gaps = List.copyOf(Objects.requireNonNull(gaps, "gaps"));
+        if (gaps.size() > 16) {
+            throw new IllegalArgumentException(
+                    "current Chunk gap observation exceeds 16 entries");
+        }
         if (simulationChunks < 0 || renderChunks < 0 || preloadChunks < 0
                 || residentChunks < 0 || unloadPendingChunks < 0
                 || publications < 0L || canceled < 0L || staleResults < 0L
@@ -85,7 +91,7 @@ public record ChunkStreamingMetrics(
                 unloadPendingChunks, loadGenerationWork, meshWork, saveWork,
                 publications, canceled, staleResults, worldItems, diagnosticCodes,
                 0L, 0L, 0L, 0L, 0L, 0L,
-                0L, 0L, 0L, 0L, 0L, List.of(), streamingTerrain);
+                0L, 0L, 0L, 0L, 0L, List.of(), List.of(), streamingTerrain);
     }
 
     public static ChunkStreamingMetrics empty() {
@@ -102,7 +108,7 @@ public record ChunkStreamingMetrics(
                         0, 0L, 0, 0L, 0L, 0L, 0, 0, 0, 0),
                 List.of(),
                 0L, 0L, 0L, 0L, 0L, 0L,
-                0L, 0L, 0L, 0L, 0L, List.of(),
+                0L, 0L, 0L, 0L, 0L, List.of(), List.of(),
                 false);
     }
 

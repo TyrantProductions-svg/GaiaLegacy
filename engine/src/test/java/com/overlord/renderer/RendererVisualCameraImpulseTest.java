@@ -9,7 +9,10 @@ import com.overlord.renderer.feedback.FirstPersonMovementVisual;
 import com.overlord.renderer.shader.WorldShaderUniforms;
 import java.nio.charset.StandardCharsets;
 import org.joml.Matrix4f;
+import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class RendererVisualCameraImpulseTest {
     @Test
@@ -41,11 +44,11 @@ class RendererVisualCameraImpulseTest {
         Matrix4f composed = Renderer.applyFirstPersonPresentation(
                 canonical, movement, action);
         Matrix4f expected = new Matrix4f(canonical)
-                .translate(-0.012f, 0.025f, 0.0f)
-                .rotateZ((float) Math.toRadians(-0.18f))
-                .rotateX((float) Math.toRadians(0.5f))
-                .rotateY((float) Math.toRadians(-0.1f))
-                .translate(0.0f, -0.006f, 0.0f);
+                .translateLocal(-0.012f, 0.025f, 0.0f)
+                .rotateLocalZ((float) Math.toRadians(-0.18f))
+                .rotateLocalX((float) Math.toRadians(0.5f))
+                .rotateLocalY((float) Math.toRadians(-0.1f))
+                .translateLocal(0.0f, -0.006f, 0.0f);
 
         assertEquals(before, canonical);
         assertEquals(expected, composed);
@@ -57,6 +60,59 @@ class RendererVisualCameraImpulseTest {
                 Renderer.applyFirstPersonPresentation(
                         canonical, FirstPersonMovementVisual.identity(), action),
                 composed);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "0,0", "90,0", "180,0", "270,0",
+        "0,30", "90,30", "180,30", "270,30",
+        "0,-30", "90,-30", "180,-30", "270,-30"
+    })
+    void lateralAndVerticalBobRemainViewLocalAtEveryYawAndPitch(
+            float yaw, float pitch) {
+        Camera camera = new Camera();
+        Vector3f cameraPosition = new Vector3f(7.25f, 41.5f, -13.75f);
+        camera.setPosition(cameraPosition);
+        camera.setYaw(yaw);
+        camera.setPitch(pitch);
+        Matrix4f canonical = camera.getViewMatrix();
+
+        Matrix4f visual = Renderer.applyFirstPersonPresentation(
+                canonical,
+                new FirstPersonMovementVisual(0.25f, -0.125f, 0.0f),
+                CameraImpulseVisual.identity());
+        Vector3f transformedCamera = visual.transformPosition(
+                new Vector3f(cameraPosition));
+
+        assertEquals(-0.25f, transformedCamera.x(), 0.0001f);
+        assertEquals(0.125f, transformedCamera.y(), 0.0001f);
+        assertEquals(0.0f, transformedCamera.z(), 0.0001f);
+        assertEquals(new Matrix4f(canonical), canonical);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"0", "90", "180", "270"})
+    void rollAndActionImpulseUseCameraLocalAxes(float yaw) {
+        Camera camera = new Camera();
+        camera.setPosition(new Vector3f(-9.5f, 22.0f, 17.0f));
+        camera.setYaw(yaw);
+        camera.setPitch(0.0f);
+        Matrix4f canonical = camera.getViewMatrix();
+        FirstPersonMovementVisual movement =
+                new FirstPersonMovementVisual(0.012f, -0.025f, 0.18f);
+        CameraImpulseVisual action =
+                new CameraImpulseVisual(0.5f, -0.1f, -0.006f);
+
+        Matrix4f actual = Renderer.applyFirstPersonPresentation(
+                canonical, movement, action);
+        Matrix4f expected = new Matrix4f(canonical)
+                .translateLocal(-0.012f, 0.025f, 0.0f)
+                .rotateLocalZ((float) Math.toRadians(-0.18f))
+                .rotateLocalX((float) Math.toRadians(0.5f))
+                .rotateLocalY((float) Math.toRadians(-0.1f))
+                .translateLocal(0.0f, -0.006f, 0.0f);
+
+        assertEquals(expected, actual);
     }
 
     @Test

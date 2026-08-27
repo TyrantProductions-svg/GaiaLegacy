@@ -16,9 +16,91 @@ import com.overlord.core.input.MouseDelta;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class GameSessionLauncherTest {
+    @Test
+    void archiveReadRunsDetachedAndFreshRestorePublishesOnlyOnOwner()
+            throws Exception {
+        Thread owner = Thread.currentThread();
+        AtomicReference<Thread> reader = new AtomicReference<>();
+        AtomicReference<Thread> restorer = new AtomicReference<>();
+        GameSessionLauncher launcher = launcher(
+                (request, config) -> { throw new AssertionError("not expected"); },
+                snapshot -> {
+                    restorer.set(Thread.currentThread());
+                    assertSame(owner, Thread.currentThread());
+                    FakeSession restored = new FakeSession(snapshot);
+                    restored.complete = true;
+                    return restored;
+                },
+                id -> {
+                    reader.set(Thread.currentThread());
+                    assertFalse(Thread.currentThread() == owner);
+                    return SaveArchiveReadResult.valid(
+                            GameSessionSaveLifecycleTest.snapshot(), List.of());
+                },
+                id -> (snapshot, modified) -> {
+                    throw new AssertionError("load must not save");
+                });
+
+        GameSessionLauncher.PreparedWorldLoad prepared = launcher.prepareLoadWorld(
+                new LoadWorldRequest(GameSessionSaveLifecycleTest.ID));
+        AtomicReference<com.gaia.save.snapshot.SaveGameSnapshot> detached =
+                new AtomicReference<>();
+        Thread worker = new Thread(
+                () -> detached.set(prepared.readDetached()),
+                "detached-load-test");
+        worker.start();
+        worker.join();
+
+        assertTrue(restorer.get() == null,
+                "worker read must not publish a runtime session");
+        GameSession session = prepared.publishOnOwner(detached.get());
+        assertEquals(worker, reader.get());
+        assertSame(owner, restorer.get());
+        session.close();
+    }
+
+    @Test
+    void responsiveInitialLoadExposesDetachedSaveBeforePublishingReady()
+            throws Exception {
+        Thread owner = Thread.currentThread();
+        AtomicReference<Thread> writer = new AtomicReference<>();
+        FakeSession raw = new FakeSession(GameSessionSaveLifecycleTest.snapshot());
+        raw.complete = true;
+        GameSessionLauncher launcher = launcher(
+                (request, config) -> raw,
+                snapshot -> { throw new AssertionError("not expected"); },
+                id -> { throw new AssertionError("not expected"); },
+                id -> (snapshot, modified) -> {
+                    writer.set(Thread.currentThread());
+                    assertFalse(Thread.currentThread() == owner);
+                    return SaveWriteResult.success(GameSessionSaveLifecycleTest.manifest());
+                });
+        GameSession session = launcher.newWorld(new NewWorldRequest(
+                GameSessionSaveLifecycleTest.ID, "New World", 12345L));
+
+        session.pollLoadResponsive();
+        SaveCoordinator.PreparedSave prepared = session.preparedInitialSave()
+                .orElseThrow();
+        assertEquals(GameSessionState.LOADING, session.state());
+        AtomicReference<SaveCoordinator.AtomicSaveWrite> write =
+                new AtomicReference<>();
+        Thread worker = new Thread(
+                () -> write.set(prepared.writeDetached()),
+                "detached-initial-save-test");
+        worker.start();
+        worker.join();
+
+        assertEquals(GameSessionState.LOADING, session.state());
+        session.completeInitialSave(prepared.completeOnOwner(write.get()));
+        assertEquals(GameSessionState.READY, session.state());
+        assertEquals(worker, writer.get());
+        session.close();
+    }
+
     @Test
     void newWorldWaitsForReadinessThenCommitsInitialSaveBeforePublishingReady() {
         AtomicInteger creates = new AtomicInteger();

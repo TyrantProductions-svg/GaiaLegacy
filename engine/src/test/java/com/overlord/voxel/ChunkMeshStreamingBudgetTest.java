@@ -1,6 +1,7 @@
 package com.overlord.voxel;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -53,6 +54,23 @@ class ChunkMeshStreamingBudgetTest {
 
         assertEquals(2, fixture.manager.processMainThreadWork());
         assertEquals(30, fixture.manager.metrics().accepted());
+        assertEquals(2, fixture.manager.scheduleEligible());
+        assertEquals(32, fixture.manager.metrics().accepted());
+    }
+
+    @Test
+    void ownerFrameDequeuesOnlyTheBoundedUploadBudgetFromCompletedBacklog() {
+        Fixture fixture = fixture(40);
+        assertEquals(32, fixture.manager.scheduleEligible());
+        fixture.executor.runAll();
+        assertEquals(32, fixture.manager.metrics().completed());
+
+        assertEquals(2, fixture.manager.processMainThreadWork());
+
+        assertEquals(30, fixture.manager.metrics().completed());
+        assertEquals(30, fixture.manager.metrics().accepted());
+        assertEquals(0, fixture.manager.metrics().awaitingUpload());
+        assertEquals(2, fixture.backend.uploaded.size());
         assertEquals(2, fixture.manager.scheduleEligible());
         assertEquals(32, fixture.manager.metrics().accepted());
     }
@@ -177,6 +195,135 @@ class ChunkMeshStreamingBudgetTest {
         assertEquals(1, keys.stream().filter(
                 key -> repository.state(key) == ChunkState.READY_FOR_UPLOAD).count());
         assertEquals(rejection, manager.pollFailure().orElseThrow());
+    }
+
+    @Test
+    void orderedSchedulingClaimsOnlySuppliedSimulationAndRenderKeysNearFirst() {
+        ChunkRepository repository = new ChunkRepository(1, new ChunkDirtyTracker());
+        ChunkKey center = new ChunkKey(0, 0);
+        ChunkKey west = new ChunkKey(-1, 0);
+        ChunkKey east = new ChunkKey(1, 0);
+        ChunkKey render = new ChunkKey(4, 0);
+        ChunkKey preloadOnly = new ChunkKey(5, 0);
+        for (ChunkKey key : List.of(center, west, east, render, preloadOnly)) {
+            repository.generate(key, chunk -> chunk.setBlock(0, 0, 0, (byte) 1));
+        }
+        List<ChunkKey> meshed = new ArrayList<>();
+        ManualExecutor executor = new ManualExecutor();
+        ChunkMeshManager manager = new ChunkMeshManager(
+                repository,
+                input -> {
+                    meshed.add(input.center().key());
+                    return new ChunkMeshData(
+                            input.center().key(), input.center().revision(), triangle());
+                },
+                executor,
+                new FakeBackend(),
+                MainThreadGuard.captureCurrentThread(),
+                ChunkMeshBudget.productionDefaults());
+
+        assertEquals(4, scheduleOrdered(
+                manager, List.of(center, west, east, render)));
+        executor.runAll();
+
+        assertEquals(List.of(center, west, east, render), meshed);
+        assertEquals(ChunkState.GENERATED, repository.state(preloadOnly),
+                "preload-only data must not be scheduled by the ordered visible path");
+        assertEquals(32, ChunkMeshBudget.productionDefaults().maxAccepted());
+        assertEquals(2, ChunkMeshBudget.productionDefaults().maxActive());
+    }
+
+    @Test
+    void centerShiftReordersOnlyNotYetStartedQueuedMeshInputs() {
+        ChunkRepository repository = new ChunkRepository(1, new ChunkDirtyTracker());
+        List<ChunkKey> initial = List.of(
+                new ChunkKey(0, 0),
+                new ChunkKey(1, 0),
+                new ChunkKey(2, 0),
+                new ChunkKey(3, 0),
+                new ChunkKey(4, 0),
+                new ChunkKey(5, 0));
+        initial.forEach(key -> repository.generate(
+                key, chunk -> chunk.setBlock(0, 0, 0, (byte) 1)));
+        List<ChunkKey> meshed = new ArrayList<>();
+        ManualExecutor executor = new ManualExecutor();
+        ChunkMeshManager manager = new ChunkMeshManager(
+                repository,
+                input -> {
+                    meshed.add(input.center().key());
+                    return new ChunkMeshData(
+                            input.center().key(), input.center().revision(), triangle());
+                },
+                executor,
+                new FakeBackend(),
+                MainThreadGuard.captureCurrentThread(),
+                ChunkMeshBudget.productionDefaults());
+
+        assertEquals(6, scheduleOrdered(manager, initial));
+        assertEquals(2, executor.size());
+        List<ChunkKey> shifted = List.of(
+                initial.get(0), initial.get(1),
+                initial.get(5), initial.get(4), initial.get(3), initial.get(2));
+        assertEquals(0, scheduleOrdered(manager, shifted));
+
+        executor.runAll();
+
+        assertEquals(shifted, meshed,
+                "active work stays fixed while the queued deque follows current priority");
+        assertTrue(manager.metrics().accepted() <= 32);
+        assertTrue(manager.metrics().active() <= 2);
+    }
+
+    @Test
+    void fullCapacityReleasesOneExactQueuedClaimForNewNearResidentKey() {
+        ChunkRepository repository = new ChunkRepository(1, new ChunkDirtyTracker());
+        List<ChunkKey> old = new ArrayList<>();
+        for (int index = 0; index < 32; index++) {
+            ChunkKey key = new ChunkKey(index + 10, 0);
+            old.add(key);
+            repository.generate(key, chunk -> chunk.setBlock(0, 0, 0, (byte) 1));
+        }
+        ChunkKey near = new ChunkKey(0, 0);
+        repository.generate(near, chunk -> chunk.setBlock(0, 0, 0, (byte) 1));
+        List<ChunkKey> meshed = new ArrayList<>();
+        ManualExecutor executor = new ManualExecutor();
+        ChunkMeshManager manager = new ChunkMeshManager(
+                repository,
+                input -> {
+                    meshed.add(input.center().key());
+                    return new ChunkMeshData(
+                            input.center().key(), input.center().revision(), triangle());
+                },
+                executor,
+                new FakeBackend(),
+                MainThreadGuard.captureCurrentThread(),
+                ChunkMeshBudget.productionDefaults());
+
+        assertEquals(32, manager.scheduleEligible(old));
+        assertEquals(32, manager.metrics().accepted());
+        assertEquals(2, manager.metrics().active());
+        List<ChunkKey> current = new ArrayList<>();
+        current.add(near);
+        current.addAll(old);
+
+        assertEquals(1, manager.scheduleEligible(current));
+        assertEquals(ChunkState.MESHING, repository.state(near));
+        assertEquals(32, manager.metrics().accepted());
+        assertEquals(2, manager.metrics().active());
+
+        executor.runAll();
+        assertEquals(near, meshed.get(2),
+                "the newly critical resident key must run after the two pinned active inputs");
+        assertEquals(32, meshed.size(),
+                "one lower-priority queued claim is released rather than exceeding capacity");
+    }
+
+    private static int scheduleOrdered(
+            ChunkMeshManager manager, List<ChunkKey> orderedKeys) {
+        Object result = assertDoesNotThrow(() -> manager.getClass()
+                .getMethod("scheduleEligible", List.class)
+                .invoke(manager, orderedKeys));
+        return (Integer) result;
     }
 
     private static Fixture fixture(int count) {

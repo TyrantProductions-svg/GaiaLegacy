@@ -114,7 +114,7 @@ class InstalledAudioRuntimeAuditTest {
             command.add("cmd.exe");
             command.add("/d");
             command.add("/c");
-            command.add(repository.resolve("gradlew.bat").toString());
+            command.add("gradlew.bat");
         } else {
             command.add(repository.resolve("gradlew").toString());
         }

@@ -2,6 +2,7 @@ package com.gaia.shell;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT;
 
@@ -28,6 +29,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
@@ -66,6 +68,70 @@ class ProductShellControllerTest {
         assertEquals(new ProductLifecycleIntent.CloseActiveSession(), intent);
         assertEquals(ScreenId.MAIN_MENU, fixture.snapshot().screen());
         assertTrue(fixture.snapshot().modal().isEmpty());
+    }
+
+    @Test
+    void phasePublicationDoesNotResetPresentationAnimationForSameOperation() {
+        Fixture fixture = new Fixture();
+        fixture.controller().handle(new ScreenCommand.OpenNewWorldSetup());
+        fixture.controller().handle(new ScreenCommand.CreateWorld(NEW_WORLD_REQUEST));
+        OperationProgressSnapshot first = OperationProgressSnapshot.indeterminate(
+                OperationProgressSnapshot.Kind.CREATE_WORLD,
+                0,
+                "CREATING WORLD",
+                "Preparing canonical state",
+                true).published(7L, 1L);
+        fixture.controller().updateOperationProgress(first);
+        fixture.controller().advanceOperationAnimation(0.25d);
+        int animated = fixture.snapshot().operationAnimationStep();
+
+        fixture.controller().updateOperationProgress(new OperationProgressSnapshot(
+                OperationProgressSnapshot.Kind.CREATE_WORLD,
+                1,
+                "SAVING NEW WORLD",
+                "Publishing initial checkpoint",
+                OptionalLong.empty(),
+                OptionalLong.empty(),
+                OptionalLong.empty(),
+                OptionalLong.empty(),
+                OperationProgressSnapshot.TerminalState.RUNNING,
+                false,
+                Optional.empty(),
+                7L,
+                2L));
+
+        assertEquals(animated, fixture.snapshot().operationAnimationStep(),
+                "phase changes are data publications, not animation clocks");
+        fixture.controller().updateOperationProgress(
+                OperationProgressSnapshot.indeterminate(
+                        OperationProgressSnapshot.Kind.LOAD_WORLD,
+                        "READING SAVE",
+                        "Different operation",
+                        true).published(8L, 3L));
+        assertEquals(0, fixture.snapshot().operationAnimationStep(),
+                "only a new operation identity resets presentation animation");
+    }
+
+    @Test
+    void delayedLoadProgressRemainsRejectedAfterLoadingSucceeded() {
+        Fixture fixture = new Fixture();
+        fixture.controller().handle(new ScreenCommand.OpenNewWorldSetup());
+        fixture.controller().handle(new ScreenCommand.CreateWorld(NEW_WORLD_REQUEST));
+        OperationProgressSnapshot stale = OperationProgressSnapshot.indeterminate(
+                OperationProgressSnapshot.Kind.LOAD_WORLD,
+                "READING SAVE",
+                "Retained worker snapshot",
+                false).published(41L, 1L);
+        fixture.controller().updateOperationProgress(stale);
+
+        fixture.controller().loadingSucceeded();
+
+        assertEquals(ScreenId.PLAYING, fixture.snapshot().screen());
+        assertTrue(fixture.snapshot().operationProgress().isEmpty());
+        assertThrows(IllegalStateException.class,
+                () -> fixture.controller().updateOperationProgress(stale),
+                "the shell route invariant must not be weakened");
+        assertTrue(fixture.snapshot().operationProgress().isEmpty());
     }
 
     @Test

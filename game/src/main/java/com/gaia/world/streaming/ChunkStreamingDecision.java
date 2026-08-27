@@ -10,6 +10,7 @@ import java.util.Objects;
 public record ChunkStreamingDecision(
         ChunkDesiredSets desiredSets,
         long desiredEpoch,
+        List<ChunkKey> desiredPriorityOrder,
         List<ChunkKey> admissions,
         List<ChunkKey> cancellations,
         List<ChunkKey> rejections,
@@ -18,6 +19,12 @@ public record ChunkStreamingDecision(
         desiredSets = Objects.requireNonNull(desiredSets, "desiredSets");
         if (desiredEpoch <= 0L) {
             throw new IllegalArgumentException("desiredEpoch must be positive");
+        }
+        desiredPriorityOrder = checkedList(
+                desiredPriorityOrder, "desiredPriorityOrder");
+        if (!desiredSets.preload().equals(new HashSet<>(desiredPriorityOrder))) {
+            throw new IllegalArgumentException(
+                    "desiredPriorityOrder must contain the complete preload set");
         }
         admissions = checkedList(admissions, "admissions");
         cancellations = checkedList(cancellations, "cancellations");
@@ -34,6 +41,25 @@ public record ChunkStreamingDecision(
             throw new IllegalArgumentException(
                     "a key cannot be both admitted and rejected");
         }
+    }
+
+    public ChunkStreamingDecision(
+            ChunkDesiredSets desiredSets,
+            long desiredEpoch,
+            List<ChunkKey> admissions,
+            List<ChunkKey> cancellations,
+            List<ChunkKey> rejections,
+            List<ChunkKey> unloadCandidates) {
+        this(
+                desiredSets,
+                desiredEpoch,
+                desiredSets.preload().stream()
+                        .sorted(ChunkCoordinatePolicy.canonicalComparator())
+                        .toList(),
+                admissions,
+                cancellations,
+                rejections,
+                unloadCandidates);
     }
 
     private static List<ChunkKey> checkedList(List<ChunkKey> values, String name) {
