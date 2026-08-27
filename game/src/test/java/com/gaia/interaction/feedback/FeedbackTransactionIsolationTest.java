@@ -40,6 +40,7 @@ import com.overlord.renderer.texture.TextureRegion;
 import com.overlord.physics.Aabb;
 import com.overlord.physics.MassProperties;
 import com.overlord.physics.PhysicsBody;
+import com.overlord.physics.SpatialQueryResult;
 import com.overlord.voxel.BlockRenderInfo;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkRepository;
@@ -216,7 +217,7 @@ class FeedbackTransactionIsolationTest {
         };
         BlockInteractionController controller = new BlockInteractionController(
                 new GameModeManager(GameMode.SURVIVAL, ignored -> {}),
-                () -> Optional.of(hit()),
+                () -> SpatialQueryResult.available(Optional.of(hit())),
                 chunks,
                 blocks,
                 inventory,

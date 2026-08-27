@@ -1,12 +1,15 @@
 package com.gaia.world.streaming;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.voxel.ChunkKey;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -122,6 +125,83 @@ class ChunkStreamingPipelineTest {
             }
             assertEquals(32, scheduler.metrics().accepted());
             release.countDown();
+        }
+    }
+
+    @Test
+    void queuedReprioritizationRebuildsHeapWithoutChangingWorkIdentity()
+            throws Exception {
+        CountDownLatch active = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        List<Long> executionOrder = Collections.synchronizedList(new ArrayList<>());
+        ChunkWorkScheduler scheduler = new ChunkWorkScheduler(
+                "gate-f2-repriority", 4, 1);
+        ChunkKey blocker = new ChunkKey(0, 0);
+        ChunkKey far = new ChunkKey(5, 0);
+        ChunkKey near = new ChunkKey(1, 0);
+        try {
+            scheduler.submit(observedWork(
+                    1L, blocker, 0, executionOrder, active, release));
+            assertTrue(active.await(5, TimeUnit.SECONDS));
+            scheduler.submit(observedWork(
+                    2L, far, 1, executionOrder, null, null));
+            scheduler.submit(observedWork(
+                    3L, near, 2, executionOrder, null, null));
+
+            assertDoesNotThrow(() -> scheduler.getClass()
+                    .getMethod("reprioritizeQueued", List.class)
+                    .invoke(scheduler, List.of(near, far)));
+
+            assertEquals(3, scheduler.metrics().accepted());
+            assertEquals(1, scheduler.metrics().active());
+            assertEquals(2, scheduler.metrics().queued());
+            release.countDown();
+            scheduler.awaitQuiescent(Duration.ofSeconds(5));
+
+            List<ChunkWorkResult> drained = scheduler.drainCompleted(3);
+            assertEquals(List.of(1L, 3L, 2L),
+                    drained.stream().map(ChunkWorkResult::workId).toList());
+            assertEquals(List.of(1L, 3L, 2L), executionOrder);
+            assertEquals(List.of(blocker, near, far),
+                    drained.stream().map(ChunkWorkResult::key).toList());
+            assertEquals(0, scheduler.metrics().accepted());
+        } finally {
+            release.countDown();
+            scheduler.close();
+        }
+    }
+
+    @Test
+    void invalidReprioritizationLeavesOriginalHeapOrderUntouched() throws Exception {
+        CountDownLatch active = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        List<Long> executionOrder = Collections.synchronizedList(new ArrayList<>());
+        ChunkWorkScheduler scheduler = new ChunkWorkScheduler(
+                "gate-f2-invalid-repriority", 4, 1);
+        ChunkKey blocker = new ChunkKey(0, 0);
+        ChunkKey first = new ChunkKey(1, 0);
+        ChunkKey second = new ChunkKey(2, 0);
+        try {
+            scheduler.submit(observedWork(
+                    1L, blocker, 0, executionOrder, active, release));
+            assertTrue(active.await(5, TimeUnit.SECONDS));
+            scheduler.submit(observedWork(
+                    2L, first, 1, executionOrder, null, null));
+            scheduler.submit(observedWork(
+                    3L, second, 2, executionOrder, null, null));
+
+            assertThrows(IllegalArgumentException.class,
+                    () -> scheduler.reprioritizeQueued(List.of(second)));
+
+            release.countDown();
+            scheduler.awaitQuiescent(Duration.ofSeconds(5));
+            assertEquals(List.of(1L, 2L, 3L),
+                    scheduler.drainCompleted(3).stream()
+                            .map(ChunkWorkResult::workId).toList());
+            assertEquals(List.of(1L, 2L, 3L), executionOrder);
+        } finally {
+            release.countDown();
+            scheduler.close();
         }
     }
 
@@ -291,6 +371,35 @@ class ChunkStreamingPipelineTest {
                         throw new IllegalStateException("blocked work was not released");
                     }
                     return result(workId);
+                });
+    }
+
+    private static ChunkWorkScheduler.Work observedWork(
+            long workId,
+            ChunkKey key,
+            int priority,
+            List<Long> executionOrder,
+            CountDownLatch active,
+            CountDownLatch release) {
+        return new ChunkWorkScheduler.Work(
+                workId,
+                key,
+                1L,
+                priority,
+                () -> {
+                    executionOrder.add(workId);
+                    if (active != null) {
+                        active.countDown();
+                    }
+                    if (release != null && !release.await(5, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("blocked work was not released");
+                    }
+                    return ChunkWorkResult.success(
+                            workId,
+                            key,
+                            1L,
+                            ChunkWorkResult.Kind.LOAD_GENERATE,
+                            0L);
                 });
     }
 

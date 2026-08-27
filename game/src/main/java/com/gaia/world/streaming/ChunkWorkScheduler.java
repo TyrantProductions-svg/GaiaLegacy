@@ -68,7 +68,7 @@ public final class ChunkWorkScheduler implements AutoCloseable {
 
     private final int capacity;
     private final PriorityQueue<State> queued = new PriorityQueue<>(
-            Comparator.comparingInt((State state) -> state.work.priority())
+            Comparator.comparingInt((State state) -> state.queuePriority)
                     .thenComparingLong(state -> state.work.workId()));
     private final ArrayDeque<State> completed = new ArrayDeque<>();
     private final Map<Long, State> accepted = new HashMap<>();
@@ -146,6 +146,47 @@ public final class ChunkWorkScheduler implements AutoCloseable {
 
     public synchronized Metrics metrics() {
         return new Metrics(accepted.size(), active, queued.size(), completed.size());
+    }
+
+    /** Rebuilds queued priority in place without replacing work identity or tokens. */
+    public synchronized void reprioritizeQueued(List<ChunkKey> orderedKeys) {
+        Objects.requireNonNull(orderedKeys, "orderedKeys");
+        Map<ChunkKey, Integer> ranks = new HashMap<>();
+        for (int index = 0; index < orderedKeys.size(); index++) {
+            ChunkKey key = ChunkCoordinatePolicy.requireSafe(orderedKeys.get(index));
+            if (ranks.put(key, index) != null) {
+                throw new IllegalArgumentException("orderedKeys repeats a Chunk key");
+            }
+        }
+        Map<State, Integer> validated = new HashMap<>();
+        for (State state : queued) {
+            Integer rank = ranks.get(state.work.key());
+            if (rank == null) {
+                throw new IllegalArgumentException(
+                        "orderedKeys omits currently queued work");
+            }
+            validated.put(state, rank);
+        }
+        for (Map.Entry<State, Integer> entry : validated.entrySet()) {
+            entry.getKey().queuePriority = entry.getValue();
+        }
+        List<State> rebuild = new ArrayList<>(queued);
+        queued.clear();
+        queued.addAll(rebuild);
+        notifyAll();
+    }
+
+    public synchronized Map<Long, RequestedLoadPhase> phasesByWorkId() {
+        Map<Long, RequestedLoadPhase> phases = new HashMap<>();
+        for (State state : accepted.values()) {
+            RequestedLoadPhase phase = switch (state.phase) {
+                case QUEUED -> RequestedLoadPhase.QUEUED;
+                case RUNNING -> RequestedLoadPhase.ACTIVE;
+                case COMPLETED -> RequestedLoadPhase.COMPLETED;
+            };
+            phases.put(state.work.workId(), phase);
+        }
+        return Map.copyOf(phases);
     }
 
     public synchronized void awaitQuiescent(Duration timeout)
@@ -285,12 +326,14 @@ public final class ChunkWorkScheduler implements AutoCloseable {
 
     private static final class State {
         private final Work work;
+        private int queuePriority;
         private Phase phase = Phase.QUEUED;
         private boolean canceled;
         private ChunkWorkResult result;
 
         private State(Work work) {
             this.work = work;
+            this.queuePriority = work.priority();
         }
     }
 }

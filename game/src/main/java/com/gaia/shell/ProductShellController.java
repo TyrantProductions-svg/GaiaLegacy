@@ -11,6 +11,9 @@ import java.util.Optional;
 public final class ProductShellController {
     private final ScreenRouter router;
     private final Optional<SettingsController> settings;
+    private OperationProgressSnapshot operationProgress;
+    private long animationOperationId;
+    private double operationAnimationSeconds;
 
     public ProductShellController(ScreenRouter router) {
         this.router = Objects.requireNonNull(router, "router");
@@ -25,7 +28,51 @@ public final class ProductShellController {
     }
 
     public ProductShellSnapshot snapshot() {
-        return router.snapshot();
+        ProductShellSnapshot route = router.snapshot();
+        return new ProductShellSnapshot(
+                route.screen(),
+                route.modal(),
+                route.returnTarget(),
+                Optional.ofNullable(operationProgress),
+                animationStep());
+    }
+
+    public void updateOperationProgress(OperationProgressSnapshot progress) {
+        OperationProgressSnapshot checked = Objects.requireNonNull(
+                progress, "progress");
+        ScreenId screen = router.snapshot().screen();
+        if (screen != ScreenId.LOADING && screen != ScreenId.SAVING) {
+            throw new IllegalStateException(
+                    "operation progress requires a loading or saving route");
+        }
+        if (checked.operationId() != animationOperationId) {
+            animationOperationId = checked.operationId();
+            operationAnimationSeconds = 0.0d;
+        }
+        operationProgress = checked;
+    }
+
+    public void advanceOperationAnimation(double frameDeltaSeconds) {
+        if (!Double.isFinite(frameDeltaSeconds) || frameDeltaSeconds < 0.0d) {
+            throw new IllegalArgumentException(
+                    "frameDeltaSeconds must be finite and non-negative");
+        }
+        if (operationProgress != null
+                && operationProgress.terminalState()
+                        == OperationProgressSnapshot.TerminalState.RUNNING) {
+            operationAnimationSeconds = (operationAnimationSeconds
+                    + frameDeltaSeconds) % 1.0d;
+        }
+    }
+
+    public void clearOperationProgress() {
+        operationProgress = null;
+        animationOperationId = 0L;
+        operationAnimationSeconds = 0.0d;
+    }
+
+    private int animationStep() {
+        return Math.min(59, (int) Math.floor(operationAnimationSeconds * 60.0d));
     }
 
     public ProductLifecycleIntent handle(ScreenCommand command) {
@@ -41,7 +88,12 @@ public final class ProductShellController {
         }
         if (command instanceof ScreenCommand.Dismiss
                 && current.screen() == ScreenId.LOADING) {
+            if (current.operationProgress().isPresent()
+                    && !current.operationProgress().orElseThrow().cancelable()) {
+                return ProductLifecycleIntent.none();
+            }
             router.loadingCancelled();
+            clearOperationProgress();
             return new ProductLifecycleIntent.CloseActiveSession();
         }
         if (command instanceof ScreenCommand.Confirm
@@ -139,6 +191,7 @@ public final class ProductShellController {
     public ProductLifecycleIntent savingSucceeded(
             ProductLifecycleIntent.SavePolicy policy) {
         Objects.requireNonNull(policy, "policy");
+        clearOperationProgress();
         if (policy == ProductLifecycleIntent.SavePolicy.SAVE_AND_STAY) {
             router.savingReturnedToPause();
             return ProductLifecycleIntent.none();
@@ -148,11 +201,13 @@ public final class ProductShellController {
     }
 
     public void savingFailed() {
+        clearOperationProgress();
         router.savingReturnedToPause();
         router.openModal(ModalId.ERROR_ACKNOWLEDGEMENT);
     }
 
     public void operationFailed() {
+        clearOperationProgress();
         router.openModal(ModalId.ERROR_ACKNOWLEDGEMENT);
     }
 
@@ -165,6 +220,7 @@ public final class ProductShellController {
         if (snapshot().screen() == ScreenId.LOADING
                 && snapshot().modal().isEmpty()) {
             router.loadingSucceeded();
+            clearOperationProgress();
         }
     }
 
@@ -172,6 +228,7 @@ public final class ProductShellController {
         if (snapshot().screen() == ScreenId.LOADING
                 && snapshot().modal().isEmpty()) {
             router.loadingFailed();
+            clearOperationProgress();
         }
     }
 

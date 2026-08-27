@@ -4,6 +4,7 @@ import com.gaia.blocks.BlockRegistry;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.interaction.api.BlockHitResult;
 import com.overlord.interaction.api.BlockRaycastService;
+import com.overlord.interaction.api.SpatialBlockRaycastService;
 import com.overlord.physics.BlockRaycast;
 import com.overlord.physics.BlockRaycastHit;
 import com.overlord.physics.SimulationOrigin;
@@ -15,14 +16,14 @@ import java.util.function.Supplier;
 import org.joml.Vector3fc;
 
 /** Identity adapter over the unique Phase 6 shape-aware raycast. */
-public final class GaiaBlockRaycastService implements BlockRaycastService {
-    private final RaycastDelegate raycast;
+public final class GaiaBlockRaycastService
+        implements BlockRaycastService, SpatialBlockRaycastService {
+    private final OriginAwareRaycastDelegate raycast;
     private final IntFunction<ResourceLocation> blockIdentity;
 
     public GaiaBlockRaycastService(BlockRaycast raycast, BlockRegistry blocks) {
         this(
-                (RaycastDelegate)
-                        Objects.requireNonNull(raycast, "raycast")::cast,
+                availableDelegate(Objects.requireNonNull(raycast, "raycast")::cast),
                 registryIdentity(blocks));
     }
 
@@ -35,7 +36,7 @@ public final class GaiaBlockRaycastService implements BlockRaycastService {
             BlockRegistry blocks,
             Supplier<SimulationOrigin> simulationOrigin) {
         this(
-                failClosedDelegate(originAwareDelegate(raycast, simulationOrigin)),
+                originAwareDelegate(raycast, simulationOrigin),
                 registryIdentity(blocks));
     }
 
@@ -47,6 +48,12 @@ public final class GaiaBlockRaycastService implements BlockRaycastService {
     GaiaBlockRaycastService(
             RaycastDelegate raycast,
             IntFunction<ResourceLocation> blockIdentity) {
+        this(availableDelegate(raycast), blockIdentity);
+    }
+
+    private GaiaBlockRaycastService(
+            OriginAwareRaycastDelegate raycast,
+            IntFunction<ResourceLocation> blockIdentity) {
         this.raycast = Objects.requireNonNull(raycast, "raycast");
         this.blockIdentity = Objects.requireNonNull(blockIdentity, "blockIdentity");
     }
@@ -55,7 +62,7 @@ public final class GaiaBlockRaycastService implements BlockRaycastService {
             OriginAwareRaycastDelegate raycast,
             IntFunction<ResourceLocation> blockIdentity) {
         return new GaiaBlockRaycastService(
-                failClosedDelegate(raycast), blockIdentity);
+                raycast, blockIdentity);
     }
 
     private static OriginAwareRaycastDelegate originAwareDelegate(
@@ -72,9 +79,9 @@ public final class GaiaBlockRaycastService implements BlockRaycastService {
                 maxDistance);
     }
 
-    private static Optional<BlockRaycastHit> availableResult(
-            SpatialQueryResult<BlockRaycastHit> query) {
-        SpatialQueryResult<BlockRaycastHit> required =
+    private static <T> Optional<T> availableResult(
+            SpatialQueryResult<T> query) {
+        SpatialQueryResult<T> required =
                 Objects.requireNonNull(query, "query");
         if (required.status() != SpatialQueryResult.Status.AVAILABLE) {
             throw new IllegalStateException(
@@ -86,18 +93,29 @@ public final class GaiaBlockRaycastService implements BlockRaycastService {
         return required.result();
     }
 
-    private static RaycastDelegate failClosedDelegate(
-            OriginAwareRaycastDelegate raycast) {
-        OriginAwareRaycastDelegate required =
-                Objects.requireNonNull(raycast, "raycast");
-        return (origin, direction, maxDistance) -> availableResult(
+    private static OriginAwareRaycastDelegate availableDelegate(
+            RaycastDelegate raycast) {
+        RaycastDelegate required = Objects.requireNonNull(raycast, "raycast");
+        return (origin, direction, maxDistance) -> SpatialQueryResult.available(
                 required.cast(origin, direction, maxDistance));
     }
 
     @Override
     public Optional<BlockHitResult> raycast(
             Vector3fc origin, Vector3fc direction, float maxDistance) {
-        return raycast.cast(origin, direction, maxDistance).map(this::mapHit);
+        return availableResult(query(origin, direction, maxDistance));
+    }
+
+    @Override
+    public SpatialQueryResult<BlockHitResult> query(
+            Vector3fc origin, Vector3fc direction, float maximumDistance) {
+        SpatialQueryResult<BlockRaycastHit> result = Objects.requireNonNull(
+                raycast.cast(origin, direction, maximumDistance), "raycast result");
+        if (result.status() != SpatialQueryResult.Status.AVAILABLE) {
+            return SpatialQueryResult.unavailable(
+                    result.status(), result.unavailableKey().orElseThrow());
+        }
+        return SpatialQueryResult.available(result.result().map(this::mapHit));
     }
 
     private BlockHitResult mapHit(BlockRaycastHit hit) {

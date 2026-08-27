@@ -1383,6 +1383,49 @@ class ChunkRepositoryTest {
     }
 
     @Test
+    void queuedMeshingClaimReleaseIsExactRevisionBoundAndSingleUse() {
+        ChunkRepository repository = new ChunkRepository();
+        ChunkKey key = new ChunkKey(0, 0);
+        ChunkKey foreign = new ChunkKey(1, 0);
+        repository.generate(key, chunk -> {});
+        ChunkMeshingClaim first =
+                repository.claimMeshingCapability(key).orElseThrow();
+        long revision = first.revision();
+
+        assertFalse(repository.releaseQueuedMeshingClaim(
+                foreign, revision, first.claimId()));
+        assertFalse(repository.releaseQueuedMeshingClaim(
+                key, revision + 1L, first.claimId()));
+        assertTrue(repository.releaseQueuedMeshingClaim(
+                key, revision, first.claimId()));
+        assertEquals(ChunkState.DIRTY, repository.state(key));
+        assertFalse(repository.releaseQueuedMeshingClaim(
+                key, revision, first.claimId()),
+                "a released queued claim cannot be consumed twice");
+
+        ChunkMeshingClaim replacement =
+                repository.claimMeshingCapability(key).orElseThrow();
+        assertEquals(revision, replacement.revision(),
+                "physical layout replacement does not mutate canonical revision");
+        assertFalse(repository.releaseQueuedMeshingClaim(
+                        key, revision, first.claimId()),
+                "an old claim identity cannot release a newer same-revision claim");
+        assertTrue(repository.markMeshingClaimActive(
+                key, revision, replacement.claimId()));
+        assertFalse(repository.releaseQueuedMeshingClaim(
+                        key, revision, replacement.claimId()),
+                "an active claim is no longer queued-release eligible");
+        assertTrue(repository.markReadyForUpload(key, revision));
+        assertFalse(repository.releaseQueuedMeshingClaim(
+                        key, revision, replacement.claimId()),
+                "completed or awaiting-upload work is not queued-release eligible");
+        assertTrue(repository.markRenderable(key, revision));
+        assertFalse(repository.releaseQueuedMeshingClaim(
+                        key, revision, replacement.claimId()),
+                "installed mesh work is not queued-release eligible");
+    }
+
+    @Test
     void laterMutationClearsMeshingFailureAndMakesEntryEligible() {
         ChunkRepository repository = new ChunkRepository();
         ChunkKey key = new ChunkKey(0, 0);

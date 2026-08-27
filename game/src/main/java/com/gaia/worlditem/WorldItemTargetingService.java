@@ -1,6 +1,12 @@
 package com.gaia.worlditem;
 
-import com.overlord.interaction.api.BlockRaycastService;
+import com.overlord.interaction.api.BlockHitResult;
+import com.overlord.interaction.api.SpatialBlockRaycastService;
+import com.overlord.physics.SpatialQueryResult;
+import com.overlord.physics.SimulationOrigin;
+import com.overlord.voxel.ChunkCoordinatePolicy;
+import com.overlord.voxel.ChunkKey;
+import com.overlord.voxel.GlobalPosition;
 import com.overlord.worlditem.api.WorldItemPhysicalSnapshot;
 import com.overlord.worlditem.api.WorldItemPhysicalState;
 import java.util.List;
@@ -13,19 +19,37 @@ import org.joml.Vector3fc;
 public final class WorldItemTargetingService {
     private static final float HALF_EDGE = 0.25f;
 
-    private final BlockRaycastService blocks;
+    private final SpatialBlockRaycastService blocks;
 
-    public WorldItemTargetingService(BlockRaycastService blocks) {
+    public WorldItemTargetingService(SpatialBlockRaycastService blocks) {
         this.blocks = Objects.requireNonNull(blocks, "blocks");
     }
 
-    public Optional<WorldItemTarget> target(
+    public SpatialQueryResult<WorldItemTarget> target(
             Vector3fc eye,
             Vector3fc direction,
             float maximumDistance,
             long tick,
             List<WorldItemPhysicalSnapshot> candidates) {
         requireFinite(eye, "eye");
+        return target(
+                new SimulationOrigin(new ChunkKey(0, 0)).toGlobal(eye),
+                eye,
+                direction,
+                maximumDistance,
+                tick,
+                candidates);
+    }
+
+    public SpatialQueryResult<WorldItemTarget> target(
+            GlobalPosition canonicalEye,
+            Vector3fc residentEye,
+            Vector3fc direction,
+            float maximumDistance,
+            long tick,
+            List<WorldItemPhysicalSnapshot> candidates) {
+        Objects.requireNonNull(canonicalEye, "canonicalEye");
+        requireFinite(residentEye, "residentEye");
         requireFinite(direction, "direction");
         if (!Float.isFinite(maximumDistance) || maximumDistance < 0.0f) {
             throw new IllegalArgumentException(
@@ -43,16 +67,33 @@ public final class WorldItemTargetingService {
         }
         rayDirection.normalize();
 
-        Optional<Float> opaqueBlockDistance = blocks
-                .raycast(eye, rayDirection, maximumDistance)
-                .map(hit -> hit.distance());
+        SpatialQueryResult<BlockHitResult> blockQuery = Objects.requireNonNull(
+                blocks.query(residentEye, rayDirection, maximumDistance),
+                "block raycast result");
+        if (blockQuery.status() != SpatialQueryResult.Status.AVAILABLE) {
+            return SpatialQueryResult.unavailable(
+                    blockQuery.status(), blockQuery.unavailableKey().orElseThrow());
+        }
+        Optional<Float> opaqueBlockDistance = blockQuery.result()
+                .map(BlockHitResult::distance);
+        double canonicalEyeX =
+                ChunkCoordinatePolicy.worldOriginX(canonicalEye.chunkKey())
+                        + canonicalEye.localX();
+        double canonicalEyeZ =
+                ChunkCoordinatePolicy.worldOriginZ(canonicalEye.chunkKey())
+                        + canonicalEye.localZ();
         WorldItemTarget best = null;
         for (WorldItemPhysicalSnapshot candidate : candidates) {
             Objects.requireNonNull(candidate, "candidate");
             if (!eligible(candidate, tick)) {
                 continue;
             }
-            Optional<Float> intersection = intersect(eye, rayDirection, candidate);
+            Optional<Float> intersection = intersect(
+                    canonicalEyeX,
+                    canonicalEye.y(),
+                    canonicalEyeZ,
+                    rayDirection,
+                    candidate);
             if (intersection.isEmpty()) {
                 continue;
             }
@@ -70,7 +111,7 @@ public final class WorldItemTargetingService {
                 best = new WorldItemTarget(candidate.id(), candidate, distance);
             }
         }
-        return Optional.ofNullable(best);
+        return SpatialQueryResult.available(Optional.ofNullable(best));
     }
 
     private static boolean eligible(WorldItemPhysicalSnapshot candidate, long tick) {
@@ -80,12 +121,14 @@ public final class WorldItemTargetingService {
     }
 
     private static Optional<Float> intersect(
-            Vector3fc eye,
+            double eyeX,
+            double eyeY,
+            double eyeZ,
             Vector3fc direction,
             WorldItemPhysicalSnapshot candidate) {
         double entry = Double.NEGATIVE_INFINITY;
         double exit = Double.POSITIVE_INFINITY;
-        double[] origins = {eye.x(), eye.y(), eye.z()};
+        double[] origins = {eyeX, eyeY, eyeZ};
         double[] directions = {direction.x(), direction.y(), direction.z()};
         double[] centers = {
                 candidate.runtime().item().positionX(),

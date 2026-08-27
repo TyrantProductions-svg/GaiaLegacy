@@ -96,6 +96,20 @@ class ProductLoopTest {
     }
 
     @Test
+    void ordinaryPlayingAndMainMenuFramesNeverPublishOperationProgress() {
+        Fixture mainMenu = new Fixture();
+        assertDoesNotThrow(mainMenu::frame);
+        assertEquals(ScreenId.MAIN_MENU, mainMenu.shell().snapshot().screen());
+        assertTrue(mainMenu.shell().snapshot().operationProgress().isEmpty());
+
+        Fixture playing = new Fixture();
+        playing.enterPlaying();
+        assertDoesNotThrow(playing::frame);
+        assertEquals(ScreenId.PLAYING, playing.shell().snapshot().screen());
+        assertTrue(playing.shell().snapshot().operationProgress().isEmpty());
+    }
+
+    @Test
     void repeatedMainMenuFramesDoNotRediscoverSavesWhileLoadIsDisabled() {
         AtomicInteger discoveries = new AtomicInteger();
         SaveCatalog catalog = () -> {

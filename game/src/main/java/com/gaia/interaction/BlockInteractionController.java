@@ -16,6 +16,7 @@ import com.overlord.inventory.api.BodyInventoryViewModel;
 import com.overlord.inventory.api.BodySlot;
 import com.overlord.inventory.api.ItemStack;
 import com.overlord.inventory.api.ItemStackView;
+import com.overlord.physics.SpatialQueryResult;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkRepository;
 import java.util.HashSet;
@@ -39,6 +40,7 @@ public final class BlockInteractionController {
     private final double baseBreakSpeed;
     private final CommittedGameplayFeedback committedFeedback;
     private Optional<InteractionFailureReason> failure = Optional.empty();
+    private Optional<UnavailableTargetObservation> unavailableTarget = Optional.empty();
     private BlockInteractionSnapshot view;
     private boolean primarySuppressedUntilRelease;
     private boolean secondarySuppressedUntilRelease;
@@ -119,9 +121,19 @@ public final class BlockInteractionController {
             return;
         }
 
-        Optional<BlockHitResult> target = interactionEnabled
-                ? targeting.target()
-                : Optional.empty();
+        SpatialQueryResult<BlockHitResult> targetQuery = interactionEnabled
+                ? Objects.requireNonNull(targeting.target(), "targeting result")
+                : SpatialQueryResult.available(Optional.empty());
+        if (targetQuery.status() != SpatialQueryResult.Status.AVAILABLE) {
+            unavailableTarget = Optional.of(new UnavailableTargetObservation(
+                    targetQuery.status(), targetQuery.unavailableKey().orElseThrow()));
+            breakTracker.clear();
+            failure = Optional.empty();
+            view = snapshot(Optional.empty(), InteractionMode.NONE);
+            return;
+        }
+        unavailableTarget = Optional.empty();
+        Optional<BlockHitResult> target = targetQuery.result();
         if (!interactionEnabled) {
             cancelAndSuppressMouseInteraction();
             view = snapshot(target, InteractionMode.NONE);
@@ -180,8 +192,13 @@ public final class BlockInteractionController {
         return view;
     }
 
+    public Optional<UnavailableTargetObservation> unavailableTarget() {
+        return unavailableTarget;
+    }
+
     public void cancel() {
         breakTracker.clear();
+        unavailableTarget = Optional.empty();
         view = snapshot(Optional.empty(), InteractionMode.NONE);
     }
 
@@ -333,5 +350,18 @@ public final class BlockInteractionController {
                 failure,
                 crackStage,
                 modes.mode());
+    }
+
+    public record UnavailableTargetObservation(
+            SpatialQueryResult.Status status,
+            ChunkKey key) {
+        public UnavailableTargetObservation {
+            Objects.requireNonNull(status, "status");
+            Objects.requireNonNull(key, "key");
+            if (status == SpatialQueryResult.Status.AVAILABLE) {
+                throw new IllegalArgumentException(
+                        "unavailable target status cannot be AVAILABLE");
+            }
+        }
     }
 }

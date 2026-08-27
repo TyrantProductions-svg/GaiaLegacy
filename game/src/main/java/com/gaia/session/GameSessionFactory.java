@@ -78,6 +78,7 @@ import com.gaia.world.streaming.ChunkStreamingPipeline;
 import com.gaia.world.streaming.ChunkStreamingPolicy;
 import com.gaia.world.streaming.ChunkWorkResult;
 import com.gaia.session.streaming.SimulationOriginCoordinator;
+import com.gaia.session.streaming.SimulationOriginRebasePolicy;
 import com.gaia.worlditem.PhysicalWorldItemSystem;
 import com.gaia.worlditem.RoutedWorldInteractionInput;
 import com.gaia.worlditem.WorldInteractionInputRouter;
@@ -190,6 +191,8 @@ import org.joml.Vector3f;
 public final class GameSessionFactory {
     private static final double FIXED_STEP_SECONDS = 1.0 / 60.0;
     private static final int MAX_FIXED_STEPS_PER_FRAME = 8;
+    private static final SimulationOriginRebasePolicy ORIGIN_REBASE_POLICY =
+            SimulationOriginRebasePolicy.productionDefaults();
 
     private final SessionAssembler assembler;
     private final NamedSessionAssembler namedAssembler;
@@ -1166,6 +1169,10 @@ public final class GameSessionFactory {
                                         .viewModel(inventoryOwner)
                                         .orElseThrow()
                                         .activeSlot(),
+                        () -> Objects.requireNonNull(
+                                originCoordinatorReference.get(),
+                                "simulation origin coordinator")
+                                .simulationOrigin(),
                         new WorldItemTargetingService(blockRaycasts),
                         worldItemPickupTransaction,
                         feedback,
@@ -3534,6 +3541,7 @@ public final class GameSessionFactory {
         private boolean debugHudDefaultPending;
         private GameSessionFrame lastFrame;
         private ChunkStreamingMetrics streamingMetrics = ChunkStreamingMetrics.empty();
+        private List<ChunkKey> currentMeshPriorityOrder = List.of();
         private boolean streamingAdmissionsOpen = true;
         private boolean saveCapturePrepared;
         private List<PreparedDirtyChunk> preparedDirtyChunks = List.of();
@@ -3791,8 +3799,8 @@ public final class GameSessionFactory {
             trace.add("observe-player-global-position");
             GlobalPosition playerGlobal = originCoordinator.simulationOrigin()
                     .toGlobal(feetScratch);
-            if (!playerGlobal.chunkKey().equals(
-                    originCoordinator.simulationOrigin().chunkKey())) {
+            if (ORIGIN_REBASE_POLICY.requiresRebase(
+                    playerGlobal, originCoordinator.simulationOrigin())) {
                 ChunkKey next = playerGlobal.chunkKey();
                 if (!originCoordinator.rebase(
                         new SimulationOrigin(next), new RenderOrigin(next))) {
@@ -3804,7 +3812,10 @@ public final class GameSessionFactory {
                     playerGlobal,
                     new ChunkStreamingObservation(
                             Set.copyOf(world.chunks().keys()),
-                            streamingPipeline.requestedKeys()));
+                            streamingPipeline.requestedLoadPhases()));
+            currentMeshPriorityOrder = decision.desiredPriorityOrder().stream()
+                    .filter(decision.desiredSets().render()::contains)
+                    .toList();
             trace.add("apply-streaming-decision");
             if (streamingAdmissionsOpen) {
                 streamingPipeline.apply(decision);
@@ -4320,7 +4331,11 @@ public final class GameSessionFactory {
         }
 
         private void pumpChunkMeshes() {
-            chunkMeshes.scheduleEligible();
+            if (currentMeshPriorityOrder.isEmpty()) {
+                chunkMeshes.scheduleEligible();
+            } else {
+                chunkMeshes.scheduleEligible(currentMeshPriorityOrder);
+            }
             chunkMeshes.processMainThreadWork();
             chunkMeshes.pollFailure().ifPresent(
                     GameSessionFactory::rethrowMeshFailure);

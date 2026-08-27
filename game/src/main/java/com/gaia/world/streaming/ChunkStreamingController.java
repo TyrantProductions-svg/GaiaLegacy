@@ -6,6 +6,7 @@ import com.overlord.voxel.GlobalPosition;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -34,23 +35,34 @@ public final class ChunkStreamingController {
                 ? Math.addExact(desiredEpoch, 1L)
                 : desiredEpoch;
 
-        Set<ChunkKey> outstandingRequests = new LinkedHashSet<>(observed.requested());
-        outstandingRequests.removeAll(observed.resident());
-        List<ChunkKey> cancellations = outstandingRequests.stream()
+        List<ChunkKey> priorityOrder = desired.preload().stream()
+                .sorted(priorityComparator(center, desired))
+                .toList();
+        LinkedHashMap<ChunkKey, RequestedLoadPhase> outstanding =
+                new LinkedHashMap<>(observed.requestedLoadPhases());
+        observed.resident().forEach(outstanding::remove);
+        List<ChunkKey> outsideCancellations = outstanding.keySet().stream()
                 .filter(key -> !desired.preload().contains(key))
                 .sorted(ChunkCoordinatePolicy.canonicalComparator())
                 .toList();
-        Set<ChunkKey> retainedRequests = new LinkedHashSet<>(outstandingRequests);
-        retainedRequests.removeAll(cancellations);
+        int pinnedTokens = (int) outstanding.values().stream()
+                .filter(phase -> phase != RequestedLoadPhase.QUEUED)
+                .count();
+        Set<ChunkKey> queuedDesired = new LinkedHashSet<>();
+        outstanding.forEach((key, phase) -> {
+            if (phase == RequestedLoadPhase.QUEUED
+                    && desired.preload().contains(key)) {
+                queuedDesired.add(key);
+            }
+        });
+        Set<ChunkKey> missing = new LinkedHashSet<>(desired.preload());
+        missing.removeAll(observed.resident());
+        missing.removeAll(outstanding.keySet());
+        Set<ChunkKey> eligible = new LinkedHashSet<>(queuedDesired);
+        eligible.addAll(missing);
 
-        List<ChunkKey> candidates = desired.preload().stream()
-                .filter(key -> !observed.resident().contains(key))
-                .filter(key -> !retainedRequests.contains(key))
-                .sorted(priorityComparator(center, desired))
-                .toList();
-        int availableSlots = Math.max(
-                0,
-                policy.loadGenerationQueueCapacity() - retainedRequests.size());
+        int availableSlots = Math.max(0,
+                policy.loadGenerationQueueCapacity() - pinnedTokens);
         int residentAuthorityCapacity = Math.multiplyExact(
                 Math.addExact(Math.multiplyExact(policy.unloadRadius(), 2), 1),
                 Math.addExact(Math.multiplyExact(policy.unloadRadius(), 2), 1));
@@ -58,12 +70,26 @@ public final class ChunkStreamingController {
                 0,
                 residentAuthorityCapacity
                         - observed.resident().size()
-                        - retainedRequests.size());
+                        - pinnedTokens);
         availableSlots = Math.min(availableSlots, authoritySlots);
-        int admittedCount = Math.min(availableSlots, candidates.size());
-        List<ChunkKey> admissions = List.copyOf(candidates.subList(0, admittedCount));
-        List<ChunkKey> rejections = List.copyOf(
-                candidates.subList(admittedCount, candidates.size()));
+        Set<ChunkKey> selected = priorityOrder.stream()
+                .filter(eligible::contains)
+                .limit(availableSlots)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        List<ChunkKey> preemptedQueued = priorityOrder.stream()
+                .filter(queuedDesired::contains)
+                .filter(key -> !selected.contains(key))
+                .toList();
+        List<ChunkKey> cancellations = new ArrayList<>(outsideCancellations);
+        cancellations.addAll(preemptedQueued);
+        List<ChunkKey> admissions = priorityOrder.stream()
+                .filter(missing::contains)
+                .filter(selected::contains)
+                .toList();
+        List<ChunkKey> rejections = priorityOrder.stream()
+                .filter(missing::contains)
+                .filter(key -> !selected.contains(key))
+                .toList();
 
         List<ChunkKey> unloadCandidates = observed.resident().stream()
                 .filter(key -> outsideRadius(center, key, policy.unloadRadius()))
@@ -72,6 +98,7 @@ public final class ChunkStreamingController {
         ChunkStreamingDecision decision = new ChunkStreamingDecision(
                 desired,
                 nextEpoch,
+                priorityOrder,
                 admissions,
                 cancellations,
                 rejections,

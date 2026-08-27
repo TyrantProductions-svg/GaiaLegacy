@@ -1,9 +1,9 @@
 package com.gaia.interaction;
 
 import com.overlord.interaction.api.BlockHitResult;
-import java.util.Optional;
+import com.overlord.physics.SpatialQueryResult;
 
 @FunctionalInterface
 public interface BlockTargetProvider {
-    Optional<BlockHitResult> target();
+    SpatialQueryResult<BlockHitResult> target();
 }

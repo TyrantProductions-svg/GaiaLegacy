@@ -160,46 +160,65 @@ class ChunkStreamingSessionIntegrationTest {
 
     @Test
     void sparseStreamedCheckpointRegeneratesSimulationNeighborhoodBeforePlayerRestore() {
-        SaveGameSnapshot full = productionSnapshot();
-        int worldHeight = GameConfig.Chunk.MAX_HEIGHT;
-        SaveGameSnapshot sparse = new SaveGameSnapshot(
-                new SaveGameSnapshot.StaticMetadata(
-                        full.metadata().formatVersion(),
-                        full.metadata().gameVersion(),
-                        full.metadata().saveGameId(),
-                        full.metadata().displayName(),
-                        full.metadata().createdAt(),
-                        full.metadata().worldSeed(),
-                        full.metadata().generatorVersion(),
-                        full.metadata().generatorConfigFingerprint(),
-                        full.metadata().chunkRadius(),
-                        worldHeight,
-                        full.metadata().summary()),
-                full.fixedTick(),
-                new ChunkRepositorySnapshot(
-                        worldHeight,
-                        full.chunks().revisionHighWater(),
-                        List.of()),
-                new PlayerSaveSnapshot(
-                        full.player().owner(),
-                        full.player().feetPositionX(),
-                        200.0,
-                        full.player().feetPositionZ(),
-                        full.player().velocityX(),
-                        full.player().velocityY(),
-                        full.player().velocityZ(),
-                        full.player().yaw(),
-                        full.player().pitch(),
-                        full.player().gameMode(),
-                        full.player().noclip()),
-                full.inventory(),
-                full.worldItems());
+        SaveGameSnapshot sparse = sparseProductionSnapshot();
         var access = GameSessionFactory.productionSessionTestAccess();
 
         GameSession session = access.factory().restore(sparse);
         try {
             driveToReady(session);
             assertEquals(GameSessionState.READY, session.state());
+        } finally {
+            session.close();
+        }
+    }
+
+    @Test
+    void delayedRadiusTwoChunkBlocksReadyButRadiusFourAndFiveAreNotRequired()
+            throws Exception {
+        var access = GameSessionFactory.productionSessionTestAccess();
+        GameSession session = access.factory().restore(sparseProductionSnapshot());
+        try {
+            Object runtime = declaredField(session, "runtime");
+            World world = (World) declaredField(runtime, "world");
+            ChunkMeshManager meshes = (ChunkMeshManager) declaredField(
+                    runtime, "chunkMeshes");
+            @SuppressWarnings("unchecked")
+            Set<ChunkKey> readiness = Set.copyOf(
+                    (Set<ChunkKey>) declaredField(runtime, "meshReadiness"));
+            ChunkKey delayed = new ChunkKey(2, 2);
+            assertEquals(25, readiness.size(),
+                    "initial readiness is exactly the radius-2 safety square");
+            assertTrue(readiness.contains(delayed));
+            assertEquals(25, world.chunks().keys().size(),
+                    "radius-4 render and radius-5 preload are not startup barriers");
+            var delayedClaim = world.chunks().claimMeshing(delayed).orElseThrow();
+            Set<ChunkKey> otherReadiness = new java.util.HashSet<>(readiness);
+            otherReadiness.remove(delayed);
+
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15L);
+            while (!meshes.allRenderable(otherReadiness)
+                    && System.nanoTime() < deadline) {
+                session.pollLoad();
+                assertEquals(GameSessionState.LOADING, session.state());
+                Thread.yield();
+            }
+
+            assertTrue(meshes.allRenderable(otherReadiness));
+            assertFalse(meshes.allRenderable(readiness));
+            assertEquals(GameSessionState.LOADING, session.state());
+            assertEquals(0, access.readyPublicationCount());
+            assertThrows(IllegalStateException.class, () -> session.advancePlaying(
+                    1.0 / 60.0, MouseDelta.ZERO, true));
+
+            world.chunks().markMeshingFailure(
+                    delayed,
+                    delayedClaim.center().revision(),
+                    new IllegalStateException("release delayed readiness fixture"));
+            assertTrue(meshes.retry(delayed));
+            driveToReady(session);
+
+            assertEquals(GameSessionState.READY, session.state());
+            assertEquals(1, access.readyPublicationCount());
         } finally {
             session.close();
         }
@@ -666,6 +685,54 @@ class ChunkStreamingSessionIntegrationTest {
     }
 
     @Test
+    void residentSimulationChunkWithoutRenderableMeshIsReportedAsCurrentGap() {
+        MainThreadGuard guard = MainThreadGuard.captureCurrentThread();
+        ChunkKey key = new ChunkKey(0, 0);
+        ChunkRepository repository = new ChunkRepository(
+                1, new ChunkDirtyTracker());
+        repository.generate(key, ignored -> {});
+        ChunkStreamingPipeline pipeline = new ChunkStreamingPipeline(
+                repository,
+                ChunkStreamingPolicy.productionDefaults(),
+                guard,
+                work -> { throw new AssertionError("load was not expected"); },
+                work -> { throw new AssertionError("save was not expected"); },
+                new NoUnloadLifecycle());
+        ChunkMeshManager meshes = idleMeshes(repository, guard);
+        LogicalWorldItemService worldItems = new LogicalWorldItemService(
+                guard, 4, 0L);
+        ChunkStreamingDecision decision = new ChunkStreamingDecision(
+                new ChunkDesiredSets(Set.of(key), Set.of(key), Set.of(key)),
+                1L,
+                List.of(key),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of());
+        try {
+            ChunkStreamingMetrics metrics = new ChunkStreamingMetricsRecorder().capture(
+                    new GlobalPosition(key, 0.0, 2.0, 0.0),
+                    new SimulationOrigin(key),
+                    decision,
+                    1,
+                    pipeline,
+                    meshes,
+                    worldItems);
+
+            assertEquals(1, metrics.gaps().size());
+            assertEquals(
+                    com.gaia.world.streaming.ChunkGapObservation.DesiredClass.SIMULATION,
+                    metrics.gaps().get(0).desiredClass());
+            assertTrue(metrics.gaps().get(0).resident());
+            assertFalse(metrics.gaps().get(0).renderObjectInstalled());
+        } finally {
+            pipeline.close();
+            meshes.close();
+            worldItems.close();
+        }
+    }
+
+    @Test
     void recorderCountsActualAdmittedUnloadInsteadOfDecisionCandidates()
             throws Exception {
         MainThreadGuard guard = MainThreadGuard.captureCurrentThread();
@@ -737,15 +804,22 @@ class ChunkStreamingSessionIntegrationTest {
                     (com.overlord.physics.PlayerController)
                             declaredField(runtime, "playerController");
             player.body().teleport(new Vector3f(2 * 16 + 2.25f, 2.0f, 2.5f));
-            session.advancePlaying(
-                    0.0, new MouseDelta(0.0, 0.0), true);
+            ChunkStreamingMetrics initialMetrics = session.advancePlaying(
+                    0.0, new MouseDelta(0.0, 0.0), true).streamingMetrics();
             ((ChunkStreamingPipeline) declaredField(runtime, "streamingPipeline"))
                     .awaitWorkers(java.time.Duration.ofSeconds(5));
 
-            long publications = 0L;
-            long uploads = 0L;
-            long modifiedResident = 0L;
+            long publications = metricLong(initialMetrics, "publicationsThisFrame");
+            long uploads = metricLong(initialMetrics, "uploadsThisFrame");
+            long modifiedResident = metricLong(initialMetrics, "modifiedResidentChunks");
             long observedLatency = 0L;
+            for (String latency : List.of(
+                    "loadLatencyNanos", "generationLatencyNanos",
+                    "meshLatencyNanos", "saveLatencyNanos",
+                    "restoreLatencyNanos")) {
+                observedLatency = Math.max(
+                        observedLatency, metricLong(initialMetrics, latency));
+            }
             for (int frame = 0; frame < 4_096; frame++) {
                 ChunkStreamingMetrics metrics = session.advancePlaying(
                         0.0, new MouseDelta(0.0, 0.0), true).streamingMetrics();
@@ -1130,6 +1204,43 @@ class ChunkStreamingSessionIntegrationTest {
         public void cancel(ChunkStreamingPipeline.PreparedUnload prepared) {
             throw new AssertionError("unload cancellation was not expected");
         }
+    }
+
+    private static SaveGameSnapshot sparseProductionSnapshot() {
+        SaveGameSnapshot full = productionSnapshot();
+        int worldHeight = GameConfig.Chunk.MAX_HEIGHT;
+        return new SaveGameSnapshot(
+                new SaveGameSnapshot.StaticMetadata(
+                        full.metadata().formatVersion(),
+                        full.metadata().gameVersion(),
+                        full.metadata().saveGameId(),
+                        full.metadata().displayName(),
+                        full.metadata().createdAt(),
+                        full.metadata().worldSeed(),
+                        full.metadata().generatorVersion(),
+                        full.metadata().generatorConfigFingerprint(),
+                        full.metadata().chunkRadius(),
+                        worldHeight,
+                        full.metadata().summary()),
+                full.fixedTick(),
+                new ChunkRepositorySnapshot(
+                        worldHeight,
+                        full.chunks().revisionHighWater(),
+                        List.of()),
+                new PlayerSaveSnapshot(
+                        full.player().owner(),
+                        full.player().feetPositionX(),
+                        200.0,
+                        full.player().feetPositionZ(),
+                        full.player().velocityX(),
+                        full.player().velocityY(),
+                        full.player().velocityZ(),
+                        full.player().yaw(),
+                        full.player().pitch(),
+                        full.player().gameMode(),
+                        full.player().noclip()),
+                full.inventory(),
+                full.worldItems());
     }
 
     static SaveGameSnapshot productionSnapshot() {

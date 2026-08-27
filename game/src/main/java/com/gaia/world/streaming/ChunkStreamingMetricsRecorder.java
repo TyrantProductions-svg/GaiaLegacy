@@ -6,6 +6,7 @@ import com.overlord.physics.SimulationOrigin;
 import com.overlord.voxel.ChunkAvailability;
 import com.overlord.voxel.ChunkMeshManager;
 import com.overlord.voxel.GlobalPosition;
+import com.overlord.voxel.ChunkKey;
 import com.overlord.worlditem.LogicalWorldItemService;
 import java.util.Objects;
 
@@ -90,6 +91,14 @@ public final class ChunkStreamingMetricsRecorder {
         priorUploadedBytes = lifecycle.bytesUploadedTotal();
         priorDestructions = lifecycle.destroyedTotal();
         long modifiedPersistedChunks = store == null ? 0L : store.modifiedChunkCount();
+        java.util.Map<ChunkKey, RequestedLoadPhase> loadPhases =
+                pipeline.requestedLoadPhases();
+        java.util.List<ChunkGapObservation> gaps = decision.desiredPriorityOrder()
+                .stream()
+                .map(key -> gap(decision, key, pipeline, meshes, loadPhases))
+                .filter(java.util.Objects::nonNull)
+                .limit(16)
+                .toList();
         return new ChunkStreamingMetrics(
                 player,
                 origin,
@@ -131,7 +140,44 @@ public final class ChunkStreamingMetricsRecorder {
                                                 blocked.key(),
                                                 blocked.direction()))
                                 .toList(),
+                gaps,
                 streaming);
+    }
+
+    private static ChunkGapObservation gap(
+            ChunkStreamingDecision decision,
+            ChunkKey key,
+            ChunkStreamingPipeline pipeline,
+            ChunkMeshManager meshes,
+            java.util.Map<ChunkKey, RequestedLoadPhase> loadPhases) {
+        ChunkGapObservation.DesiredClass desiredClass =
+                decision.desiredSets().simulation().contains(key)
+                        ? ChunkGapObservation.DesiredClass.SIMULATION
+                        : decision.desiredSets().render().contains(key)
+                                ? ChunkGapObservation.DesiredClass.RENDER
+                                : ChunkGapObservation.DesiredClass.PRELOAD;
+        boolean resident = pipeline.resident(key);
+        boolean installed = meshes.hasInstalledRenderObject(key);
+        boolean gap = !resident
+                || pipeline.availability(key) != ChunkAvailability.AVAILABLE
+                || desiredClass != ChunkGapObservation.DesiredClass.PRELOAD
+                        && !pipeline.renderable(key);
+        if (!gap) {
+            return null;
+        }
+        RequestedLoadPhase requested = loadPhases.get(key);
+        ChunkGapObservation.LoadPhase loadPhase = requested == null
+                ? ChunkGapObservation.LoadPhase.NONE
+                : ChunkGapObservation.LoadPhase.valueOf(requested.name());
+        return new ChunkGapObservation(
+                desiredClass,
+                key,
+                pipeline.availability(key),
+                pipeline.chunkState(key),
+                resident,
+                loadPhase,
+                meshes.meshPhase(key),
+                installed);
     }
 
     private static long delta(long current, long previous) {

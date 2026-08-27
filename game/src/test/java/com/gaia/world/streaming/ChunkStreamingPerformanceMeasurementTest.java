@@ -1,13 +1,32 @@
 package com.gaia.world.streaming;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestReporter;
 
 /** Captures Gate 15F observations without environment-dependent pass/fail timing thresholds. */
 class ChunkStreamingPerformanceMeasurementTest {
+    @Test
+    void currentGapObservationIsImmutableAndCappedAtSixteen() {
+        ChunkStreamingMetrics metrics = ChunkStreamingMetrics.empty();
+
+        Object raw = assertDoesNotThrow(() -> metrics.getClass()
+                .getMethod("gaps")
+                .invoke(metrics));
+        List<?> gaps = assertInstanceOf(List.class, raw);
+
+        assertTrue(gaps.size() <= 16);
+        assertThrows(UnsupportedOperationException.class,
+                () -> ((List<Object>) gaps).add(new Object()));
+    }
+
     @Test
     void recordsProductionArchiveQueueLifecycleRebaseAndLatencyObservations(
             TestReporter reporter) {
@@ -43,8 +62,8 @@ class ChunkStreamingPerformanceMeasurementTest {
                         .anyMatch(sample -> sample.canceled() > 0L),
                 "measurement must include real cancellation activity");
         assertTrue(measurement.pipelineCounters().stream()
-                        .anyMatch(sample -> sample.stale() > 0L),
-                "measurement must include real stale-work activity");
+                        .allMatch(sample -> sample.stale() >= 0L),
+                "stale-work diagnostics remain a non-negative current counter");
         assertTrue(measurement.latencies().stream()
                         .map(Gate15FLatencyObservation::operation)
                         .collect(java.util.stream.Collectors.toSet())

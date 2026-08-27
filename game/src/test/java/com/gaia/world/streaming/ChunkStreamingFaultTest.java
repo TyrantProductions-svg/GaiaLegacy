@@ -436,6 +436,127 @@ class ChunkStreamingFaultTest {
     }
 
     @Test
+    void stillDesiredOldEpochCompletionPublishesWhenExactContextRemainsCurrent()
+            throws Exception {
+        ChunkRepository repository = new ChunkRepository(
+                WORLD_HEIGHT, new ChunkDirtyTracker());
+        ChunkKey key = new ChunkKey(-3, 0);
+        CountDownLatch active = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ChunkStreamingPipeline pipeline = pipeline(
+                repository,
+                work -> {
+                    active.countDown();
+                    assertTrue(release.await(5, TimeUnit.SECONDS));
+                    return ChunkWorkResult.loadSuccess(
+                            work.workId(), work.key(), work.desiredEpoch(),
+                            work.expectedRevision(),
+                            ChunkStreamingTicket.SourcePreference.GENERATE,
+                            data(key, (byte) 9));
+                },
+                work -> unexpectedSave(),
+                new FakeUnloadLifecycle());
+        try {
+            pipeline.apply(admissionDecision(key, 1L));
+            assertTrue(active.await(5, TimeUnit.SECONDS));
+
+            pipeline.apply(desiredWithoutAdmission(key, 2L));
+            assertEquals(1, pipeline.loadWorkMetrics().accepted(),
+                    "retained work must remain capacity-accounted");
+
+            release.countDown();
+            pipeline.awaitWorkers(Duration.ofSeconds(5));
+            pipeline.drainOwnerResults();
+
+            assertTrue(repository.contains(key));
+            assertEquals(9, Byte.toUnsignedInt(repository.getBlock(
+                    key.worldOriginX(), 0, key.worldOriginZ())));
+            assertEquals(1L, pipeline.metrics().published());
+            assertEquals(0L, pipeline.staleResultCount(),
+                    "a still-desired exact retained context is not stale");
+        } finally {
+            release.countDown();
+            pipeline.close();
+        }
+    }
+
+    @Test
+    void leaveCancelReenterRejectsLateOldCompletionWithoutResurrectingIt()
+            throws Exception {
+        ChunkRepository repository = new ChunkRepository(
+                WORLD_HEIGHT, new ChunkDirtyTracker());
+        ChunkKey key = new ChunkKey(6, -4);
+        CountDownLatch oldActive = new CountDownLatch(1);
+        CountDownLatch releaseOld = new CountDownLatch(1);
+        CountDownLatch newStarted = new CountDownLatch(1);
+        AtomicInteger calls = new AtomicInteger();
+        AtomicReference<ChunkStreamingPipeline.DetachedLoadWork> oldWork =
+                new AtomicReference<>();
+        AtomicReference<ChunkStreamingPipeline.DetachedLoadWork> newWork =
+                new AtomicReference<>();
+        ChunkStreamingPipeline pipeline = pipeline(
+                repository,
+                work -> {
+                    if (calls.incrementAndGet() == 1) {
+                        oldWork.set(work);
+                        oldActive.countDown();
+                        assertTrue(releaseOld.await(5, TimeUnit.SECONDS));
+                        return ChunkWorkResult.loadSuccess(
+                                work.workId(), work.key(), work.desiredEpoch(),
+                                work.expectedRevision(),
+                                ChunkStreamingTicket.SourcePreference.GENERATE,
+                                data(key, (byte) 7));
+                    }
+                    newWork.set(work);
+                    newStarted.countDown();
+                    return ChunkWorkResult.loadSuccess(
+                            work.workId(), work.key(), work.desiredEpoch(),
+                            work.expectedRevision(),
+                            ChunkStreamingTicket.SourcePreference.GENERATE,
+                            data(key, (byte) 9));
+                },
+                work -> unexpectedSave(),
+                new FakeUnloadLifecycle());
+        try {
+            pipeline.apply(admissionDecision(key, 1L));
+            assertTrue(oldActive.await(5, TimeUnit.SECONDS));
+
+            pipeline.apply(cancellationDecision(key, 2L));
+            pipeline.apply(admissionDecision(key, 3L));
+
+            assertEquals(Set.of(key), pipeline.requestedLoadPhases().keySet());
+
+            assertTrue(newStarted.await(5, TimeUnit.SECONDS),
+                    "re-entry must receive a new admission while canceled work finishes late");
+            long completionDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (pipeline.loadWorkMetrics().completed() == 0
+                    && System.nanoTime() < completionDeadline) {
+                Thread.yield();
+            }
+            assertTrue(pipeline.loadWorkMetrics().completed() > 0);
+            pipeline.drainOwnerResults();
+            assertEquals(9, Byte.toUnsignedInt(repository.getBlock(
+                    key.worldOriginX(), 0, key.worldOriginZ())));
+
+            releaseOld.countDown();
+            pipeline.awaitWorkers(Duration.ofSeconds(5));
+            pipeline.drainOwnerResults();
+
+            assertEquals(2, calls.get());
+            assertTrue(oldWork.get().workId() != newWork.get().workId());
+            assertEquals(1L, oldWork.get().desiredEpoch());
+            assertEquals(3L, newWork.get().desiredEpoch());
+            assertEquals(9, Byte.toUnsignedInt(repository.getBlock(
+                    key.worldOriginX(), 0, key.worldOriginZ())),
+                    "late H1/P1 completion must not overwrite current H2/P2 authority");
+            assertEquals(1L, pipeline.metrics().published());
+        } finally {
+            releaseOld.countDown();
+            pipeline.close();
+        }
+    }
+
+    @Test
     void desiredChunkCancelsBlockedSaveBeforeItCanPublishOrEvict()
             throws Exception {
         ChunkKey key = new ChunkKey(-5, 0);

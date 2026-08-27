@@ -640,8 +640,24 @@ class GameBootstrapSaveCompositionTest {
         @Override
         public SessionSaveCaptureResult captureSave() {
             long tick = worldItems.currentWorldTick();
+            java.util.ArrayList<ChunkSnapshot> residentChunks =
+                    new java.util.ArrayList<>(restored.chunks().chunks());
+            long revisionHighWater = restored.chunks().revisionHighWater();
+            if (residentChunks.stream()
+                    .noneMatch(chunk -> chunk.key().equals(initialPageChunk))) {
+                revisionHighWater = Math.addExact(revisionHighWater, 1L);
+                residentChunks.add(ChunkSnapshot.empty(
+                        initialPageChunk,
+                        revisionHighWater,
+                        restored.metadata().worldHeight()));
+            }
             SaveGameSnapshot captured = new SaveGameSnapshot(
-                    restored.metadata(), tick, restored.chunks(), restored.player(),
+                    restored.metadata(), tick,
+                    new com.overlord.voxel.ChunkRepositorySnapshot(
+                            restored.chunks().worldHeight(),
+                            revisionHighWater,
+                            residentChunks),
+                    restored.player(),
                     restored.inventory(), new WorldItemsSaveSnapshot(
                             tick, worldItems.canonicalSnapshot()));
             return GameSessionPersistenceTestFixture.runtimeCaptured(captured, 6L);

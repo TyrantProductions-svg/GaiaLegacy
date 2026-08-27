@@ -1,6 +1,7 @@
 package com.gaia.interaction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT;
 import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_RIGHT;
@@ -24,6 +25,7 @@ import com.overlord.inventory.api.ItemStack;
 import com.overlord.physics.Aabb;
 import com.overlord.physics.MassProperties;
 import com.overlord.physics.PhysicsBody;
+import com.overlord.physics.SpatialQueryResult;
 import com.overlord.renderer.material.MaterialDefinition;
 import com.overlord.renderer.material.RenderType;
 import com.overlord.renderer.texture.TextureRegion;
@@ -33,6 +35,7 @@ import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkRepository;
 import com.overlord.voxel.DirtyChunkRevision;
 import com.overlord.worlditem.LogicalWorldItemService;
+import java.lang.reflect.Proxy;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -85,8 +88,8 @@ class BlockInteractionControllerTest {
         BlockHitResult front = hit(1);
         BlockHitResult behind = hit(2);
         AtomicInteger targetCalls = new AtomicInteger();
-        Fixture fixture = fixture(() -> Optional.of(
-                targetCalls.getAndIncrement() == 0 ? front : behind));
+        Fixture fixture = fixture(() -> SpatialQueryResult.available(Optional.of(
+                targetCalls.getAndIncrement() == 0 ? front : behind)));
         fixture.modes.setMode(GameMode.CREATIVE, 0);
         InputSnapshot pressed = mousePressed(GLFW_MOUSE_BUTTON_LEFT);
 
@@ -103,8 +106,8 @@ class BlockInteractionControllerTest {
         BlockHitResult front = hit(1);
         BlockHitResult behind = hit(2);
         AtomicInteger targetCalls = new AtomicInteger();
-        Fixture fixture = fixture(() -> Optional.of(
-                targetCalls.getAndIncrement() == 0 ? front : behind));
+        Fixture fixture = fixture(() -> SpatialQueryResult.available(Optional.of(
+                targetCalls.getAndIncrement() == 0 ? front : behind)));
         fixture.modes.setMode(GameMode.CREATIVE, 0);
         InputSnapshot pressed = mousePressed(GLFW_MOUSE_BUTTON_LEFT);
 
@@ -188,6 +191,98 @@ class BlockInteractionControllerTest {
     }
 
     @Test
+    void unknownTargetClearsInProgressBreakWithoutEscapingFixedStep() {
+        AtomicBoolean unavailable = new AtomicBoolean();
+        ChunkKey unavailableKey = new ChunkKey(17, 2);
+        BlockTargetProvider targeting = proxyTargeting((returnType) -> {
+            if (!unavailable.get()) {
+                return returnType == Optional.class
+                        ? Optional.of(hit(1))
+                        : SpatialQueryResult.available(Optional.of(hit(1)));
+            }
+            return SpatialQueryResult.unavailable(
+                    SpatialQueryResult.Status.UNKNOWN, unavailableKey);
+        });
+        Fixture fixture = fixture(targeting);
+
+        fixture.controller.fixedUpdate(
+                mouseHeld(GLFW_MOUSE_BUTTON_LEFT), 1.0 / 60.0, 1, 1, true);
+        assertEquals(InteractionMode.BREAKING, fixture.controller.viewModel().mode());
+        unavailable.set(true);
+
+        assertDoesNotThrow(() -> fixture.controller.fixedUpdate(
+                mouseHeld(GLFW_MOUSE_BUTTON_LEFT), 1.0 / 60.0, 2, 2, true));
+        assertEquals(InteractionMode.NONE, fixture.controller.viewModel().mode());
+        assertEquals(0.0, fixture.controller.viewModel().progress());
+        assertEquals(0, fixture.mutations.get());
+    }
+
+    @Test
+    void failedTargetSuppressesPlacementWithoutBecomingAnAvailableMiss() {
+        ChunkKey unavailableKey = new ChunkKey(17, 2);
+        BlockTargetProvider targeting = proxyTargeting(ignored ->
+                SpatialQueryResult.unavailable(
+                        SpatialQueryResult.Status.FAILED, unavailableKey));
+        Fixture fixture = fixture(targeting);
+
+        assertDoesNotThrow(() -> fixture.controller.fixedUpdate(
+                mousePressed(GLFW_MOUSE_BUTTON_RIGHT), 1.0 / 60.0, 1, 1, true));
+
+        assertEquals(0, fixture.mutations.get());
+        assertEquals(InteractionMode.NONE, fixture.controller.viewModel().mode());
+    }
+
+    @Test
+    void oneThousandUnknownFixedStepsRemainNonfatalAndBounded() {
+        ChunkKey unavailableKey = new ChunkKey(17, 2);
+        Fixture fixture = fixture(proxyTargeting(ignored ->
+                SpatialQueryResult.unavailable(
+                        SpatialQueryResult.Status.UNKNOWN, unavailableKey)));
+
+        assertDoesNotThrow(() -> {
+            for (int step = 0; step < 1_000; step++) {
+                fixture.controller.fixedUpdate(
+                        mouseHeld(GLFW_MOUSE_BUTTON_LEFT),
+                        1.0 / 60.0,
+                        step,
+                        step,
+                        true);
+            }
+        });
+
+        assertEquals(InteractionMode.NONE, fixture.controller.viewModel().mode());
+        assertEquals(0.0, fixture.controller.viewModel().progress());
+        assertEquals(0, fixture.mutations.get());
+    }
+
+    @Test
+    void unknownThenAvailableResumesTargetingWithoutExplicitRetry() {
+        AtomicBoolean available = new AtomicBoolean();
+        ChunkKey unavailableKey = new ChunkKey(17, 2);
+        BlockTargetProvider targeting = proxyTargeting(returnType -> {
+            if (!available.get()) {
+                return SpatialQueryResult.unavailable(
+                        SpatialQueryResult.Status.UNKNOWN, unavailableKey);
+            }
+            return returnType == Optional.class
+                    ? Optional.of(hit(1))
+                    : SpatialQueryResult.available(Optional.of(hit(1)));
+        });
+        Fixture fixture = fixture(targeting);
+
+        assertDoesNotThrow(() -> fixture.controller.fixedUpdate(
+                mouseHeld(GLFW_MOUSE_BUTTON_LEFT), 1.0 / 60.0, 1, 1, true));
+        assertEquals(InteractionMode.NONE, fixture.controller.viewModel().mode());
+
+        available.set(true);
+        fixture.controller.fixedUpdate(
+                mouseHeld(GLFW_MOUSE_BUTTON_LEFT), 1.0 / 60.0, 2, 2, true);
+
+        assertEquals(InteractionMode.BREAKING, fixture.controller.viewModel().mode());
+        assertTrue(fixture.controller.viewModel().progress() > 0.0);
+    }
+
+    @Test
     void committedFeedbackTriggersOnlyAfterAppliedBreakAndPlacement() {
         AtomicInteger breaks = new AtomicInteger();
         AtomicInteger placements = new AtomicInteger();
@@ -208,7 +303,8 @@ class BlockInteractionControllerTest {
                 placements.incrementAndGet();
             }
         };
-        Fixture fixture = fixture(() -> Optional.of(hit(1)), feedback);
+        Fixture fixture = fixture(
+                () -> SpatialQueryResult.available(Optional.of(hit(1))), feedback);
 
         fixture.controller.fixedUpdate(
                 mousePressed(GLFW_MOUSE_BUTTON_RIGHT), 1.0 / 60.0, 1, 1, true);
@@ -426,8 +522,16 @@ class BlockInteractionControllerTest {
         return new InputSnapshot(Set.of(), Set.of(), Set.of(), Set.of(), List.of());
     }
 
+    private static BlockTargetProvider proxyTargeting(
+            java.util.function.Function<Class<?>, Object> result) {
+        return (BlockTargetProvider) Proxy.newProxyInstance(
+                BlockTargetProvider.class.getClassLoader(),
+                new Class<?>[] {BlockTargetProvider.class},
+                (proxy, method, arguments) -> result.apply(method.getReturnType()));
+    }
+
     private static Fixture fixture() {
-        return fixture(() -> Optional.of(hit(1)));
+        return fixture(() -> SpatialQueryResult.available(Optional.of(hit(1))));
     }
 
     private static Fixture fixture(BlockTargetProvider targeting) {
