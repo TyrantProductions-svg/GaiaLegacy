@@ -562,8 +562,14 @@ public final class ProductionGate15FStreamingProbe implements Gate15FStreamingPr
         private void failOnDiagnostics(String stage) {
             List<ChunkStreamingDiagnostic> diagnostics = pipeline.diagnostics();
             if (!diagnostics.isEmpty()) {
-                throw new AssertionError(stage + " diagnostic failure: " + diagnostics
-                        + " metrics=" + last.streamingMetrics());
+                String failure = stage + " diagnostic failure: " + diagnostics
+                        + " requested=" + pipeline.requestedKeys()
+                        + " requestedLoadPhases=" + pipeline.requestedLoadPhases()
+                        + " currentCenter="
+                        + last.streamingMetrics().playerGlobalPosition().chunkKey()
+                        + " metrics=" + last.streamingMetrics();
+                System.err.println(failure);
+                throw new AssertionError(failure);
             }
         }
 
