@@ -257,11 +257,12 @@ class StreamedChunkUnloadTransactionTest {
 
         StreamedChunkUnloadResult result = backend.persistUnload(
                 new StreamedChunkUnloadPlan(
-                        capture(key, 1L, 1L, modifiedBytes, true, () -> true),
+                        capture(key, 2L, 1L, modifiedBytes, true, () -> true),
                         Optional.empty(), List.of(), true));
 
         assertEquals(StreamedChunkUnloadResult.Status.SUCCESS, result.status());
-        assertEquals(1L, result.persistedChunkRevision().orElseThrow());
+        assertTrue(result.persistedChunkRevision().isEmpty(),
+                "a no-op equality proof must not claim an unwritten Chunk revision");
         assertEquals(1L, store(root, new JdkSaveFileOperations())
                 .readCurrentAuthority(WorldItemPagingAcceptanceFixture.SAVE_ID)
                 .index().orElseThrow().entry(key).orElseThrow().revision(),
