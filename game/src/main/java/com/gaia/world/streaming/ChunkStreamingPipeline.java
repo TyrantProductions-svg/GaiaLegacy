@@ -241,10 +241,20 @@ public final class ChunkStreamingPipeline implements AutoCloseable {
         saveScheduler.awaitQuiescent(Objects.requireNonNull(timeout, "timeout"));
     }
 
-    public void drainOwnerResults() {
+    public int drainOwnerResults() {
+        return drainOwnerResults(policy.publicationBudget());
+    }
+
+    public int drainOwnerResults(int maximumPublications) {
         assertOwner("Chunk streaming result publication");
         requireOpen();
-        int remaining = policy.publicationBudget();
+        if (maximumPublications < 0) {
+            throw new IllegalArgumentException(
+                    "maximumPublications must be non-negative");
+        }
+        long publishedBeforeDrain = published;
+        int remaining = Math.min(
+                maximumPublications, policy.publicationBudget());
         for (ChunkWorkResult result : loadScheduler.drainCompleted(remaining)) {
             processLoad(result);
             remaining--;
@@ -254,6 +264,12 @@ public final class ChunkStreamingPipeline implements AutoCloseable {
                 processSave(result);
             }
         }
+        return Math.toIntExact(published - publishedBeforeDrain);
+    }
+
+    public int publicationBudget() {
+        assertOwner("Chunk streaming publication-budget observation");
+        return policy.publicationBudget();
     }
 
     public List<ChunkStreamingDiagnostic> diagnostics() {

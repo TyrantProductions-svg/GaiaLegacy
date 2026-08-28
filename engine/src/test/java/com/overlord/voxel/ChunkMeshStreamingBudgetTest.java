@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.core.thread.MainThreadGuard;
@@ -73,6 +74,41 @@ class ChunkMeshStreamingBudgetTest {
         assertEquals(2, fixture.backend.uploaded.size());
         assertEquals(2, fixture.manager.scheduleEligible());
         assertEquals(32, fixture.manager.metrics().accepted());
+    }
+
+    @Test
+    void ownerUploadAllowanceDefersCompletedWorkWithoutReleasingCapacity() {
+        Fixture fixture = fixture(3);
+        assertEquals(3, fixture.manager.scheduleEligible());
+        fixture.executor.runAll();
+        assertEquals(3, fixture.manager.metrics().completed());
+
+        assertEquals(0, fixture.manager.processMainThreadWork(0));
+        assertEquals(3, fixture.manager.metrics().accepted());
+        assertEquals(3, fixture.manager.metrics().completed());
+        assertEquals(0, fixture.backend.uploaded.size());
+
+        assertEquals(1, fixture.manager.processMainThreadWork(1));
+        assertEquals(2, fixture.manager.metrics().accepted());
+        assertEquals(2, fixture.manager.metrics().completed());
+        assertEquals(1, fixture.backend.uploaded.size());
+
+        assertEquals(2, fixture.manager.processMainThreadWork(2));
+        assertEquals(0, fixture.manager.metrics().accepted());
+        assertEquals(0, fixture.manager.metrics().completed());
+        assertEquals(3, fixture.backend.uploaded.size());
+    }
+
+    @Test
+    void callerUploadAllowanceCannotRaiseTheFixedMeshBudget() {
+        Fixture fixture = fixture(3);
+        assertEquals(3, fixture.manager.scheduleEligible());
+        fixture.executor.runAll();
+
+        assertEquals(2, fixture.manager.processMainThreadWork(100));
+        assertEquals(2, fixture.backend.uploaded.size());
+        assertThrows(IllegalArgumentException.class,
+                () -> fixture.manager.processMainThreadWork(-1));
     }
 
     @Test
