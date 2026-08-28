@@ -54,7 +54,14 @@ class ChunkStreamingPerformanceMeasurementTest {
             assertWork(metrics.saveWork(), 8, 1);
             assertTrue(metrics.residentChunks() <= 225,
                     "resident authority may use the unload hysteresis footprint");
-            assertTrue(metrics.publicationsThisFrame() <= 2L);
+            assertTrue(metrics.publicationsThisFrame() <= 2L,
+                    () -> "publication budget exceeded at transition="
+                            + epoch.transition() + " lifecycle=" + epoch.lifecycleState()
+                            + " publicationsThisFrame=" + metrics.publicationsThisFrame()
+                            + " uploadsThisFrame=" + metrics.uploadsThisFrame()
+                            + " load=" + metrics.loadGenerationWork()
+                            + " mesh=" + metrics.meshWork()
+                            + " save=" + metrics.saveWork());
             assertTrue(metrics.uploadsThisFrame() <= 2L);
             assertTrue(metrics.destructionsThisFrame() <= 4L);
         });

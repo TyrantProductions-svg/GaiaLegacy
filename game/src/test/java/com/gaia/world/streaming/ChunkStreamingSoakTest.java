@@ -177,7 +177,14 @@ class ChunkStreamingSoakTest {
         assertWork(metrics.loadGenerationWork(), 32, 4);
         assertWork(metrics.meshWork(), 32, 2);
         assertWork(metrics.saveWork(), 8, 1);
-        assertTrue(metrics.publicationsThisFrame() <= 2L);
+        assertTrue(metrics.publicationsThisFrame() <= 2L,
+                () -> "publication budget exceeded at transition="
+                        + epoch.transition() + " lifecycle=" + epoch.lifecycleState()
+                        + " publicationsThisFrame=" + metrics.publicationsThisFrame()
+                        + " uploadsThisFrame=" + metrics.uploadsThisFrame()
+                        + " load=" + metrics.loadGenerationWork()
+                        + " mesh=" + metrics.meshWork()
+                        + " save=" + metrics.saveWork());
         assertTrue(metrics.uploadsThisFrame() <= 2L);
         assertTrue(metrics.destructionsThisFrame() <= 4L);
         var paging = metrics.worldItems();

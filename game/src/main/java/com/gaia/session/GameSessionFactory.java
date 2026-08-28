@@ -3821,9 +3821,17 @@ public final class GameSessionFactory {
                 streamingPipeline.apply(decision);
             }
             trace.add("drain-owner-publications");
-            streamingPipeline.drainOwnerResults();
+            int publicationBudget = streamingPipeline.publicationBudget();
+            ChunkMeshManager.Metrics meshMetrics = chunkMeshes.metrics();
+            boolean meshPublicationBacklogged = meshMetrics.completed() > 0
+                    || meshMetrics.awaitingUpload() > 0;
+            int chunkPublicationAllowance = meshPublicationBacklogged
+                    ? Math.max(1, publicationBudget - 1)
+                    : publicationBudget;
+            int chunkPublications = streamingPipeline.drainOwnerResults(
+                    chunkPublicationAllowance);
             trace.add("pump-owner-mesh-work");
-            pumpChunkMeshes();
+            pumpChunkMeshes(publicationBudget - chunkPublications);
             trace.add("capture-immutable-streaming-metrics");
             streamingMetrics = streamingMetricsRecorder.capture(
                     playerGlobal,
@@ -4331,14 +4339,25 @@ public final class GameSessionFactory {
         }
 
         private void pumpChunkMeshes() {
+            scheduleChunkMeshes();
+            chunkMeshes.processMainThreadWork();
+            chunkMeshes.pollFailure().ifPresent(
+                    GameSessionFactory::rethrowMeshFailure);
+        }
+
+        private void pumpChunkMeshes(int maximumUploads) {
+            scheduleChunkMeshes();
+            chunkMeshes.processMainThreadWork(maximumUploads);
+            chunkMeshes.pollFailure().ifPresent(
+                    GameSessionFactory::rethrowMeshFailure);
+        }
+
+        private void scheduleChunkMeshes() {
             if (currentMeshPriorityOrder.isEmpty()) {
                 chunkMeshes.scheduleEligible();
             } else {
                 chunkMeshes.scheduleEligible(currentMeshPriorityOrder);
             }
-            chunkMeshes.processMainThreadWork();
-            chunkMeshes.pollFailure().ifPresent(
-                    GameSessionFactory::rethrowMeshFailure);
         }
 
         private GameSessionFrame captureFrame(

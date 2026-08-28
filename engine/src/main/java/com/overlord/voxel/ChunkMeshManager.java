@@ -278,15 +278,28 @@ public final class ChunkMeshManager implements AutoCloseable {
     }
 
     public int processMainThreadWork() {
+        return processMainThreadWork(budget.maxUploadsPerFrame());
+    }
+
+    /**
+     * Processes owner-thread GPU work within both the fixed mesh budget and a
+     * caller-supplied share of a wider frame publication budget.
+     */
+    public int processMainThreadWork(int maximumUploads) {
         mainThreadGuard.assertMainThread("chunk mesh upload");
+        if (maximumUploads < 0) {
+            throw new IllegalArgumentException(
+                    "maximumUploads must be non-negative");
+        }
         if (closed) {
             return 0;
         }
         boolean outermostPump = pumpDepth == 0;
         if (outermostPump) {
-            remainingUploadsInPump = budget.maxUploadsPerFrame();
+            remainingUploadsInPump = Math.min(
+                    maximumUploads, budget.maxUploadsPerFrame());
             remainingDestructionsInPump = budget.maxDestructionsPerFrame();
-            remainingCompletionDrainsInPump = budget.maxUploadsPerFrame();
+            remainingCompletionDrainsInPump = remainingUploadsInPump;
         }
         pumpDepth++;
         try {
