@@ -163,10 +163,7 @@ public final class StreamedWorldItemPageBackend implements WorldItemPageSource {
                                 existing.copyCanonicalVoxels(),
                                 payload.copyCanonicalVoxels())
                         && checked.requiredGlobals().isEmpty()) {
-                    return checked.voxelModified()
-                            ? StreamedChunkUnloadResult.success(
-                                    Optional.empty(), current.revision())
-                            : StreamedChunkUnloadResult.success(Optional.empty());
+                    return StreamedChunkUnloadResult.success(Optional.empty());
                 }
             }
             if (!checked.voxelModified()) {
