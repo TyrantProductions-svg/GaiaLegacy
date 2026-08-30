@@ -74,6 +74,148 @@ public final class VoxelAmbientOcclusion {
         };
     }
 
+    public static float sampleQuarter(
+            QuarterVoxelSampler sampler,
+            BlockRenderResolver resolver,
+            int parentX,
+            int parentY,
+            int parentZ,
+            int subX,
+            int subY,
+            int subZ,
+            BlockFace face,
+            int tangentSignA,
+            int tangentSignB) {
+        Objects.requireNonNull(sampler, "sampler");
+        Objects.requireNonNull(resolver, "resolver");
+        Objects.requireNonNull(face, "face");
+        requireTangentSign(tangentSignA, "tangentSignA");
+        requireTangentSign(tangentSignB, "tangentSignB");
+
+        FaceBasis basis = basis(face);
+        int surfaceX = subX + basis.normalX();
+        int surfaceY = subY + basis.normalY();
+        int surfaceZ = subZ + basis.normalZ();
+        boolean sideA = occludes(
+                sampler.sample(
+                        parentX,
+                        parentY,
+                        parentZ,
+                        surfaceX + tangentSignA * basis.tangentAX(),
+                        surfaceY + tangentSignA * basis.tangentAY(),
+                        surfaceZ + tangentSignA * basis.tangentAZ()),
+                resolver);
+        boolean sideB = occludes(
+                sampler.sample(
+                        parentX,
+                        parentY,
+                        parentZ,
+                        surfaceX + tangentSignB * basis.tangentBX(),
+                        surfaceY + tangentSignB * basis.tangentBY(),
+                        surfaceZ + tangentSignB * basis.tangentBZ()),
+                resolver);
+        if (sideA && sideB) {
+            return BOTH_SIDES;
+        }
+        boolean corner = occludes(
+                sampler.sample(
+                        parentX,
+                        parentY,
+                        parentZ,
+                        surfaceX
+                                + tangentSignA * basis.tangentAX()
+                                + tangentSignB * basis.tangentBX(),
+                        surfaceY
+                                + tangentSignA * basis.tangentAY()
+                                + tangentSignB * basis.tangentBY(),
+                        surfaceZ
+                                + tangentSignA * basis.tangentAZ()
+                                + tangentSignB * basis.tangentBZ()),
+                resolver);
+        return ao(sideA, sideB, corner);
+    }
+
+    static boolean quarterSamplesDetail(
+            QuarterVoxelSampler sampler,
+            int parentX,
+            int parentY,
+            int parentZ,
+            int subX,
+            int subY,
+            int subZ,
+            BlockFace face,
+            int tangentSignA,
+            int tangentSignB) {
+        Objects.requireNonNull(sampler, "sampler");
+        Objects.requireNonNull(face, "face");
+        requireTangentSign(tangentSignA, "tangentSignA");
+        requireTangentSign(tangentSignB, "tangentSignB");
+        FaceBasis basis = basis(face);
+        int surfaceX = subX + basis.normalX();
+        int surfaceY = subY + basis.normalY();
+        int surfaceZ = subZ + basis.normalZ();
+        return isDetail(sampler.sample(
+                        parentX,
+                        parentY,
+                        parentZ,
+                        surfaceX + tangentSignA * basis.tangentAX(),
+                        surfaceY + tangentSignA * basis.tangentAY(),
+                        surfaceZ + tangentSignA * basis.tangentAZ()))
+                || isDetail(sampler.sample(
+                        parentX,
+                        parentY,
+                        parentZ,
+                        surfaceX + tangentSignB * basis.tangentBX(),
+                        surfaceY + tangentSignB * basis.tangentBY(),
+                        surfaceZ + tangentSignB * basis.tangentBZ()))
+                || isDetail(sampler.sample(
+                        parentX,
+                        parentY,
+                        parentZ,
+                        surfaceX
+                                + tangentSignA * basis.tangentAX()
+                                + tangentSignB * basis.tangentBX(),
+                        surfaceY
+                                + tangentSignA * basis.tangentAY()
+                                + tangentSignB * basis.tangentBY(),
+                        surfaceZ
+                                + tangentSignA * basis.tangentAZ()
+                                + tangentSignB * basis.tangentBZ()));
+    }
+
+    private static float ao(boolean sideA, boolean sideB, boolean corner) {
+        if (sideA && sideB) {
+            return BOTH_SIDES;
+        }
+        int occluderCount = (sideA ? 1 : 0)
+                + (sideB ? 1 : 0)
+                + (corner ? 1 : 0);
+        return switch (occluderCount) {
+            case 0 -> NO_SAMPLES;
+            case 1 -> ONE_SAMPLE;
+            case 2 -> TWO_SAMPLES;
+            default -> throw new IllegalStateException(
+                    "both sides must take precedence");
+        };
+    }
+
+    private static boolean isDetail(QuarterVoxelSample sample) {
+        return sample.parentRepresentation()
+                == QuarterVoxelSample.ParentRepresentation.DETAIL;
+    }
+
+    private static boolean occludes(
+            QuarterVoxelSample sample, BlockRenderResolver resolver) {
+        if (!sample.occupied()) {
+            return false;
+        }
+        BlockRenderInfo renderInfo = resolver.resolve(
+                Byte.toUnsignedInt(sample.blockId()));
+        return renderInfo.renderable()
+                && renderInfo.material().renderType()
+                        != RenderType.TRANSPARENT;
+    }
+
     private static boolean occludes(
             ChunkMeshInput input,
             BlockRenderResolver resolver,

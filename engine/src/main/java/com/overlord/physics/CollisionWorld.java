@@ -3,6 +3,7 @@ package com.overlord.physics;
 import com.overlord.config.GameConfig;
 import com.overlord.voxel.ChunkAvailability;
 import com.overlord.voxel.ChunkKey;
+import com.overlord.voxel.ParentCellObservationResult;
 import com.overlord.voxel.World;
 import java.util.ArrayList;
 import java.util.List;
@@ -18,13 +19,23 @@ public final class CollisionWorld {
 
     private final World world;
     private final BlockCollisionShapeResolver shapeResolver;
+    private final DetailCollisionBoxMerger detailMerger;
 
     public CollisionWorld(
             World world,
             BlockCollisionShapeResolver shapeResolver) {
+        this(world, shapeResolver, new DetailCollisionBoxMerger());
+    }
+
+    public CollisionWorld(
+            World world,
+            BlockCollisionShapeResolver shapeResolver,
+            DetailCollisionBoxMerger detailMerger) {
         this.world = Objects.requireNonNull(world, "world");
         this.shapeResolver =
                 Objects.requireNonNull(shapeResolver, "shapeResolver");
+        this.detailMerger =
+                Objects.requireNonNull(detailMerger, "detailMerger");
     }
 
     public Optional<SweepResult> sweep(
@@ -90,22 +101,7 @@ public final class CollisionWorld {
                     int z = (int) blockZ;
                     int globalX = queryContext.globalX(x);
                     int globalZ = queryContext.globalZ(z);
-                    if (queryContext.availabilityAware) {
-                        ChunkKey key = ChunkKey.fromWorld(globalX, globalZ);
-                        ChunkAvailability availability = world.chunks().availability(key);
-                        if (availability != ChunkAvailability.AVAILABLE) {
-                            throw new UnavailableSpace(
-                                    availability == ChunkAvailability.FAILED
-                                            ? SpatialQueryResult.Status.FAILED
-                                            : SpatialQueryResult.Status.UNKNOWN,
-                                    key);
-                        }
-                    }
-                    BlockCollisionShape shape =
-                            Objects.requireNonNull(
-                                    shapeResolver.shapeFor(
-                                            world.getBlock(globalX, y, globalZ)),
-                                    "shapeResolver result");
+                    BlockCollisionShape shape = resolveShape(queryContext, x, y, z);
                     List<Aabb> boxes = shape.boxes();
                     for (int subShapeIndex = 0;
                             subShapeIndex < boxes.size();
@@ -468,19 +464,30 @@ public final class CollisionWorld {
             QueryContext queryContext, int x, int y, int z) {
         int globalX = queryContext.globalX(x);
         int globalZ = queryContext.globalZ(z);
-        if (queryContext.availabilityAware) {
-            ChunkKey key = ChunkKey.fromWorld(globalX, globalZ);
-            ChunkAvailability availability = world.chunks().availability(key);
-            if (availability != ChunkAvailability.AVAILABLE) {
+        ParentCellObservationResult observationResult =
+                world.observeCell(globalX, y, globalZ);
+        if (observationResult.status() != ChunkAvailability.AVAILABLE) {
+            if (queryContext.availabilityAware) {
+                ChunkKey key = observationResult.unavailableKey().orElseThrow();
                 throw new UnavailableSpace(
-                        availability == ChunkAvailability.FAILED
+                        observationResult.status() == ChunkAvailability.FAILED
                                 ? SpatialQueryResult.Status.FAILED
                                 : SpatialQueryResult.Status.UNKNOWN,
                         key);
             }
+            return Objects.requireNonNull(
+                    shapeResolver.shapeFor((byte) 0),
+                    "shapeResolver result");
+        }
+        if (observationResult.observation().isEmpty()) {
+            return Objects.requireNonNull(
+                    shapeResolver.shapeFor((byte) 0),
+                    "shapeResolver result");
         }
         return Objects.requireNonNull(
-                shapeResolver.shapeFor(world.getBlock(globalX, y, globalZ)),
+                shapeResolver.shapeFor(
+                        observationResult.observation().orElseThrow().state(),
+                        detailMerger),
                 "shapeResolver result");
     }
 

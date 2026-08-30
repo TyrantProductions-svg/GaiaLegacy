@@ -1,8 +1,12 @@
 package com.overlord.physics;
 
 import com.overlord.voxel.ChunkAvailability;
-import com.overlord.voxel.ChunkCoordinatePolicy;
 import com.overlord.voxel.ChunkKey;
+import com.overlord.voxel.DetailCellState;
+import com.overlord.voxel.FullCellState;
+import com.overlord.voxel.ParentCellObservation;
+import com.overlord.voxel.ParentCellObservationResult;
+import com.overlord.voxel.VoxelScale;
 import com.overlord.voxel.World;
 import java.util.List;
 import java.util.Objects;
@@ -32,7 +36,13 @@ public final class BlockRaycast {
             Vector3fc origin,
             Vector3fc direction,
             float maxDistance) {
-        return castInternal(QueryContext.legacy(), origin, direction, maxDistance);
+        try {
+            return castInternal(QueryContext.legacy(), origin, direction, maxDistance);
+        } catch (UnavailableSpace unavailable) {
+            throw new IllegalStateException(
+                    "Raycast entered " + unavailable.status + " canonical space at " + unavailable.key,
+                    unavailable);
+        }
     }
 
     public SpatialQueryResult<BlockRaycastHit> cast(
@@ -45,8 +55,7 @@ public final class BlockRaycast {
             return SpatialQueryResult.available(
                     castInternal(new QueryContext(
                             simulationOrigin.worldOriginX(),
-                            simulationOrigin.worldOriginZ(),
-                            true), origin, direction, maxDistance));
+                            simulationOrigin.worldOriginZ()), origin, direction, maxDistance));
         } catch (UnavailableSpace unavailable) {
             return SpatialQueryResult.unavailable(unavailable.status, unavailable.key);
         }
@@ -119,7 +128,9 @@ public final class BlockRaycast {
                                 origin,
                                 directionX,
                                 directionY,
-                                directionZ));
+                                directionZ,
+                                queryContext.originX(),
+                                queryContext.originZ()));
             }
             if (nextDistance > maxDistance
                     || nextDistance == Double.POSITIVE_INFINITY) {
@@ -201,7 +212,9 @@ public final class BlockRaycast {
                                 origin,
                                 directionX,
                                 directionY,
-                                directionZ));
+                                directionZ,
+                                queryContext.originX(),
+                                queryContext.originZ()));
             }
             if (!canStepX || !canStepY || !canStepZ) {
                 return Optional.empty();
@@ -233,24 +246,43 @@ public final class BlockRaycast {
             int blockZ) {
         int globalX = queryContext.globalX(blockX);
         int globalZ = queryContext.globalZ(blockZ);
-        ChunkKey key = ChunkCoordinatePolicy.requireSafe(
-                ChunkKey.fromWorld(globalX, globalZ));
-        if (queryContext.availabilityAware) {
-            ChunkAvailability availability = world.chunks().availability(key);
-            if (availability != ChunkAvailability.AVAILABLE) {
-                throw new UnavailableSpace(
-                        availability == ChunkAvailability.FAILED
-                                ? SpatialQueryResult.Status.FAILED
-                                : SpatialQueryResult.Status.UNKNOWN,
-                        key);
-            }
+        ParentCellObservationResult observationResult =
+                world.observeCell(globalX, blockY, globalZ);
+        if (observationResult.status() != ChunkAvailability.AVAILABLE) {
+            ChunkKey key = observationResult.unavailableKey().orElseThrow();
+            throw new UnavailableSpace(
+                    observationResult.status() == ChunkAvailability.FAILED
+                            ? SpatialQueryResult.Status.FAILED
+                            : SpatialQueryResult.Status.UNKNOWN,
+                    key);
         }
-        byte blockId = world.getBlock(globalX, blockY, globalZ);
-        BlockCollisionShape shape =
-                Objects.requireNonNull(
-                        shapeResolver.shapeFor(blockId),
-                        "shapeResolver result");
-        return nearestHit(
+        if (observationResult.observation().isEmpty()) {
+            return null;
+        }
+        ParentCellObservation observation =
+                observationResult.observation().orElseThrow();
+        if (observation.state() instanceof FullCellState full) {
+            byte blockId = full.blockId();
+            BlockCollisionShape shape =
+                    Objects.requireNonNull(
+                            shapeResolver.shapeFor(blockId),
+                            "shapeResolver result");
+            return nearestHit(
+                    origin,
+                    directionX,
+                    directionY,
+                    directionZ,
+                    maxDistance,
+                    blockX,
+                    blockY,
+                    blockZ,
+                    globalX,
+                    globalZ,
+                    blockId,
+                    shape.boxes(),
+                    observation.chunkRevision());
+        }
+        return nearestDetailHit(
                 origin,
                 directionX,
                 directionY,
@@ -261,8 +293,56 @@ public final class BlockRaycast {
                 blockZ,
                 globalX,
                 globalZ,
-                blockId,
-                shape.boxes());
+                (DetailCellState) observation.state(),
+                observation.chunkRevision());
+    }
+
+    private static Candidate nearestDetailHit(
+            Vector3fc origin,
+            double directionX,
+            double directionY,
+            double directionZ,
+            float maxDistance,
+            int blockX,
+            int blockY,
+            int blockZ,
+            int globalBlockX,
+            int globalBlockZ,
+            DetailCellState detail,
+            long chunkRevision) {
+        Candidate best = null;
+        long remaining = detail.occupancyMask();
+        while (remaining != 0L) {
+            int subIndex = Long.numberOfTrailingZeros(remaining);
+            remaining &= remaining - 1L;
+            int subX = subIndex & 3;
+            int subY = (subIndex >>> 2) & 3;
+            int subZ = subIndex >>> 4;
+            Candidate candidate = intersectBounds(
+                    origin,
+                    directionX,
+                    directionY,
+                    directionZ,
+                    maxDistance,
+                    globalBlockX,
+                    blockY,
+                    globalBlockZ,
+                    detail.blockIdAtIndex(subIndex),
+                    subIndex,
+                    chunkRevision,
+                    subIndex,
+                    blockX + subX * 0.25,
+                    blockY + subY * 0.25,
+                    blockZ + subZ * 0.25,
+                    blockX + (subX + 1) * 0.25,
+                    blockY + (subY + 1) * 0.25,
+                    blockZ + (subZ + 1) * 0.25);
+            if (candidate != null
+                    && (best == null || candidate.isBetterThan(best))) {
+                best = candidate;
+            }
+        }
+        return best;
     }
 
     private static Candidate nearestHit(
@@ -277,7 +357,8 @@ public final class BlockRaycast {
             int globalBlockX,
             int globalBlockZ,
             byte blockId,
-            List<Aabb> boxes) {
+            List<Aabb> boxes,
+            long chunkRevision) {
         Candidate best = null;
         for (int subShapeIndex = 0;
                 subShapeIndex < boxes.size();
@@ -297,6 +378,8 @@ public final class BlockRaycast {
                             globalBlockZ,
                             blockId,
                             subShapeIndex,
+                            chunkRevision,
+                            -1,
                             shape);
             if (candidate != null
                     && (best == null || candidate.isBetterThan(best))) {
@@ -317,8 +400,51 @@ public final class BlockRaycast {
             int blockZ,
             byte blockId,
             int subShapeIndex,
+            long chunkRevision,
+            int detailSubIndex,
             TranslatedBounds shape) {
-        if (strictlyContains(shape, origin)) {
+        return intersectBounds(
+                origin,
+                directionX,
+                directionY,
+                directionZ,
+                maxDistance,
+                blockX,
+                blockY,
+                blockZ,
+                blockId,
+                subShapeIndex,
+                chunkRevision,
+                detailSubIndex,
+                shape.minX(),
+                shape.minY(),
+                shape.minZ(),
+                shape.maxX(),
+                shape.maxY(),
+                shape.maxZ());
+    }
+
+    private static Candidate intersectBounds(
+            Vector3fc origin,
+            double directionX,
+            double directionY,
+            double directionZ,
+            float maxDistance,
+            int blockX,
+            int blockY,
+            int blockZ,
+            byte blockId,
+            int subShapeIndex,
+            long chunkRevision,
+            int detailSubIndex,
+            double minX,
+            double minY,
+            double minZ,
+            double maxX,
+            double maxY,
+            double maxZ) {
+        if (strictlyContains(
+                minX, minY, minZ, maxX, maxY, maxZ, origin)) {
             return insideCandidate(
                     directionX,
                     directionY,
@@ -327,29 +453,31 @@ public final class BlockRaycast {
                     blockY,
                     blockZ,
                     blockId,
-                    subShapeIndex);
+                    subShapeIndex,
+                    chunkRevision,
+                    detailSubIndex);
         }
 
         AxisIntersection x =
                 intersectAxis(
                         origin.x(),
                         directionX,
-                        shape.minX(),
-                        shape.maxX(),
+                        minX,
+                        maxX,
                         X_AXIS_PRIORITY);
         AxisIntersection y =
                 intersectAxis(
                         origin.y(),
                         directionY,
-                        shape.minY(),
-                        shape.maxY(),
+                        minY,
+                        maxY,
                         Y_AXIS_PRIORITY);
         AxisIntersection z =
                 intersectAxis(
                         origin.z(),
                         directionZ,
-                        shape.minZ(),
-                        shape.maxZ(),
+                        minZ,
+                        maxZ,
                         Z_AXIS_PRIORITY);
         if (x == null || y == null || z == null) {
             return null;
@@ -383,7 +511,9 @@ public final class BlockRaycast {
                 blockY,
                 blockZ,
                 blockId,
-                subShapeIndex);
+                subShapeIndex,
+                chunkRevision,
+                detailSubIndex);
     }
 
     private static Candidate insideCandidate(
@@ -394,7 +524,9 @@ public final class BlockRaycast {
             int blockY,
             int blockZ,
             byte blockId,
-            int subShapeIndex) {
+            int subShapeIndex,
+            long chunkRevision,
+            int detailSubIndex) {
         double absoluteX = Math.abs(directionX);
         double absoluteY = Math.abs(directionY);
         double absoluteZ = Math.abs(directionZ);
@@ -409,7 +541,9 @@ public final class BlockRaycast {
                     blockY,
                     blockZ,
                     blockId,
-                    subShapeIndex);
+                    subShapeIndex,
+                    chunkRevision,
+                    detailSubIndex);
         }
         if (absoluteX >= absoluteZ) {
             return new Candidate(
@@ -422,7 +556,9 @@ public final class BlockRaycast {
                     blockY,
                     blockZ,
                     blockId,
-                    subShapeIndex);
+                    subShapeIndex,
+                    chunkRevision,
+                    detailSubIndex);
         }
         return new Candidate(
                 0,
@@ -434,7 +570,9 @@ public final class BlockRaycast {
                 blockY,
                 blockZ,
                 blockId,
-                subShapeIndex);
+                subShapeIndex,
+                chunkRevision,
+                detailSubIndex);
     }
 
     private static AxisIntersection intersectAxis(
@@ -476,13 +614,19 @@ public final class BlockRaycast {
     }
 
     private static boolean strictlyContains(
-            TranslatedBounds shape, Vector3fc point) {
-        return point.x() > shape.minX()
-                && point.x() < shape.maxX()
-                && point.y() > shape.minY()
-                && point.y() < shape.maxY()
-                && point.z() > shape.minZ()
-                && point.z() < shape.maxZ();
+            double minX,
+            double minY,
+            double minZ,
+            double maxX,
+            double maxY,
+            double maxZ,
+            Vector3fc point) {
+        return point.x() > minX
+                && point.x() < maxX
+                && point.y() > minY
+                && point.y() < maxY
+                && point.z() > minZ
+                && point.z() < maxZ;
     }
 
     private static TranslatedBounds translate(
@@ -571,9 +715,9 @@ public final class BlockRaycast {
         }
     }
 
-    private record QueryContext(long originX, long originZ, boolean availabilityAware) {
+    private record QueryContext(long originX, long originZ) {
         private static QueryContext legacy() {
-            return new QueryContext(0, 0, false);
+            return new QueryContext(0, 0);
         }
 
         private int globalX(int localX) {
@@ -622,7 +766,9 @@ public final class BlockRaycast {
             int blockY,
             int blockZ,
             byte blockId,
-            int subShapeIndex) {
+            int subShapeIndex,
+            long chunkRevision,
+            int detailSubIndex) {
         private boolean isBetterThan(Candidate other) {
             int distanceComparison =
                     compareEvents(distance, other.distance);
@@ -648,8 +794,19 @@ public final class BlockRaycast {
                 Vector3fc origin,
                 double directionX,
                 double directionY,
-                double directionZ) {
+                double directionZ,
+                long worldOriginX,
+                long worldOriginZ) {
             float hitDistance = (float) distance;
+            double localPointX = origin.x() + directionX * distance;
+            double localPointY = origin.y() + directionY * distance;
+            double localPointZ = origin.z() + directionZ * distance;
+            RaycastCellTarget target = detailSubIndex >= 0
+                    ? new DetailRaycastTarget(
+                            VoxelScale.DETAIL_4,
+                            com.overlord.voxel.LocalSubVoxelPosition.fromIndex(
+                                    detailSubIndex))
+                    : FullRaycastTarget.INSTANCE;
             return new BlockRaycastHit(
                     blockX,
                     blockY,
@@ -661,10 +818,15 @@ public final class BlockRaycast {
                     normalX,
                     normalY,
                     normalZ,
-                    (float) (origin.x() + directionX * distance),
-                    (float) (origin.y() + directionY * distance),
-                    (float) (origin.z() + directionZ * distance),
-                    hitDistance == 0 ? 0 : hitDistance);
+                    (float) localPointX,
+                    (float) localPointY,
+                    (float) localPointZ,
+                    hitDistance == 0 ? 0 : hitDistance,
+                    (double) worldOriginX + localPointX,
+                    localPointY,
+                    (double) worldOriginZ + localPointZ,
+                    chunkRevision,
+                    target);
         }
     }
 }

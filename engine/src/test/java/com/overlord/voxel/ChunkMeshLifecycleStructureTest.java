@@ -69,7 +69,7 @@ class ChunkMeshLifecycleStructureTest {
 
     @Test
     void mesherAcceptsOnlyImmutableChunkMeshInput()
-            throws IOException {
+            throws IOException, NoSuchMethodException {
         String builder =
                 readMainSource(
                         "com/overlord/voxel/ChunkMeshBuilder.java");
@@ -91,21 +91,42 @@ class ChunkMeshLifecycleStructureTest {
                                                 method.getModifiers()))
                         .toList();
         assertEquals(
-                1,
+                3,
                 publicMethods.size(),
                 () ->
                         "Unexpected public meshing surface: "
                                 + publicMethods.stream()
                                         .map(Method::toGenericString)
                                         .toList());
-        Method build = publicMethods.get(0);
-        assertFalse(build.isSynthetic());
-        assertFalse(build.isBridge());
-        assertEquals("build", build.getName());
-        assertArrayEquals(
-                new Class<?>[] {ChunkMeshInput.class},
-                build.getParameterTypes());
-        assertEquals(ChunkMeshData.class, build.getReturnType());
+        assertTrue(publicMethods.stream().noneMatch(Method::isSynthetic));
+        assertTrue(publicMethods.stream().noneMatch(Method::isBridge));
+        assertTrue(hasPublicMethod(
+                ChunkMeshBuilder.class, "build", ChunkMeshInput.class));
+        assertTrue(hasPublicMethod(
+                ChunkMeshBuilder.class,
+                "build",
+                ChunkMeshInput.class,
+                ChunkMeshMemoryPlan.class));
+        assertTrue(hasPublicMethod(
+                ChunkMeshBuilder.class, "preflight", ChunkMeshInput.class));
+        assertEquals(
+                ChunkMeshData.class,
+                ChunkMeshBuilder.class
+                        .getMethod("build", ChunkMeshInput.class)
+                        .getReturnType());
+        assertEquals(
+                ChunkMeshData.class,
+                ChunkMeshBuilder.class
+                        .getMethod(
+                                "build",
+                                ChunkMeshInput.class,
+                                ChunkMeshMemoryPlan.class)
+                        .getReturnType());
+        assertEquals(
+                ChunkMeshMemoryPlan.class,
+                ChunkMeshBuilder.class
+                        .getMethod("preflight", ChunkMeshInput.class)
+                        .getReturnType());
     }
 
     @Test

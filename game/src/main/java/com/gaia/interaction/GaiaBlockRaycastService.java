@@ -124,7 +124,9 @@ public final class GaiaBlockRaycastService
                 hit.adjacentX(), hit.adjacentY(), hit.adjacentZ(),
                 blockIdentity.apply(Byte.toUnsignedInt(hit.blockId())),
                 (int) hit.normalX(), (int) hit.normalY(), (int) hit.normalZ(),
-                hit.pointX(), hit.pointY(), hit.pointZ(), hit.distance());
+                hit.pointX(), hit.pointY(), hit.pointZ(), hit.distance(),
+                hit.worldPointX(), hit.worldPointY(), hit.worldPointZ(),
+                hit.chunkRevision(), hit.target());
     }
 
     @FunctionalInterface

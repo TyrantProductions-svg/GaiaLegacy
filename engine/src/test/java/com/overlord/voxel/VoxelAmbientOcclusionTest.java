@@ -157,6 +157,46 @@ class VoxelAmbientOcclusionTest {
     }
 
     @Test
+    void quarterGridUsesTheSameThreeSampleAoLevelsForDetailGeometry() {
+        assertEquals(1.0f, quarterSample(quarterInput()), EPSILON);
+        assertEquals(
+                0.82f,
+                quarterSample(quarterInput(
+                        new QuarterAt(2, 2, 2, 1))),
+                EPSILON);
+        assertEquals(
+                0.65f,
+                quarterSample(quarterInput(
+                        new QuarterAt(2, 2, 1, 1),
+                        new QuarterAt(2, 2, 2, 1))),
+                EPSILON);
+        assertEquals(
+                0.45f,
+                quarterSample(quarterInput(
+                        new QuarterAt(2, 2, 1, 1),
+                        new QuarterAt(1, 2, 2, 2))),
+                EPSILON);
+    }
+
+    @Test
+    void quarterGridAoIgnoresTransparentAndNonRenderableDetailMaterials() {
+        assertEquals(
+                1.0f,
+                quarterSample(quarterInput(
+                        new QuarterAt(2, 2, 1, 3),
+                        new QuarterAt(1, 2, 2, 4),
+                        new QuarterAt(2, 2, 2, 3))),
+                EPSILON);
+        assertEquals(
+                0.82f,
+                quarterSample(quarterInput(
+                        new QuarterAt(2, 2, 1, 3),
+                        new QuarterAt(1, 2, 2, 4),
+                        new QuarterAt(2, 2, 2, 1))),
+                EPSILON);
+    }
+
+    @Test
     void rejectsTangentSignsOtherThanNegativeOrPositiveOne() {
         ChunkMeshInput input = input(new ChunkKey(0, 0));
 
@@ -293,6 +333,47 @@ class VoxelAmbientOcclusionTest {
                 1);
     }
 
+    private static float quarterSample(ChunkMeshInput input) {
+        return VoxelAmbientOcclusion.sampleQuarter(
+                new QuarterVoxelSampler(input),
+                VoxelAmbientOcclusionTest::resolve,
+                7,
+                2,
+                7,
+                1,
+                1,
+                1,
+                BlockFace.UP,
+                1,
+                1);
+    }
+
+    private static ChunkMeshInput quarterInput(QuarterAt... cells) {
+        byte[] blockIds = new byte[DetailCellState.CELL_COUNT];
+        long occupancy = 0L;
+        for (QuarterAt cell : cells) {
+            int subIndex = cell.x() + 4 * cell.y() + 16 * cell.z();
+            occupancy |= 1L << subIndex;
+            blockIds[subIndex] = (byte) cell.id();
+        }
+        ChunkKey key = new ChunkKey(0, 0);
+        if (occupancy == 0L) {
+            return input(key);
+        }
+        int parentIndex = 7 + 2 * CHUNK_SIZE + 7 * CHUNK_SIZE * WORLD_HEIGHT;
+        ChunkSnapshot center = ChunkSnapshot.of(
+                key,
+                1,
+                WORLD_HEIGHT,
+                new byte[CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE],
+                DetailChunkSnapshot.of(
+                        new int[] {parentIndex},
+                        new long[] {occupancy},
+                        blockIds));
+        return new ChunkMeshInput(
+                center, null, null, null, null, null, null, null, null);
+    }
+
     private static BlockRenderInfo resolve(int blockId) {
         return switch (blockId) {
             case 1 -> renderInfo(RenderType.OPAQUE, true);
@@ -374,6 +455,8 @@ class VoxelAmbientOcclusionTest {
     }
 
     private record BlockAt(int x, int y, int z, int id) {}
+
+    private record QuarterAt(int x, int y, int z, int id) {}
 
     private record Diagonal(
             int blockX, int blockZ, int signA, int signB) {}

@@ -1,15 +1,19 @@
 package com.overlord.voxel;
 
 import com.overlord.renderer.AxisAlignedBounds;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
+import java.nio.FloatBuffer;
 
 public final class ChunkMeshData {
     private final ChunkKey key;
     private final long revision;
     private final float[] vertices;
     private final Optional<AxisAlignedBounds> localBounds;
+    private final byte[] canonicalHash;
 
     public ChunkMeshData(
             ChunkKey key, long revision, float[] vertices) {
@@ -23,6 +27,7 @@ public final class ChunkMeshData {
         }
         this.vertices = Arrays.copyOf(vertices, vertices.length);
         this.localBounds = calculateLocalBounds(this.vertices);
+        this.canonicalHash = calculateCanonicalHash(this.vertices);
     }
 
     public ChunkKey key() {
@@ -48,6 +53,44 @@ public final class ChunkMeshData {
 
     public boolean isEmpty() {
         return vertices.length == 0;
+    }
+
+    public long outputByteSize() {
+        return Math.multiplyExact((long) vertices.length, Float.BYTES);
+    }
+
+    /** Copies directly into caller-owned upload storage without a heap clone. */
+    public void copyVerticesTo(FloatBuffer destination) {
+        Objects.requireNonNull(destination, "destination");
+        if (destination.remaining() < vertices.length) {
+            throw new IllegalArgumentException(
+                    "destination does not have enough remaining floats");
+        }
+        destination.put(vertices);
+    }
+
+    public byte[] canonicalHash() {
+        return Arrays.copyOf(canonicalHash, canonicalHash.length);
+    }
+
+    private static byte[] calculateCanonicalHash(float[] vertices) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            updateInt(digest, vertices.length);
+            for (float vertexValue : vertices) {
+                updateInt(digest, Float.floatToIntBits(vertexValue));
+            }
+            return digest.digest();
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
+    }
+
+    private static void updateInt(MessageDigest digest, int value) {
+        digest.update((byte) (value >>> 24));
+        digest.update((byte) (value >>> 16));
+        digest.update((byte) (value >>> 8));
+        digest.update((byte) value);
     }
 
     private static Optional<AxisAlignedBounds> calculateLocalBounds(

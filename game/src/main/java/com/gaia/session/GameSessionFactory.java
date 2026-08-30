@@ -3,6 +3,8 @@ package com.gaia.session;
 import com.gaia.assets.GaiaAssetCatalog;
 import com.gaia.assets.GaiaResourceLoader;
 import com.gaia.blocks.BlockRegistry;
+import com.gaia.debug.DetailDebugInputController;
+import com.gaia.debug.DetailDebugTools;
 import com.gaia.inventory.BodyInventoryInputController;
 import com.gaia.inventory.BodyInventoryService;
 import com.gaia.inventory.DebugInventoryProfile;
@@ -17,6 +19,7 @@ import com.gaia.interaction.BlockPlacementTransaction;
 import com.gaia.interaction.CreativeSelection;
 import com.gaia.interaction.GaiaBlockRaycastService;
 import com.gaia.interaction.GaiaBlockWorldAccess;
+import com.gaia.interaction.GaiaDetailMutationService;
 import com.gaia.interaction.GaiaInteractionContext;
 import com.gaia.interaction.GameModeManager;
 import com.gaia.interaction.PlayerBlockTargeting;
@@ -38,6 +41,8 @@ import com.gaia.save.streaming.StreamedWorldItemPageBackend;
 import com.gaia.save.streaming.StreamedChunkPayload;
 import com.gaia.save.streaming.StreamedChunkIndex;
 import com.gaia.save.streaming.StreamedChunkCodec;
+import com.gaia.save.streaming.StreamedChunkCanonicalDecoder;
+import com.gaia.save.streaming.ChunkDetailPersistence;
 import com.gaia.save.streaming.StreamedChunkIndexCodec;
 import com.gaia.save.streaming.StreamedChunkStore;
 import com.gaia.save.streaming.StreamedChunkUnloadPlan;
@@ -111,6 +116,7 @@ import com.overlord.interaction.api.InteractionAction;
 import com.overlord.inventory.api.ItemStack;
 import com.overlord.physics.Aabb;
 import com.overlord.physics.BlockCollisionShapeResolver;
+import com.overlord.physics.DetailCollisionBoxMerger;
 import com.overlord.physics.BlockRaycast;
 import com.overlord.physics.CollisionWorld;
 import com.overlord.physics.MassProperties;
@@ -760,7 +766,8 @@ public final class GameSessionFactory {
             WorldLoader generator,
             int simulationRadius,
             StreamedChunkStore store,
-            StreamedChunkIndex durableIndex) {
+            StreamedChunkIndex durableIndex,
+            BlockRegistry blocks) {
         SaveGameSnapshot checkedSnapshot = Objects.requireNonNull(
                 snapshot, "snapshot");
         ChunkKey checkedCenter = Objects.requireNonNull(center, "center");
@@ -769,6 +776,9 @@ public final class GameSessionFactory {
         StreamedChunkStore checkedStore = Objects.requireNonNull(store, "store");
         StreamedChunkIndex checkedIndex = Objects.requireNonNull(
                 durableIndex, "durableIndex");
+        StreamedChunkCanonicalDecoder canonicalDecoder =
+                new StreamedChunkCanonicalDecoder(
+                        Objects.requireNonNull(blocks, "blocks"));
         if (simulationRadius < 0) {
             throw new IllegalArgumentException(
                     "simulationRadius must not be negative");
@@ -825,11 +835,16 @@ public final class GameSessionFactory {
                         throw new IllegalStateException(
                                 "streamed restore selected Chunk does not match its root");
                     }
-                    chunks.put(key, ChunkSnapshot.of(
-                            key,
-                            payload.revision(),
-                            payload.worldHeight(),
-                            payload.copyCanonicalVoxels()));
+                    StreamedChunkCanonicalDecoder.DecodeResult decoded =
+                            canonicalDecoder.decode(payload);
+                    if (decoded.status()
+                            != StreamedChunkCanonicalDecoder.DecodeResult.Status.VALID) {
+                        throw new IllegalStateException(
+                                "streamed restore selected Chunk canonical state failed: "
+                                        + decoded.diagnostic().orElseThrow().code());
+                    }
+                    chunks.put(key, decoded.chunkData().orElseThrow()
+                            .toSnapshot(payload.revision()));
                     continue;
                 }
                 ChunkSnapshot existing = available.get(key);
@@ -1127,6 +1142,9 @@ public final class GameSessionFactory {
                                 ignored -> BlockChangeDecision.ALLOW,
                                 ignored -> {},
                                 ignored -> {}));
+        GaiaDetailMutationService detailMutations =
+                new GaiaDetailMutationService(
+                        mainThreadGuard, blocks, world.chunks());
         AtomicReference<SimulationOriginCoordinator> originCoordinatorReference =
                 new AtomicReference<>();
         GaiaBlockRaycastService blockRaycasts = new GaiaBlockRaycastService(
@@ -1234,6 +1252,19 @@ public final class GameSessionFactory {
                                         meshExecutor,
                                         mainThreadGuard),
                                          ChunkMeshManager::close);
+        DetailDebugTools detailDebugTools = new DetailDebugTools(
+                world,
+                blocks,
+                detailMutations,
+                shapes,
+                new DetailCollisionBoxMerger(),
+                (key, revision) -> detailMeshStatus(chunkMeshes, key));
+        DetailDebugInputController detailDebugInput =
+                new DetailDebugInputController(
+                        blockTargeting,
+                        detailDebugTools,
+                        ResourceLocation.parse("gaia:stone"),
+                        ResourceLocation.parse("gaia:dirt"));
         ChunkStreamingPolicy streamingPolicy = backendGraph == null
                 ? null
                 : ChunkStreamingPolicy.productionDefaults();
@@ -1325,7 +1356,8 @@ public final class GameSessionFactory {
                         Objects.requireNonNull(detachedGenerator),
                         Objects.requireNonNull(streamingPolicy).simulationRadius(),
                         backendGraph.chunkStore(),
-                        Objects.requireNonNull(restoredIndex));
+                        Objects.requireNonNull(restoredIndex),
+                        blocks);
             }
             Map<ChunkKey, Long> restoredPersistedRevisions =
                     backendGraph == null
@@ -1426,7 +1458,8 @@ public final class GameSessionFactory {
                                     playerController,
                                     environment.camera(),
                                     gameModes,
-                                    originCoordinator.simulationOrigin()));
+                                    originCoordinator.simulationOrigin()),
+                            blocks);
             streamingController = new ChunkStreamingController(
                     Objects.requireNonNull(streamingPolicy));
             streamingPipeline = new ChunkStreamingPipeline(
@@ -1436,7 +1469,8 @@ public final class GameSessionFactory {
                     work -> loadStreamingChunk(
                             work, backendGraph.chunkStore(), persistenceMetadata,
                             Objects.requireNonNull(detachedGenerator),
-                            Objects.requireNonNull(streamingGenerationConfig)),
+                            Objects.requireNonNull(streamingGenerationConfig),
+                            blocks),
                     work -> {
                         StreamedChunkUnloadPlan bound = work.plan();
                         StreamedChunkPayload detachedPayload =
@@ -1472,6 +1506,7 @@ public final class GameSessionFactory {
                  world,
                  blockWorld,
                  worldMutations,
+                 detailMutations,
                  playerManager,
                 physicsWorld,
                 playerController,
@@ -1498,6 +1533,7 @@ public final class GameSessionFactory {
                 inventoryInput,
                 inventoryDebugCommands,
                 inventoryDebugShortcuts,
+                detailDebugInput,
                 gameModes,
                 worldInteractionInput,
                 worldItemPickup,
@@ -1513,12 +1549,32 @@ public final class GameSessionFactory {
         return runtime;
     }
 
+    private static DetailDebugTools.MeshStatus detailMeshStatus(
+            ChunkMeshManager meshes, ChunkKey key) {
+        String diagnostic = meshes.outputLimitDiagnostic(key)
+                .map(failure -> failure.code()
+                        + " requiredBytes=" + failure.requiredByteCount()
+                        + " limitBytes=" + failure.configuredByteLimit()
+                        + " revision=" + failure.revision())
+                .orElseGet(() -> meshes.memoryBudgetDiagnostic(key)
+                        .map(failure -> failure.code()
+                                + " reservationBytes=" + failure.requiredReservationBytes()
+                                + " limitBytes=" + failure.configuredByteLimit()
+                                + " revision=" + failure.revision())
+                        .orElse(null));
+        return new DetailDebugTools.MeshStatus(
+                meshes.meshPhase(key).name(),
+                meshes.hasInstalledRenderObject(key),
+                diagnostic);
+    }
+
     private static ChunkWorkResult loadStreamingChunk(
             ChunkStreamingPipeline.DetachedLoadWork work,
             StreamedChunkStore store,
             SaveGameSnapshot.StaticMetadata metadata,
             WorldLoader generator,
-            WorldGenerationConfig generationConfig) {
+            WorldGenerationConfig generationConfig,
+            BlockRegistry blocks) {
         ChunkGenerationData generated = generator.generateDetached(work.key());
         StreamedChunkStore.ExpectedBase expectedBase = expectedGeneratedBase(
                 metadata, generated, generationConfig);
@@ -1528,13 +1584,25 @@ public final class GameSessionFactory {
                 expectedBase);
         if (read.status() == StreamedChunkStore.ReadResult.Status.FOUND) {
             StreamedChunkPayload payload = read.payload().orElseThrow();
+            StreamedChunkCanonicalDecoder.DecodeResult decoded =
+                    new StreamedChunkCanonicalDecoder(blocks).decode(payload);
+            if (decoded.status()
+                    != StreamedChunkCanonicalDecoder.DecodeResult.Status.VALID) {
+                return ChunkWorkResult.loadFailure(
+                        work.workId(), work.key(), work.desiredEpoch(),
+                        work.expectedRevision(),
+                        new ChunkStreamingDiagnostic(
+                                1L,
+                                work.key(),
+                                ChunkWorkResult.Kind.LOAD_GENERATE,
+                                decoded.diagnostic().orElseThrow().code(),
+                                "persisted Chunk DETAIL validation failed closed"));
+            }
             return ChunkWorkResult.loadSuccess(
                     work.workId(), work.key(), work.desiredEpoch(),
                     work.expectedRevision(),
                     com.overlord.voxel.ChunkStreamingTicket.SourcePreference.LOAD,
-                    new ChunkGenerationData(
-                            payload.key(), payload.worldHeight(),
-                            payload.copyCanonicalVoxels()),
+                    decoded.chunkData().orElseThrow(),
                     payload.revision());
         }
         if (read.status() == StreamedChunkStore.ReadResult.Status.NOT_FOUND) {
@@ -1578,7 +1646,9 @@ public final class GameSessionFactory {
                     "unload generator version does not match generation config");
         }
         boolean voxelModified = !java.util.Arrays.equals(
-                payload.copyCanonicalVoxels(), checkedBase.copyBlocks());
+                        payload.copyCanonicalVoxels(), checkedBase.copyBlocks())
+                || payload.extensions().stream().anyMatch(extension ->
+                        extension.sectionId().equals(SaveSectionId.DETAIL_BLOCKS));
         StreamedChunkPayload rebound = new StreamedChunkPayload(
                 payload.saveGameId(),
                 payload.key(),
@@ -1615,7 +1685,9 @@ public final class GameSessionFactory {
                 || !checkedPlan.requiredGlobals().isEmpty()
                 || !java.util.Arrays.equals(
                         payload.copyCanonicalVoxels(),
-                        checkedBase.copyBlocks());
+                        checkedBase.copyBlocks())
+                || payload.extensions().stream().anyMatch(extension ->
+                        extension.sectionId().equals(SaveSectionId.DETAIL_BLOCKS));
     }
 
     static StreamedChunkStore.ExpectedBase expectedGeneratedBase(
@@ -1659,6 +1731,7 @@ public final class GameSessionFactory {
         private final LogicalWorldItemService logical;
         private final PhysicalWorldItemSystem physical;
         private final UnloadSessionCapture sessionCapture;
+        private final BlockRegistry blockRegistry;
         private final Map<StreamedChunkUnloadPlan, LinkedUnload> linked =
                 new IdentityHashMap<>();
 
@@ -1667,11 +1740,21 @@ public final class GameSessionFactory {
                 LogicalWorldItemService logical,
                 PhysicalWorldItemSystem physical,
                 UnloadSessionCapture sessionCapture) {
+            this(metadata, logical, physical, sessionCapture, null);
+        }
+
+        private ProductionUnloadLifecycle(
+                SaveGameSnapshot.StaticMetadata metadata,
+                LogicalWorldItemService logical,
+                PhysicalWorldItemSystem physical,
+                UnloadSessionCapture sessionCapture,
+                BlockRegistry blockRegistry) {
             this.metadata = Objects.requireNonNull(metadata, "metadata");
             this.logical = Objects.requireNonNull(logical, "logical");
             this.physical = Objects.requireNonNull(physical, "physical");
             this.sessionCapture = Objects.requireNonNull(
                     sessionCapture, "sessionCapture");
+            this.blockRegistry = blockRegistry;
         }
 
         @Override
@@ -1717,18 +1800,23 @@ public final class GameSessionFactory {
                     globals = List.of(
                             new StreamedGlobalExtensionMutation.Upsert(extension));
                 }
+                byte[] canonicalFull =
+                        ChunkDetailPersistence.canonicalFullVoxels(capture);
+                List<StreamedChunkPayload.ExtensionDescriptor> extensions =
+                        ChunkDetailPersistence.mergeDetailExtension(
+                                capture, List.of(), blockRegistry);
                 StreamedChunkPayload payload = new StreamedChunkPayload(
                         metadata.saveGameId(),
                         capture.key(),
                         metadata.generatorVersion(),
-                        sha256(capture.copyBlocks()),
+                        sha256(canonicalFull),
                         capture.revision(),
                         repositoryPreparation.persistedRevision(),
                         true,
                         true,
                         capture.worldHeight(),
-                        capture.copyBlocks(),
-                        List.of());
+                        canonicalFull,
+                        extensions);
                 StreamedChunkUnloadPlan plan = new StreamedChunkUnloadPlan(
                         new StreamedChunkStore.ExactChunkCapture(
                                 payload, repositoryPreparation.stillCurrent()),
@@ -3491,6 +3579,7 @@ public final class GameSessionFactory {
         private final World world;
         private final GaiaBlockWorldAccess blockWorld;
         private final DefaultWorldMutationService worldMutations;
+        private final GaiaDetailMutationService detailMutations;
         private final PlayerManager playerManager;
         private final PhysicsWorld physicsWorld;
         private final PlayerController playerController;
@@ -3516,6 +3605,7 @@ public final class GameSessionFactory {
         private final BodyInventoryInputController inventoryInput;
         private final InventoryDebugCommands inventoryDebugCommands;
         private final boolean inventoryDebugShortcuts;
+        private final DetailDebugInputController detailDebugInput;
         private final GameModeManager gameModes;
         private final WorldInteractionInputRouter worldInteractionInput;
         private final WorldItemPickupController worldItemPickup;
@@ -3554,6 +3644,7 @@ public final class GameSessionFactory {
                 World world,
                 GaiaBlockWorldAccess blockWorld,
                 DefaultWorldMutationService worldMutations,
+                GaiaDetailMutationService detailMutations,
                 PlayerManager playerManager,
                 PhysicsWorld physicsWorld,
                 PlayerController playerController,
@@ -3581,6 +3672,7 @@ public final class GameSessionFactory {
                 BodyInventoryInputController inventoryInput,
                 InventoryDebugCommands inventoryDebugCommands,
                 boolean inventoryDebugShortcuts,
+                DetailDebugInputController detailDebugInput,
                 GameModeManager gameModes,
                 WorldInteractionInputRouter worldInteractionInput,
                 WorldItemPickupController worldItemPickup,
@@ -3599,6 +3691,8 @@ public final class GameSessionFactory {
             this.blockWorld = Objects.requireNonNull(blockWorld, "blockWorld");
             this.worldMutations = Objects.requireNonNull(
                     worldMutations, "worldMutations");
+            this.detailMutations = Objects.requireNonNull(
+                    detailMutations, "detailMutations");
             this.playerManager = playerManager;
             this.physicsWorld = physicsWorld;
             this.playerController = playerController;
@@ -3637,6 +3731,8 @@ public final class GameSessionFactory {
             this.inventoryInput = inventoryInput;
             this.inventoryDebugCommands = inventoryDebugCommands;
             this.inventoryDebugShortcuts = inventoryDebugShortcuts;
+            this.detailDebugInput = Objects.requireNonNull(
+                    detailDebugInput, "detailDebugInput");
             this.gameModes = gameModes;
             this.worldInteractionInput = worldInteractionInput;
             this.worldItemPickup = worldItemPickup;
@@ -3700,6 +3796,7 @@ public final class GameSessionFactory {
                 updateRenderCamera();
                 cameraOrientation.stage(-90.0f, -30.0f);
                 meshReadiness = Set.copyOf(loadResult.initialChunks());
+                initializeNewWorldStreamingState();
             }
 
             hooks.before(ProductionFailurePoint.MESH_PUMP);
@@ -3813,9 +3910,7 @@ public final class GameSessionFactory {
                     new ChunkStreamingObservation(
                             Set.copyOf(world.chunks().keys()),
                             streamingPipeline.requestedLoadPhases()));
-            currentMeshPriorityOrder = decision.desiredPriorityOrder().stream()
-                    .filter(decision.desiredSets().render()::contains)
-                    .toList();
+            currentMeshPriorityOrder = meshPriorityOrder(decision);
             trace.add("apply-streaming-decision");
             if (streamingAdmissionsOpen) {
                 streamingPipeline.apply(decision);
@@ -4281,6 +4376,7 @@ public final class GameSessionFactory {
             float fixedDelta = fixedStepClock.fixedStepSeconds();
             inventoryInput.handleSelection(stepInput);
             runInventoryDebugShortcut(stepInput);
+            runDetailDebugShortcut(stepInput, inventoryTick);
             playerManager.fixedUpdate(fixedDelta, stepInput);
             feedback.fixedMovementUpdate(
                     fixedDelta, movementState());
@@ -4358,6 +4454,29 @@ public final class GameSessionFactory {
             } else {
                 chunkMeshes.scheduleEligible(currentMeshPriorityOrder);
             }
+        }
+
+        private void initializeNewWorldStreamingState() {
+            if (streamingPipeline == null) {
+                return;
+            }
+            playerController.body().position(feetScratch);
+            GlobalPosition playerGlobal = originCoordinator.simulationOrigin()
+                    .toGlobal(feetScratch);
+            ChunkStreamingDecision decision = streamingController.update(
+                    playerGlobal,
+                    new ChunkStreamingObservation(
+                            Set.copyOf(world.chunks().keys()),
+                            streamingPipeline.requestedLoadPhases()));
+            meshReadiness = Set.copyOf(decision.desiredSets().simulation());
+            currentMeshPriorityOrder = meshPriorityOrder(decision);
+        }
+
+        private static List<ChunkKey> meshPriorityOrder(
+                ChunkStreamingDecision decision) {
+            return decision.desiredPriorityOrder().stream()
+                    .filter(decision.desiredSets().render()::contains)
+                    .toList();
         }
 
         private GameSessionFrame captureFrame(
@@ -4531,6 +4650,21 @@ public final class GameSessionFactory {
                                         .execute(command)
                                         .message());
             }
+        }
+
+        private void runDetailDebugShortcut(
+                InputSnapshot input, long fixedTick) {
+            if (!inventoryDebugShortcuts) {
+                return;
+            }
+            GaiaInteractionContext context = new GaiaInteractionContext(
+                    inventoryOwner,
+                    inventoryService.viewModel(inventoryOwner).orElseThrow().activeSlot(),
+                    InteractionAction.USE,
+                    fixedTick,
+                    Math.max(0L, System.nanoTime()));
+            detailDebugInput.handle(input, context).ifPresent(
+                    message -> System.out.println("[DetailDebug] " + message));
         }
 
         private static InputSnapshot debugHudDefaultInput() {

@@ -159,9 +159,12 @@ public final class StreamedWorldItemPageBackend implements WorldItemPageSource {
                     return StreamedChunkUnloadResult.failed();
                 }
                 existing = currentPayload.payload().orElseThrow();
-                if (java.util.Arrays.equals(
-                                existing.copyCanonicalVoxels(),
-                                payload.copyCanonicalVoxels())
+                if (checked.voxelModified()) {
+                    capture = preserveDurableNonDetailExtensions(capture, existing);
+                    payload = capture.payload();
+                }
+                if (payload.revision() == current.revision()
+                        && ChunkDetailPersistence.canonicalStateEquals(existing, payload)
                         && checked.requiredGlobals().isEmpty()) {
                     return StreamedChunkUnloadResult.success(Optional.empty());
                 }
@@ -209,6 +212,53 @@ public final class StreamedWorldItemPageBackend implements WorldItemPageSource {
         } catch (RuntimeException failure) {
             return StreamedChunkUnloadResult.failed();
         }
+    }
+
+    private static StreamedChunkStore.ExactChunkCapture
+            preserveDurableNonDetailExtensions(
+                    StreamedChunkStore.ExactChunkCapture capture,
+                    StreamedChunkPayload existing) {
+        StreamedChunkPayload incoming = capture.payload();
+        List<StreamedChunkPayload.ExtensionDescriptor> merged = new ArrayList<>();
+        for (StreamedChunkPayload.ExtensionDescriptor extension
+                : existing.extensions()) {
+            if (!extension.sectionId().equals(SaveSectionId.DETAIL_BLOCKS)) {
+                merged.add(extension);
+            }
+        }
+        for (StreamedChunkPayload.ExtensionDescriptor extension
+                : incoming.extensions()) {
+            if (extension.sectionId().equals(SaveSectionId.DETAIL_BLOCKS)) {
+                merged.add(extension);
+                continue;
+            }
+            Optional<StreamedChunkPayload.ExtensionDescriptor> durable =
+                    existing.extensions().stream()
+                            .filter(candidate -> candidate.sectionId().equals(
+                                    extension.sectionId()))
+                            .findFirst();
+            if (durable.isEmpty() || !durable.orElseThrow().equals(extension)) {
+                throw invalid(
+                        "Chunk capture cannot replace independently owned extension "
+                                + extension.sectionId().value());
+            }
+        }
+        boolean requiredExtension = merged.stream()
+                .anyMatch(StreamedChunkPayload.ExtensionDescriptor::required);
+        StreamedChunkPayload preserved = new StreamedChunkPayload(
+                incoming.saveGameId(),
+                incoming.key(),
+                incoming.generatorVersion(),
+                incoming.baseHash(),
+                incoming.revision(),
+                incoming.persistedRevision(),
+                incoming.voxelModified() || requiredExtension,
+                incoming.voxelModified(),
+                incoming.worldHeight(),
+                incoming.copyCanonicalVoxels(),
+                merged);
+        return new StreamedChunkStore.ExactChunkCapture(
+                preserved, capture.stillCurrent());
     }
 
     /** Fixed-size operational counters; no per-operation history is retained. */
@@ -494,6 +544,14 @@ public final class StreamedWorldItemPageBackend implements WorldItemPageSource {
                     if (matchingCapture != null) {
                         boolean canonicalWrite = exactCaptureNeedsCanonicalWrite(
                                 matchingCapture, currentEntry, currentPayload);
+                        matchingCapture = preserveDurableNonDetailExtensions(
+                                matchingCapture, currentPayload);
+                        retained = matchingCapture.payload().extensions().stream()
+                                .filter(extension -> !extension.sectionId().equals(
+                                        SaveSectionId.WORLD_ITEM_PAGE))
+                                .toList();
+                        hasRequired = retained.stream().anyMatch(
+                                StreamedChunkPayload.ExtensionDescriptor::required);
                         boolean modified = captureVoxelModified.getOrDefault(
                                 expected.chunkKey(),
                                 matchingCapture.payload().voxelModified());
@@ -551,11 +609,9 @@ public final class StreamedWorldItemPageBackend implements WorldItemPageSource {
                     exactCapturesUsed.add(capture.payload().key());
                 } else if (currentPayload != null
                         && !currentPayload.extensions().isEmpty()) {
-                    payload = copyPayload(
-                            payload,
-                            payload.revision(),
-                            payload.persistedRevision(),
-                            currentPayload.extensions());
+                    capture = preserveDurableNonDetailExtensions(
+                            capture, currentPayload);
+                    payload = capture.payload();
                 }
                 if (canonicalWrite) {
                     batcher.add(new StreamedChunkMutation.Upsert(
@@ -1029,29 +1085,19 @@ public final class StreamedWorldItemPageBackend implements WorldItemPageSource {
             byte[] pageBytes,
             boolean voxelModified,
             long physicalRevision) {
-        Map<SaveSectionId, StreamedChunkPayload.ExtensionDescriptor> retained =
-                new HashMap<>();
-        if (current != null) {
-            for (StreamedChunkPayload.ExtensionDescriptor extension
-                    : current.extensions()) {
-                if (!extension.sectionId().equals(SaveSectionId.WORLD_ITEM_PAGE)) {
-                    retained.put(extension.sectionId(), extension);
-                }
-            }
-        }
-        for (StreamedChunkPayload.ExtensionDescriptor extension
-                : capture.extensions()) {
-            if (!extension.sectionId().equals(SaveSectionId.WORLD_ITEM_PAGE)) {
-                StreamedChunkPayload.ExtensionDescriptor durable =
-                        retained.putIfAbsent(extension.sectionId(), extension);
-                if (durable != null && !durable.equals(extension)) {
-                    throw invalid(
-                            "Detached Chunk capture conflicts with a durable opaque extension");
-                }
-            }
-        }
+        StreamedChunkStore.ExactChunkCapture merged = current == null
+                ? new StreamedChunkStore.ExactChunkCapture(capture, () -> true)
+                : preserveDurableNonDetailExtensions(
+                        new StreamedChunkStore.ExactChunkCapture(capture, () -> true),
+                        current);
         List<StreamedChunkPayload.ExtensionDescriptor> extensions =
-                new ArrayList<>(retained.values());
+                new ArrayList<>();
+        for (StreamedChunkPayload.ExtensionDescriptor extension
+                : merged.payload().extensions()) {
+            if (!extension.sectionId().equals(SaveSectionId.WORLD_ITEM_PAGE)) {
+                extensions.add(extension);
+            }
+        }
         extensions.add(new StreamedChunkPayload.ExtensionDescriptor(
                 SaveSectionId.WORLD_ITEM_PAGE,
                 WorldItemPageCodec.CODEC_VERSION,
@@ -1084,9 +1130,8 @@ public final class StreamedWorldItemPageBackend implements WorldItemPageSource {
         }
         if (payload.revision() == currentEntry.revision()
                 && currentPayload != null
-                && java.util.Arrays.equals(
-                        payload.copyCanonicalVoxels(),
-                        currentPayload.copyCanonicalVoxels())) {
+                && ChunkDetailPersistence.canonicalStateEquals(
+                        payload, currentPayload)) {
             return false;
         }
         throw invalid("Detached Chunk capture has a stale base");

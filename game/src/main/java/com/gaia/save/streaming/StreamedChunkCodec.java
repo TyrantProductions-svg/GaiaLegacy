@@ -228,10 +228,11 @@ public final class StreamedChunkCodec {
                             "streamed-chunk.extension-checksum-mismatch",
                             "A streamed Chunk extension checksum does not match");
                 }
-                if (extensionSupport.supports(
-                        descriptor.sectionId,
-                        descriptor.codecVersion,
-                        descriptor.required)) {
+                if (descriptor.sectionId.equals(SaveSectionId.DETAIL_BLOCKS)
+                        || extensionSupport.supports(
+                                descriptor.sectionId,
+                                descriptor.codecVersion,
+                                descriptor.required)) {
                     retained.add(new StreamedChunkPayload.ExtensionDescriptor(
                             descriptor.sectionId,
                             descriptor.codecVersion,

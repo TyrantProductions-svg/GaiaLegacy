@@ -268,6 +268,13 @@ public final class Renderer implements ChunkRenderBackend {
     }
 
     @Override
+    public UploadMemoryRequirement uploadMemoryRequirement(
+            ChunkMeshData data) {
+        Objects.requireNonNull(data, "data");
+        return new UploadMemoryRequirement(0L, data.outputByteSize());
+    }
+
+    @Override
     public ChunkRenderObject upload(ChunkMeshData data) {
         mainThreadGuard.assertMainThread("chunk mesh GPU upload");
         Objects.requireNonNull(data, "data");
@@ -287,7 +294,7 @@ public final class Renderer implements ChunkRenderBackend {
                                 () -> new IllegalArgumentException(
                                         "Non-empty chunk data must have local bounds"));
 
-        Mesh gpuMesh = new Mesh(mainThreadGuard, data.vertices());
+        Mesh gpuMesh = new Mesh(mainThreadGuard, data);
         try {
             return new ChunkRenderObject(
                     key,

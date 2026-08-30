@@ -67,6 +67,57 @@ public record ChunkMeshInput(
     }
 
     public byte getBlock(int localX, int y, int localZ) {
+        requireHorizontalHalo(localX, localZ);
+        if (y < 0 || y >= center.worldHeight()) {
+            return 0;
+        }
+        return selectedSnapshot(localX, localZ)
+                .getBlock(
+                        Math.floorMod(localX, GameConfig.Chunk.SIZE),
+                        y,
+                        Math.floorMod(localZ, GameConfig.Chunk.SIZE));
+    }
+
+    /**
+     * Compatibility seam for the proven no-DETAIL mesh fast path. The
+     * delegated snapshot access remains fail-closed if the caller's fast-path
+     * precondition is ever wrong.
+     */
+    byte fullOnlyBlock(int localX, int y, int localZ) {
+        return getBlock(localX, y, localZ);
+    }
+
+    public ParentCellState cellState(int localX, int y, int localZ) {
+        requireHorizontalHalo(localX, localZ);
+        if (y < 0 || y >= center.worldHeight()) {
+            return new FullCellState((byte) 0);
+        }
+        return selectedSnapshot(localX, localZ)
+                .cellState(
+                        Math.floorMod(localX, GameConfig.Chunk.SIZE),
+                        y,
+                        Math.floorMod(localZ, GameConfig.Chunk.SIZE));
+    }
+
+    QuarterVoxelSample quarterSample(
+            int localX, int y, int localZ, int subIndex) {
+        requireHorizontalHalo(localX, localZ);
+        if (subIndex < 0 || subIndex >= DetailCellState.CELL_COUNT) {
+            throw new IllegalArgumentException(
+                    "subIndex must be between 0 and 63");
+        }
+        if (y < 0 || y >= center.worldHeight()) {
+            return QuarterVoxelSample.full((byte) 0);
+        }
+        return selectedSnapshot(localX, localZ)
+                .quarterSample(
+                        Math.floorMod(localX, GameConfig.Chunk.SIZE),
+                        y,
+                        Math.floorMod(localZ, GameConfig.Chunk.SIZE),
+                        subIndex);
+    }
+
+    private void requireHorizontalHalo(int localX, int localZ) {
         if (localX < -1
                 || localX > GameConfig.Chunk.SIZE
                 || localZ < -1
@@ -74,18 +125,14 @@ public record ChunkMeshInput(
             throw new IllegalArgumentException(
                     "horizontal coordinates must stay within one-block halo");
         }
-        if (y < 0 || y >= center.worldHeight()) {
-            return 0;
-        }
+    }
+
+    private ChunkSnapshot selectedSnapshot(int localX, int localZ) {
         int horizontalOffsetX =
                 Math.floorDiv(localX, GameConfig.Chunk.SIZE);
         int horizontalOffsetZ =
                 Math.floorDiv(localZ, GameConfig.Chunk.SIZE);
-        return snapshotFor(horizontalOffsetX, horizontalOffsetZ)
-                .getBlock(
-                        Math.floorMod(localX, GameConfig.Chunk.SIZE),
-                        y,
-                        Math.floorMod(localZ, GameConfig.Chunk.SIZE));
+        return snapshotFor(horizontalOffsetX, horizontalOffsetZ);
     }
 
     private ChunkSnapshot snapshotFor(

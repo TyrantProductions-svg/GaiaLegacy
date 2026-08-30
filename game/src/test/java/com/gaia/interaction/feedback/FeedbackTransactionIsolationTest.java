@@ -45,6 +45,8 @@ import com.overlord.voxel.BlockRenderInfo;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkRepository;
 import com.overlord.voxel.DirtyChunkRevision;
+import com.overlord.voxel.FullCellState;
+import com.overlord.voxel.ParentCellState;
 import com.overlord.worlditem.LogicalWorldItemService;
 import com.overlord.worlditem.api.WorldItemService;
 import com.overlord.worlditem.api.WorldItemSpawnReservations;
@@ -208,6 +210,11 @@ class FeedbackTransactionIsolationTest {
             @Override
             public boolean isLoaded(int x, int y, int z) {
                 return true;
+            }
+
+            @Override
+            public ParentCellState parentStateAt(int x, int y, int z) {
+                return new FullCellState((byte) 0);
             }
 
             @Override

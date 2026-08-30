@@ -19,6 +19,8 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
 
 public final class ChunkMeshManager implements AutoCloseable {
+    public static final long MAX_CPU_MESH_MEMORY_BYTES =
+            128L * 1024L * 1024L;
     private static final ChunkKey ZERO_CHUNK_KEY = new ChunkKey(0, 0);
     private final ChunkRepository repository;
     private final ChunkMesher mesher;
@@ -26,7 +28,8 @@ public final class ChunkMeshManager implements AutoCloseable {
     private final ChunkRenderBackend renderBackend;
     private final MainThreadGuard mainThreadGuard;
     private final ChunkMeshBudget budget;
-    private final Deque<ChunkMeshingClaim> queuedMeshing = new ArrayDeque<>();
+    private final long maxCpuMeshMemoryBytes;
+    private final Deque<QueuedMeshingWork> queuedMeshing = new ArrayDeque<>();
     private final Queue<MeshingCompletion> completed =
             new ConcurrentLinkedQueue<>();
     private final Queue<MeshingFailure> failed =
@@ -48,6 +51,12 @@ public final class ChunkMeshManager implements AutoCloseable {
     private int remainingUploadsInPump;
     private int remainingDestructionsInPump;
     private int remainingCompletionDrainsInPump;
+    private long activeReservedBytes;
+    private long completedRetainedBytes;
+    private long uploadScratchBytes;
+    private long peakUsedBytes;
+    private long directUploadBytes;
+    private long peakDirectUploadBytes;
     private long uploadedTotal;
     private long bytesUploadedTotal;
     private long destroyedTotal;
@@ -64,7 +73,8 @@ public final class ChunkMeshManager implements AutoCloseable {
             MainThreadGuard mainThreadGuard,
             int maxUploadsPerFrame) {
         this(repository, mesher, meshExecutor, renderBackend, mainThreadGuard,
-                new ChunkMeshBudget(32, 2, maxUploadsPerFrame, 4));
+                new ChunkMeshBudget(32, 2, maxUploadsPerFrame, 4),
+                MAX_CPU_MESH_MEMORY_BYTES);
     }
 
     public ChunkMeshManager(
@@ -74,6 +84,18 @@ public final class ChunkMeshManager implements AutoCloseable {
             ChunkRenderBackend renderBackend,
             MainThreadGuard mainThreadGuard,
             ChunkMeshBudget budget) {
+        this(repository, mesher, meshExecutor, renderBackend,
+                mainThreadGuard, budget, MAX_CPU_MESH_MEMORY_BYTES);
+    }
+
+    ChunkMeshManager(
+            ChunkRepository repository,
+            ChunkMesher mesher,
+            Executor meshExecutor,
+            ChunkRenderBackend renderBackend,
+            MainThreadGuard mainThreadGuard,
+            ChunkMeshBudget budget,
+            long maxCpuMeshMemoryBytes) {
         this.repository =
                 Objects.requireNonNull(repository, "repository");
         this.mesher = Objects.requireNonNull(mesher, "mesher");
@@ -84,6 +106,11 @@ public final class ChunkMeshManager implements AutoCloseable {
         this.mainThreadGuard =
                 Objects.requireNonNull(mainThreadGuard, "mainThreadGuard");
         this.budget = Objects.requireNonNull(budget, "budget");
+        if (maxCpuMeshMemoryBytes <= 0L) {
+            throw new IllegalArgumentException(
+                    "CPU mesh memory budget must be positive");
+        }
+        this.maxCpuMeshMemoryBytes = maxCpuMeshMemoryBytes;
     }
 
     public int scheduleEligible() {
@@ -144,11 +171,36 @@ public final class ChunkMeshManager implements AutoCloseable {
                 continue;
             }
             ChunkMeshingClaim claim = claimed.orElseThrow();
+            ChunkMeshMemoryPlan memoryPlan;
+            try {
+                memoryPlan = Objects.requireNonNull(
+                        mesher.preflight(claim.input()),
+                        "mesher preflight result");
+                if (memoryPlan.activeReservationBytes()
+                        > maxCpuMeshMemoryBytes) {
+                    throw new ChunkMeshMemoryBudgetExceededException(
+                            claim.key(),
+                            claim.revision(),
+                            maxCpuMeshMemoryBytes,
+                            memoryPlan.activeReservationBytes(),
+                            memoryPlan.outputBytes());
+                }
+            } catch (RuntimeException | Error failure) {
+                synchronized (lifecycleLock) {
+                    if (!closed) {
+                        acceptedMeshing++;
+                        failed.add(new MeshingFailure(
+                                claim.key(), claim.revision(), failure));
+                    }
+                }
+                scheduled++;
+                continue;
+            }
             synchronized (lifecycleLock) {
                 if (closed) {
                     break;
                 }
-                queuedMeshing.add(claim);
+                queuedMeshing.add(new QueuedMeshingWork(claim, memoryPlan));
                 acceptedMeshing++;
             }
             if (releaseLowerPriorityQueuedClaim) {
@@ -175,15 +227,15 @@ public final class ChunkMeshManager implements AutoCloseable {
             ranks.put(orderedKeys.get(index), index);
         }
         int candidateRank = ranks.get(candidate);
-        ChunkMeshingClaim selected = null;
+        QueuedMeshingWork selected = null;
         synchronized (lifecycleLock) {
             var descending = queuedMeshing.descendingIterator();
             while (descending.hasNext()) {
-                ChunkMeshingClaim claim = descending.next();
+                QueuedMeshingWork work = descending.next();
                 int queuedRank = ranks.getOrDefault(
-                        claim.key(), Integer.MAX_VALUE);
+                        work.claim().key(), Integer.MAX_VALUE);
                 if (queuedRank > candidateRank) {
-                    selected = claim;
+                    selected = work;
                     descending.remove();
                     break;
                 }
@@ -219,10 +271,11 @@ public final class ChunkMeshManager implements AutoCloseable {
             ranks.put(orderedKeys.get(index), index);
         }
         synchronized (lifecycleLock) {
-            List<ChunkMeshingClaim> reordered =
+            List<QueuedMeshingWork> reordered =
                     new java.util.ArrayList<>(queuedMeshing);
-            reordered.sort(java.util.Comparator.comparingInt(claim ->
-                    ranks.getOrDefault(claim.key(), Integer.MAX_VALUE)));
+            reordered.sort(java.util.Comparator.comparingInt(work ->
+                    ranks.getOrDefault(
+                            work.claim().key(), Integer.MAX_VALUE)));
             queuedMeshing.clear();
             queuedMeshing.addAll(reordered);
         }
@@ -252,7 +305,7 @@ public final class ChunkMeshManager implements AutoCloseable {
             if (ready) {
                 awaitingUpload.add(completion.data());
             } else {
-                releaseAccepted();
+                releaseCompletedOutputAndAccepted(completion.data());
             }
         }
 
@@ -265,11 +318,18 @@ public final class ChunkMeshManager implements AutoCloseable {
                     failure.cause())) {
                 discardFailedUploadAtOrBefore(
                         failure.key(), failure.revision());
-                reportFailure(failure.cause());
+                if (!isBoundedResourceDiagnostic(failure.cause())) {
+                    reportFailure(failure.cause());
+                }
             }
             releaseAccepted();
         }
         return drained;
+    }
+
+    private static boolean isBoundedResourceDiagnostic(Throwable failure) {
+        return failure instanceof ChunkMeshOutputLimitExceededException
+                || failure instanceof ChunkMeshMemoryBudgetExceededException;
     }
 
     public Optional<Throwable> pollFailure() {
@@ -312,20 +372,33 @@ public final class ChunkMeshManager implements AutoCloseable {
             ChunkMeshData data;
             while (!closed
                     && remainingUploadsInPump > 0
-                    && (data = awaitingUpload.poll()) != null) {
+                    && (data = awaitingUpload.peek()) != null) {
                 if (!repository.isReadyForUpload(
                         data.key(), data.revision())) {
+                    awaitingUpload.poll();
                     discardFailedUploadAtOrBefore(
                             data.key(), data.revision());
-                    releaseAccepted();
+                    releaseCompletedOutputAndAccepted(data);
                     continue;
                 }
+                ChunkRenderBackend.UploadMemoryRequirement requirement =
+                        Objects.requireNonNull(
+                                renderBackend.uploadMemoryRequirement(data),
+                                "upload memory requirement");
+                if (!tryAcquireUploadScratch(requirement)) {
+                    break;
+                }
+                awaitingUpload.poll();
                 remainingUploadsInPump--;
                 processed++;
-                if (data.isEmpty()) {
-                    installEmptyMesh(data);
-                } else {
-                    uploadReplacement(data);
+                try {
+                    if (data.isEmpty()) {
+                        installEmptyMesh(data);
+                    } else {
+                        uploadReplacement(data);
+                    }
+                } finally {
+                    releaseUploadScratch(requirement);
                 }
             }
             drainDestructions();
@@ -398,13 +471,34 @@ public final class ChunkMeshManager implements AutoCloseable {
         }
     }
 
+    /** Bounded current-state CPU-mesh memory observations. */
+    public MemoryMetrics memoryMetrics() {
+        mainThreadGuard.assertMainThread("read chunk mesh memory metrics");
+        synchronized (lifecycleLock) {
+            return new MemoryMetrics(
+                    maxCpuMeshMemoryBytes,
+                    activeReservedBytes,
+                    completedRetainedBytes,
+                    uploadScratchBytes,
+                    usedBytes(),
+                    peakUsedBytes,
+                    memoryBlockedQueuedCount(),
+                    directUploadBytes,
+                    peakDirectUploadBytes);
+        }
+    }
+
     /** Current read-only phase for bounded owner-thread diagnostics. */
     public MeshPhase meshPhase(ChunkKey key) {
         mainThreadGuard.assertMainThread("read chunk mesh phase");
         ChunkKey checked = ChunkCoordinatePolicy.requireSafe(key);
+        if (repository.meshOutputLimitFailure(checked).isPresent()
+                || repository.meshMemoryBudgetFailure(checked).isPresent()) {
+            return MeshPhase.FAILED;
+        }
         synchronized (lifecycleLock) {
             if (queuedMeshing.stream().anyMatch(
-                    claim -> claim.key().equals(checked))) {
+                    work -> work.claim().key().equals(checked))) {
                 return MeshPhase.QUEUED;
             }
             if (completed.stream().anyMatch(item -> item.key().equals(checked))) {
@@ -436,6 +530,22 @@ public final class ChunkMeshManager implements AutoCloseable {
         }
     }
 
+    /** Current repository-owned hybrid-output diagnostic, if this revision is latched. */
+    public Optional<ChunkMeshOutputLimitExceededException>
+            outputLimitDiagnostic(ChunkKey key) {
+        mainThreadGuard.assertMainThread(
+                "read chunk mesh output-limit diagnostic");
+        return repository.meshOutputLimitFailure(key);
+    }
+
+    /** Current repository-owned single-job memory diagnostic, if latched. */
+    public Optional<ChunkMeshMemoryBudgetExceededException>
+            memoryBudgetDiagnostic(ChunkKey key) {
+        mainThreadGuard.assertMainThread(
+                "read chunk mesh memory-budget diagnostic");
+        return repository.meshMemoryBudgetFailure(key);
+    }
+
     /** Monotonic owner observations used to derive immutable per-frame deltas. */
     public LifecycleMetrics lifecycleMetrics() {
         mainThreadGuard.assertMainThread("read chunk mesh lifecycle metrics");
@@ -462,7 +572,7 @@ public final class ChunkMeshManager implements AutoCloseable {
             return true;
         }
         if (failedUpload != null && failedUploads.remove(key, failedUpload)) {
-            releaseAccepted();
+            releaseCompletedOutputAndAccepted(failedUpload);
             repository.retry(key);
             return true;
         }
@@ -474,10 +584,11 @@ public final class ChunkMeshManager implements AutoCloseable {
         Objects.requireNonNull(key, "key");
         if (!closed && repository.beginUnload(key)) {
             removeQueuedMeshing(key);
+            removeCompletedWork(key);
             removeAwaitingUploads(key);
             ChunkMeshData failedUpload = failedUploads.remove(key);
             if (failedUpload != null) {
-                releaseAccepted();
+                releaseCompletedOutputAndAccepted(failedUpload);
             }
             ChunkRenderObject object = installedRenderObjects.remove(key);
             pendingDestructions.add(new PendingDestruction(key, object, true));
@@ -503,6 +614,10 @@ public final class ChunkMeshManager implements AutoCloseable {
             queuedMeshing.clear();
             completed.clear();
             failed.clear();
+            activeReservedBytes = 0L;
+            completedRetainedBytes = 0L;
+            uploadScratchBytes = 0L;
+            directUploadBytes = 0L;
         }
 
         awaitingUpload.clear();
@@ -534,14 +649,16 @@ public final class ChunkMeshManager implements AutoCloseable {
         }
     }
 
-    private void buildMesh(ChunkMeshInput input) {
+    private void buildMesh(QueuedMeshingWork work) {
+        ChunkMeshingClaim claim = work.claim();
+        ChunkMeshInput input = claim.input();
         long started = System.nanoTime();
         MeshingCompletion completion = null;
         MeshingFailure failureResult = null;
         try {
             ChunkMeshData data =
                     Objects.requireNonNull(
-                            mesher.build(input),
+                            mesher.build(input, work.memoryPlan()),
                             "mesher result");
             ChunkKey claimedKey = input.center().key();
             long claimedRevision = input.center().revision();
@@ -553,6 +670,10 @@ public final class ChunkMeshManager implements AutoCloseable {
                                 + " revision "
                                 + claimedRevision);
             }
+            if (data.outputByteSize() > work.memoryPlan().outputBytes()) {
+                throw new IllegalStateException(
+                        "Mesher output exceeded its admitted preflight");
+            }
             completion = new MeshingCompletion(claimedKey, claimedRevision, data);
         } catch (RuntimeException | Error failure) {
             failureResult = new MeshingFailure(
@@ -562,7 +683,9 @@ public final class ChunkMeshManager implements AutoCloseable {
         synchronized (lifecycleLock) {
             if (!closed) {
                 activeMeshing--;
+                releaseActiveReservation(work.memoryPlan());
                 if (completion != null) {
+                    acquireCompletedOutput(completion.data());
                     completed.add(completion);
                 } else {
                     failed.add(failureResult);
@@ -573,16 +696,23 @@ public final class ChunkMeshManager implements AutoCloseable {
     }
 
     private DispatchOutcome dispatchOne(boolean ownerPublicationAllowed) {
-        ChunkMeshingClaim claim;
+        QueuedMeshingWork work;
         synchronized (lifecycleLock) {
             if (closed
                     || activeMeshing >= budget.maxActive()
                     || queuedMeshing.isEmpty()) {
                 return DispatchOutcome.NONE;
             }
-            claim = queuedMeshing.remove();
+            work = queuedMeshing.peek();
+            if (work.memoryPlan().activeReservationBytes()
+                    > availableBytes()) {
+                return DispatchOutcome.MEMORY_BLOCKED;
+            }
+            queuedMeshing.remove();
             activeMeshing++;
+            acquireActiveReservation(work.memoryPlan());
         }
+        ChunkMeshingClaim claim = work.claim();
         try {
             if (!repository.markMeshingClaimActive(
                     claim.key(),
@@ -591,7 +721,7 @@ public final class ChunkMeshManager implements AutoCloseable {
                 throw new IllegalStateException(
                         "queued meshing claim is no longer current");
             }
-            meshExecutor.execute(() -> buildMesh(claim.input()));
+            meshExecutor.execute(() -> buildMesh(work));
             return DispatchOutcome.SUBMITTED;
         } catch (RuntimeException | Error failure) {
             boolean report;
@@ -599,6 +729,7 @@ public final class ChunkMeshManager implements AutoCloseable {
                 report = !closed;
                 if (report) {
                     activeMeshing--;
+                    releaseActiveReservation(work.memoryPlan());
                     if (ownerPublicationAllowed) {
                         acceptedMeshing--;
                     } else {
@@ -624,7 +755,8 @@ public final class ChunkMeshManager implements AutoCloseable {
         DispatchOutcome outcome;
         do {
             outcome = dispatchOne(false);
-        } while (outcome != DispatchOutcome.NONE);
+        } while (outcome == DispatchOutcome.SUBMITTED
+                || outcome == DispatchOutcome.REJECTED);
     }
 
     private void drainDestructions() {
@@ -658,14 +790,14 @@ public final class ChunkMeshManager implements AutoCloseable {
                 data.key(), data.revision())) {
             discardFailedUploadAtOrBefore(
                     data.key(), data.revision());
-            releaseAccepted();
+            releaseCompletedOutputAndAccepted(data);
             return;
         }
         discardFailedUploadAtOrBefore(
                 data.key(), data.revision());
         ChunkRenderObject previous =
                 installedRenderObjects.remove(data.key());
-        releaseAccepted();
+        releaseCompletedOutputAndAccepted(data);
         if (previous != null) {
             pendingDestructions.add(new PendingDestruction(
                     data.key(), previous, false));
@@ -677,7 +809,7 @@ public final class ChunkMeshManager implements AutoCloseable {
                 data.key(), data.revision())) {
             discardFailedUploadAtOrBefore(
                     data.key(), data.revision());
-            releaseAccepted();
+            releaseCompletedOutputAndAccepted(data);
             return;
         }
 
@@ -721,10 +853,10 @@ public final class ChunkMeshManager implements AutoCloseable {
                     || current.revision() <= data.revision()) {
                 ChunkMeshData replaced = failedUploads.put(data.key(), data);
                 if (replaced != null) {
-                    releaseAccepted();
+                    releaseCompletedOutputAndAccepted(replaced);
                 }
             } else {
-                releaseAccepted();
+                releaseCompletedOutputAndAccepted(data);
             }
             reportFailure(failure);
             return;
@@ -755,13 +887,13 @@ public final class ChunkMeshManager implements AutoCloseable {
         } catch (RuntimeException | Error failure) {
             pendingDestructions.add(new PendingDestruction(
                     data.key(), replacement, false));
-            releaseAccepted();
+            releaseCompletedOutputAndAccepted(data);
             throw failure;
         }
         if (!accepted) {
             pendingDestructions.add(new PendingDestruction(
                     data.key(), replacement, false));
-            releaseAccepted();
+            releaseCompletedOutputAndAccepted(data);
             return;
         }
 
@@ -769,7 +901,7 @@ public final class ChunkMeshManager implements AutoCloseable {
                 data.key(), data.revision());
         ChunkRenderObject previous =
                 installedRenderObjects.put(data.key(), replacement);
-        releaseAccepted();
+        releaseCompletedOutputAndAccepted(data);
         if (previous != null) {
             pendingDestructions.add(new PendingDestruction(
                     data.key(), previous, false));
@@ -788,28 +920,157 @@ public final class ChunkMeshManager implements AutoCloseable {
         }
     }
 
+    private void releaseCompletedOutputAndAccepted(ChunkMeshData data) {
+        Objects.requireNonNull(data, "data");
+        synchronized (lifecycleLock) {
+            if (closed) {
+                return;
+            }
+            long bytes = data.outputByteSize();
+            if (completedRetainedBytes < bytes) {
+                throw new IllegalStateException(
+                        "completed Chunk mesh byte accounting underflow");
+            }
+            if (acceptedMeshing <= 0) {
+                throw new IllegalStateException(
+                        "chunk mesh capacity token underflow");
+            }
+            completedRetainedBytes -= bytes;
+            acceptedMeshing--;
+        }
+        dispatchAvailable();
+    }
+
+    private void acquireActiveReservation(ChunkMeshMemoryPlan plan) {
+        activeReservedBytes = checkedBudgetAdd(
+                activeReservedBytes,
+                plan.activeReservationBytes());
+        updatePeakUsedBytes();
+    }
+
+    private void releaseActiveReservation(ChunkMeshMemoryPlan plan) {
+        long bytes = plan.activeReservationBytes();
+        if (activeReservedBytes < bytes) {
+            throw new IllegalStateException(
+                    "active Chunk mesh reservation underflow");
+        }
+        activeReservedBytes -= bytes;
+    }
+
+    private void acquireCompletedOutput(ChunkMeshData data) {
+        completedRetainedBytes = checkedBudgetAdd(
+                completedRetainedBytes, data.outputByteSize());
+        updatePeakUsedBytes();
+    }
+
+    private boolean tryAcquireUploadScratch(
+            ChunkRenderBackend.UploadMemoryRequirement requirement) {
+        synchronized (lifecycleLock) {
+            long nextUsed = Math.addExact(
+                    usedBytes(), requirement.heapScratchBytes());
+            if (nextUsed > maxCpuMeshMemoryBytes) {
+                return false;
+            }
+            uploadScratchBytes = Math.addExact(
+                    uploadScratchBytes,
+                    requirement.heapScratchBytes());
+            directUploadBytes = Math.addExact(
+                    directUploadBytes,
+                    requirement.directScratchBytes());
+            peakDirectUploadBytes = Math.max(
+                    peakDirectUploadBytes, directUploadBytes);
+            updatePeakUsedBytes();
+            return true;
+        }
+    }
+
+    private void releaseUploadScratch(
+            ChunkRenderBackend.UploadMemoryRequirement requirement) {
+        synchronized (lifecycleLock) {
+            if (uploadScratchBytes < requirement.heapScratchBytes()
+                    || directUploadBytes
+                            < requirement.directScratchBytes()) {
+                if (closed) {
+                    return;
+                }
+                throw new IllegalStateException(
+                        "Chunk mesh upload scratch accounting underflow");
+            }
+            uploadScratchBytes -= requirement.heapScratchBytes();
+            directUploadBytes -= requirement.directScratchBytes();
+        }
+    }
+
+    private long checkedBudgetAdd(long currentClassBytes, long addedBytes) {
+        long nextClass = Math.addExact(currentClassBytes, addedBytes);
+        long nextUsed = Math.addExact(usedBytes(), addedBytes);
+        if (nextUsed > maxCpuMeshMemoryBytes) {
+            throw new IllegalStateException(
+                    "Chunk mesh CPU memory budget exceeded after admission");
+        }
+        return nextClass;
+    }
+
+    private long usedBytes() {
+        return Math.addExact(
+                Math.addExact(activeReservedBytes, completedRetainedBytes),
+                uploadScratchBytes);
+    }
+
+    private long availableBytes() {
+        return Math.subtractExact(maxCpuMeshMemoryBytes, usedBytes());
+    }
+
+    private int memoryBlockedQueuedCount() {
+        QueuedMeshingWork head = queuedMeshing.peek();
+        return head != null
+                && head.memoryPlan().activeReservationBytes()
+                        > availableBytes()
+                ? queuedMeshing.size()
+                : 0;
+    }
+
+    private void updatePeakUsedBytes() {
+        peakUsedBytes = Math.max(peakUsedBytes, usedBytes());
+    }
+
     private void discardFailedUploadAtOrBefore(
             ChunkKey key, long revision) {
         ChunkMeshData failedUpload = failedUploads.get(key);
         if (failedUpload != null
                 && failedUpload.revision() <= revision
                 && failedUploads.remove(key, failedUpload)) {
-            releaseAccepted();
+            releaseCompletedOutputAndAccepted(failedUpload);
         }
     }
 
     private void removeQueuedMeshing(ChunkKey key) {
         synchronized (lifecycleLock) {
             int before = queuedMeshing.size();
-            queuedMeshing.removeIf(claim -> claim.key().equals(key));
+            queuedMeshing.removeIf(
+                    work -> work.claim().key().equals(key));
             acceptedMeshing -= before - queuedMeshing.size();
+        }
+    }
+
+    private void removeCompletedWork(ChunkKey key) {
+        for (MeshingCompletion completion : List.copyOf(completed)) {
+            if (completion.key().equals(key)
+                    && completed.remove(completion)) {
+                releaseCompletedOutputAndAccepted(completion.data());
+            }
+        }
+        for (MeshingFailure failure : List.copyOf(failed)) {
+            if (failure.key().equals(key) && failed.remove(failure)) {
+                releaseAccepted();
+            }
         }
     }
 
     private void removeAwaitingUploads(ChunkKey key) {
         for (ChunkMeshData data : List.copyOf(awaitingUpload)) {
             if (data.key().equals(key) && awaitingUpload.remove(data)) {
-                releaseAccepted();
+                releaseCompletedOutputAndAccepted(data);
             }
         }
     }
@@ -883,6 +1144,34 @@ public final class ChunkMeshManager implements AutoCloseable {
         }
     }
 
+    public record MemoryMetrics(
+            long budgetBytes,
+            long activeReservedBytes,
+            long completedRetainedBytes,
+            long uploadScratchBytes,
+            long usedBytes,
+            long peakUsedBytes,
+            int memoryBlockedQueuedCount,
+            long directUploadBytes,
+            long peakDirectUploadBytes) {
+        public MemoryMetrics {
+            if (budgetBytes <= 0L
+                    || activeReservedBytes < 0L
+                    || completedRetainedBytes < 0L
+                    || uploadScratchBytes < 0L
+                    || usedBytes < 0L
+                    || usedBytes > budgetBytes
+                    || peakUsedBytes < usedBytes
+                    || peakUsedBytes > budgetBytes
+                    || memoryBlockedQueuedCount < 0
+                    || directUploadBytes < 0L
+                    || peakDirectUploadBytes < directUploadBytes) {
+                throw new IllegalArgumentException(
+                        "invalid Chunk mesh memory metrics");
+            }
+        }
+    }
+
     public enum MeshPhase {
         NONE,
         QUEUED,
@@ -900,6 +1189,7 @@ public final class ChunkMeshManager implements AutoCloseable {
 
     private enum DispatchOutcome {
         NONE,
+        MEMORY_BLOCKED,
         SUBMITTED,
         REJECTED
     }
@@ -918,4 +1208,25 @@ public final class ChunkMeshManager implements AutoCloseable {
 
     private record MeshingFailure(
             ChunkKey key, long revision, Throwable cause) {}
+
+    private record QueuedMeshingWork(
+            ChunkMeshingClaim claim,
+            ChunkMeshMemoryPlan memoryPlan) {
+        private QueuedMeshingWork {
+            Objects.requireNonNull(claim, "claim");
+            Objects.requireNonNull(memoryPlan, "memoryPlan");
+        }
+
+        private ChunkKey key() {
+            return claim.key();
+        }
+
+        private long revision() {
+            return claim.revision();
+        }
+
+        private long claimId() {
+            return claim.claimId();
+        }
+    }
 }

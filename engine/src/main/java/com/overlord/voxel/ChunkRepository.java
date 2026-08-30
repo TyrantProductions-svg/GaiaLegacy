@@ -79,9 +79,11 @@ public final class ChunkRepository {
             BiConsumer<ChunkKey, ChunkMutationOutcome>
                     absentMutationPublicationProbe,
             RestorePublicationProbe restorePublicationProbe) {
-        if (worldHeight <= 0) {
+        if (worldHeight <= 0
+                || worldHeight > GameConfig.Chunk.MAX_HEIGHT) {
             throw new IllegalArgumentException(
-                    "worldHeight must be greater than zero");
+                    "worldHeight must be between 1 and "
+                            + GameConfig.Chunk.MAX_HEIGHT);
         }
         this.worldHeight = worldHeight;
         this.dirtyTracker =
@@ -306,8 +308,10 @@ public final class ChunkRepository {
         }
 
         Chunk detached =
-                Chunk.fromCanonicalBytes(
-                        data.worldHeight(), data.copyBlocks());
+                Chunk.fromCanonicalState(
+                        data.worldHeight(),
+                        data.copyFullBlocks(),
+                        data.details());
         long publishedRevision;
         List<DirtyCandidate> neighborCandidates = null;
         synchronized (generationAttempts) {
@@ -528,8 +532,10 @@ public final class ChunkRepository {
         }
 
         Chunk detached =
-                Chunk.fromCanonicalBytes(
-                        data.worldHeight(), data.copyBlocks());
+                Chunk.fromCanonicalState(
+                        data.worldHeight(),
+                        data.copyFullBlocks(),
+                        data.details());
         return commitPreparedGeneration(ticket, detached);
     }
 
@@ -680,6 +686,54 @@ public final class ChunkRepository {
         }
     }
 
+    public ParentCellObservationResult observeCell(
+            int worldX, int y, int worldZ) {
+        if (y < 0 || y >= worldHeight) {
+            return ParentCellObservationResult.availableEmpty();
+        }
+        ChunkKey key =
+                ChunkCoordinatePolicy.requireSafe(
+                        ChunkKey.fromWorld(worldX, worldZ));
+        int localX = ChunkKey.localCoordinate(worldX);
+        int localZ = ChunkKey.localCoordinate(worldZ);
+        while (true) {
+            Entry entry = entries.get(key);
+            if (entry == null) {
+                ChunkAvailability unavailable = availability(key);
+                if (unavailable == ChunkAvailability.AVAILABLE) {
+                    continue;
+                }
+                return ParentCellObservationResult.unavailable(
+                        unavailable, key);
+            }
+            synchronized (entry) {
+                if (entries.get(key) != entry) {
+                    continue;
+                }
+                if (entry.state == ChunkState.EMPTY
+                        || entry.state == ChunkState.GENERATING
+                        || entry.state == ChunkState.LOADING
+                        || entry.state == ChunkState.UNLOADING) {
+                    return ParentCellObservationResult.unavailable(
+                            ChunkAvailability.UNKNOWN, key);
+                }
+                if (entry.failure != null) {
+                    return ParentCellObservationResult.unavailable(
+                            ChunkAvailability.FAILED, key);
+                }
+                return ParentCellObservationResult.available(
+                        new ParentCellObservation(
+                                key,
+                                localX,
+                                y,
+                                localZ,
+                                entry.revision,
+                                entry.chunk.cellState(
+                                        localX, y, localZ)));
+            }
+        }
+    }
+
     public void generate(
             ChunkKey key, Consumer<Chunk> generator) {
         Objects.requireNonNull(key, "key");
@@ -727,6 +781,139 @@ public final class ChunkRepository {
                         blockId,
                         false);
         return outcome.status() == ChunkMutationOutcome.Status.APPLIED;
+    }
+
+    public ChunkDetailMutationOutcome mutateDetail(
+            ChunkDetailMutation mutation) {
+        Objects.requireNonNull(mutation, "mutation");
+        if (mutation.y() < 0 || mutation.y() >= worldHeight) {
+            return detailRejection(
+                    ChunkDetailMutationOutcome.Status.OUT_OF_BOUNDS,
+                    Optional.empty(),
+                    0L);
+        }
+
+        ChunkKey key =
+                ChunkCoordinatePolicy.requireSafe(
+                        ChunkKey.fromWorld(mutation.x(), mutation.z()));
+        int localX = ChunkKey.localCoordinate(mutation.x());
+        int localZ = ChunkKey.localCoordinate(mutation.z());
+        while (true) {
+            Entry entry = entries.get(key);
+            if (entry == null) {
+                return detailRejection(
+                        ChunkDetailMutationOutcome.Status.UNKNOWN_CHUNK,
+                        Optional.empty(),
+                        0L);
+            }
+            List<DirtyCandidate> affectedCandidates =
+                    dirtyCandidates(
+                            dirtyTracker.affectedByBlock(
+                                    key, localX, localZ),
+                            key);
+            ParentCellState oldState;
+            ParentCellState replacement;
+            long observedRevision;
+            long targetRevision;
+            synchronized (entry) {
+                if (entries.get(key) != entry) {
+                    continue;
+                }
+                if (entry.state == ChunkState.EMPTY
+                        || entry.state == ChunkState.GENERATING
+                        || entry.state == ChunkState.LOADING
+                        || entry.state == ChunkState.UNLOADING
+                        || entry.revision <= 0L) {
+                    return detailRejection(
+                            ChunkDetailMutationOutcome.Status.UNKNOWN_CHUNK,
+                            Optional.empty(),
+                            0L);
+                }
+                oldState =
+                        entry.chunk.cellState(
+                                localX, mutation.y(), localZ);
+                observedRevision = entry.revision;
+                if (entry.failure != null) {
+                    return detailRejection(
+                            ChunkDetailMutationOutcome.Status.FAILED_CHUNK,
+                            Optional.of(oldState),
+                            observedRevision);
+                }
+                if (observedRevision != mutation.expectedRevision()) {
+                    return detailRejection(
+                            ChunkDetailMutationOutcome.Status.STALE_CHUNK_REVISION,
+                            Optional.of(oldState),
+                            observedRevision);
+                }
+
+                PreparedDetailChange prepared =
+                        prepareDetailChange(
+                                mutation,
+                                oldState,
+                                entry.chunk.detailParentCount());
+                if (prepared.status()
+                        != ChunkDetailMutationOutcome.Status.APPLIED) {
+                    if (prepared.status()
+                            == ChunkDetailMutationOutcome.Status.NO_CHANGE) {
+                        return new ChunkDetailMutationOutcome(
+                                prepared.status(),
+                                Optional.of(oldState),
+                                Optional.of(oldState),
+                                observedRevision,
+                                observedRevision,
+                                List.of());
+                    }
+                    return detailRejection(
+                            prepared.status(),
+                            Optional.of(oldState),
+                            observedRevision);
+                }
+                replacement = prepared.replacement().orElseThrow();
+                if (!prepareEntryMutation(key, entry)) {
+                    return detailRejection(
+                            ChunkDetailMutationOutcome.Status.UNLOAD_FINALIZED,
+                            Optional.of(oldState),
+                            observedRevision);
+                }
+
+                targetRevision =
+                        reserveRevisions(
+                                1 + affectedCandidates.size());
+                entry.chunk.replaceCanonicalCell(
+                        localX,
+                        mutation.y(),
+                        localZ,
+                        replacement);
+                entry.revision = targetRevision;
+                entry.failure = null;
+                entry.state = ChunkState.DIRTY;
+                entry.voxelModified = true;
+            }
+
+            List<DirtyChunkRevision> dirtiedChunks =
+                    new ArrayList<>();
+            dirtiedChunks.add(
+                    new DirtyChunkRevision(key, targetRevision));
+            for (int index = 0;
+                    index < affectedCandidates.size();
+                    index++) {
+                long neighborRevision = targetRevision + index + 1;
+                DirtyCandidate candidate = affectedCandidates.get(index);
+                if (dirtyIfCurrent(candidate, neighborRevision)) {
+                    dirtiedChunks.add(
+                            new DirtyChunkRevision(
+                                    candidate.key(),
+                                    neighborRevision));
+                }
+            }
+            return new ChunkDetailMutationOutcome(
+                    ChunkDetailMutationOutcome.Status.APPLIED,
+                    Optional.of(oldState),
+                    Optional.of(replacement),
+                    observedRevision,
+                    targetRevision,
+                    dirtiedChunks);
+        }
     }
 
     public ChunkMutationOutcome compareAndSetBlock(
@@ -838,8 +1025,15 @@ public final class ChunkRepository {
                 if (entries.get(key) != entry) {
                     continue;
                 }
+                ParentCellState observedState =
+                        entry.chunk.cellState(localX, y, localZ);
+                if (observedState instanceof DetailCellState) {
+                    return unchangedOutcome(
+                            ChunkMutationOutcome.Status.CONFLICT,
+                            (byte) 0);
+                }
                 observedBlock =
-                        entry.chunk.getBlock(localX, y, localZ);
+                        ((FullCellState) observedState).blockId();
                 if (entry.state == ChunkState.UNLOADING) {
                     return unchangedOutcome(
                             ChunkMutationOutcome.Status.CONFLICT,
@@ -961,8 +1155,8 @@ public final class ChunkRepository {
                                     GameConfig.Chunk.SIZE)];
             entry.chunk.copyBlocksTo(blocks);
             return Optional.of(
-                    ChunkSnapshot.of(
-                            key, entry.revision, worldHeight, blocks));
+                    snapshotOf(
+                            key, entry.revision, entry.chunk, blocks));
         }
     }
 
@@ -991,8 +1185,12 @@ public final class ChunkRepository {
                 }
                 byte[] blocks = new byte[canonicalBlockCount()];
                 entry.chunk.copyBlocksTo(blocks);
-                ChunkSnapshot capture = ChunkSnapshot.of(
-                        checkedKey, entry.revision, worldHeight, blocks);
+                ChunkSnapshot capture =
+                        snapshotOf(
+                                checkedKey,
+                                entry.revision,
+                                entry.chunk,
+                                blocks);
                 ChunkUnloadTicket ticket = new ChunkUnloadTicket(
                         streamingUnloadIssuer,
                         Thread.currentThread(),
@@ -1150,10 +1348,10 @@ public final class ChunkRepository {
                     byte[] blocks = new byte[canonicalBlockCount()];
                     entry.chunk.copyBlocksTo(blocks);
                     chunks.add(
-                            ChunkSnapshot.of(
+                            snapshotOf(
                                     key,
                                     entry.revision,
-                                    worldHeight,
+                                    entry.chunk,
                                     blocks));
                 }
             }
@@ -1463,6 +1661,8 @@ public final class ChunkRepository {
                     || !prepareEntryMutation(key, entry)) {
                 return false;
             }
+            entry.meshOutputLimitFailure = null;
+            entry.meshMemoryBudgetFailure = null;
             entry.state = ChunkState.READY_FOR_UPLOAD;
             return true;
         }
@@ -1671,7 +1871,23 @@ public final class ChunkRepository {
             if (entry.state == ChunkState.MESHING
                     && entry.revision == revision
                     && prepareEntryMutation(key, entry)) {
-                entry.failure = failure;
+                if (failure
+                        instanceof ChunkMeshOutputLimitExceededException
+                                outputLimitFailure) {
+                    entry.failure = null;
+                    entry.meshOutputLimitFailure = outputLimitFailure;
+                    entry.meshMemoryBudgetFailure = null;
+                } else if (failure
+                        instanceof ChunkMeshMemoryBudgetExceededException
+                                memoryBudgetFailure) {
+                    entry.failure = null;
+                    entry.meshOutputLimitFailure = null;
+                    entry.meshMemoryBudgetFailure = memoryBudgetFailure;
+                } else {
+                    entry.failure = failure;
+                    entry.meshOutputLimitFailure = null;
+                    entry.meshMemoryBudgetFailure = null;
+                }
                 entry.state = ChunkState.DIRTY;
                 return true;
             }
@@ -1689,8 +1905,12 @@ public final class ChunkRepository {
             if (entries.get(key) == entry
                     && entry.state == ChunkState.DIRTY
                     && prepareEntryMutation(key, entry)) {
-                boolean retried = entry.failure != null;
+                boolean retried = entry.failure != null
+                        || currentOutputLimitFailure(entry).isPresent()
+                        || currentMemoryBudgetFailure(entry).isPresent();
                 entry.failure = null;
+                entry.meshOutputLimitFailure = null;
+                entry.meshMemoryBudgetFailure = null;
                 return retried;
             }
             return false;
@@ -1704,7 +1924,57 @@ public final class ChunkRepository {
     private static boolean isMeshingCandidate(Entry entry) {
         return entry.state == ChunkState.GENERATED
                 || (entry.state == ChunkState.DIRTY
-                        && entry.failure == null);
+                        && entry.failure == null
+                        && currentOutputLimitFailure(entry).isEmpty()
+                        && currentMemoryBudgetFailure(entry).isEmpty());
+    }
+
+    Optional<ChunkMeshOutputLimitExceededException> meshOutputLimitFailure(
+            ChunkKey key) {
+        ChunkKey checked = ChunkCoordinatePolicy.requireSafe(key);
+        Entry entry = entries.get(checked);
+        if (entry == null) {
+            return Optional.empty();
+        }
+        synchronized (entry) {
+            if (entries.get(checked) != entry) {
+                return Optional.empty();
+            }
+            return currentOutputLimitFailure(entry);
+        }
+    }
+
+    private static Optional<ChunkMeshOutputLimitExceededException>
+            currentOutputLimitFailure(Entry entry) {
+        ChunkMeshOutputLimitExceededException failure =
+                entry.meshOutputLimitFailure;
+        return failure != null && failure.revision() == entry.revision
+                ? Optional.of(failure)
+                : Optional.empty();
+    }
+
+    Optional<ChunkMeshMemoryBudgetExceededException> meshMemoryBudgetFailure(
+            ChunkKey key) {
+        ChunkKey checked = ChunkCoordinatePolicy.requireSafe(key);
+        Entry entry = entries.get(checked);
+        if (entry == null) {
+            return Optional.empty();
+        }
+        synchronized (entry) {
+            if (entries.get(checked) != entry) {
+                return Optional.empty();
+            }
+            return currentMemoryBudgetFailure(entry);
+        }
+    }
+
+    private static Optional<ChunkMeshMemoryBudgetExceededException>
+            currentMemoryBudgetFailure(Entry entry) {
+        ChunkMeshMemoryBudgetExceededException failure =
+                entry.meshMemoryBudgetFailure;
+        return failure != null && failure.revision() == entry.revision
+                ? Optional.of(failure)
+                : Optional.empty();
     }
 
     private List<RestoredChunk> validateCompleteSnapshot(
@@ -1728,7 +1998,7 @@ public final class ChunkRepository {
                         || !keys.add(key)) {
                     return null;
                 }
-                byte[] blocks = chunkSnapshot.copyBlocks();
+                byte[] blocks = chunkSnapshot.copyFullBlocks();
                 if (blocks.length != canonicalBlockCount()) {
                     return null;
                 }
@@ -1736,8 +2006,10 @@ public final class ChunkRepository {
                         new RestoredChunk(
                                 key,
                                 revision,
-                                Chunk.fromCanonicalBytes(
-                                        worldHeight, blocks)));
+                                Chunk.fromCanonicalState(
+                                        worldHeight,
+                                        blocks,
+                                        chunkSnapshot.details())));
             }
         } catch (RuntimeException failure) {
             return null;
@@ -1750,6 +2022,138 @@ public final class ChunkRepository {
                 Math.multiplyExact(
                         GameConfig.Chunk.SIZE, worldHeight),
                 GameConfig.Chunk.SIZE);
+    }
+
+    private static PreparedDetailChange prepareDetailChange(
+            ChunkDetailMutation mutation,
+            ParentCellState oldState,
+            int detailParentCount) {
+        if (mutation
+                instanceof ChunkDetailMutation.ConvertFullToDetail convert) {
+            if (!(oldState instanceof FullCellState full)) {
+                return PreparedDetailChange.rejected(
+                        ChunkDetailMutationOutcome.Status.REPRESENTATION_CONFLICT);
+            }
+            if (full.blockId() != convert.expectedFullId()) {
+                return PreparedDetailChange.rejected(
+                        ChunkDetailMutationOutcome.Status.EXPECTED_STATE_CONFLICT);
+            }
+            if (convert.expectedFullId() == 0) {
+                return PreparedDetailChange.rejected(
+                        ChunkDetailMutationOutcome.Status.INVALID_BLOCK_ID);
+            }
+            if (detailParentCount >= Chunk.MAX_DETAIL_PARENTS_PER_CHUNK) {
+                return PreparedDetailChange.rejected(
+                        ChunkDetailMutationOutcome.Status.CAPACITY_EXCEEDED);
+            }
+            return PreparedDetailChange.applied(
+                    DetailCellState.uniform(convert.expectedFullId()));
+        }
+
+        if (mutation
+                instanceof ChunkDetailMutation.SetSubVoxel setSubVoxel) {
+            if (!oldState.getClass().equals(
+                    setSubVoxel.expectedState().getClass())) {
+                return PreparedDetailChange.rejected(
+                        ChunkDetailMutationOutcome.Status.REPRESENTATION_CONFLICT);
+            }
+            if (!oldState.equals(setSubVoxel.expectedState())) {
+                return PreparedDetailChange.rejected(
+                        ChunkDetailMutationOutcome.Status.EXPECTED_STATE_CONFLICT);
+            }
+            if (oldState instanceof FullCellState full) {
+                if (full.blockId() != 0) {
+                    return PreparedDetailChange.rejected(
+                            ChunkDetailMutationOutcome.Status.REPRESENTATION_CONFLICT);
+                }
+                if (setSubVoxel.replacementId() == 0) {
+                    return PreparedDetailChange.rejected(
+                            ChunkDetailMutationOutcome.Status.NO_CHANGE);
+                }
+                if (detailParentCount
+                        >= Chunk.MAX_DETAIL_PARENTS_PER_CHUNK) {
+                    return PreparedDetailChange.rejected(
+                            ChunkDetailMutationOutcome.Status.CAPACITY_EXCEEDED);
+                }
+                byte[] ids =
+                        new byte[DetailCellState.CELL_COUNT];
+                ids[setSubVoxel.position().index()] =
+                        setSubVoxel.replacementId();
+                return PreparedDetailChange.applied(
+                        new DetailCellState(
+                                1L << setSubVoxel.position().index(),
+                                ids));
+            }
+
+            DetailCellState detail = (DetailCellState) oldState;
+            int subIndex = setSubVoxel.position().index();
+            byte[] ids = detail.copyBlockIds();
+            if (ids[subIndex] == setSubVoxel.replacementId()) {
+                return PreparedDetailChange.rejected(
+                        ChunkDetailMutationOutcome.Status.NO_CHANGE);
+            }
+            long mask = detail.occupancyMask();
+            ids[subIndex] = setSubVoxel.replacementId();
+            if (setSubVoxel.replacementId() == 0) {
+                mask &= ~(1L << subIndex);
+            } else {
+                mask |= 1L << subIndex;
+            }
+            if (mask == 0L) {
+                return PreparedDetailChange.applied(
+                        new FullCellState((byte) 0));
+            }
+            return PreparedDetailChange.applied(
+                    new DetailCellState(mask, ids));
+        }
+
+        ChunkDetailMutation.CompactDetailToFull compact =
+                (ChunkDetailMutation.CompactDetailToFull) mutation;
+        if (!(oldState instanceof DetailCellState detail)) {
+            return PreparedDetailChange.rejected(
+                    ChunkDetailMutationOutcome.Status.REPRESENTATION_CONFLICT);
+        }
+        if (!detail.equals(compact.expectedState())) {
+            return PreparedDetailChange.rejected(
+                    ChunkDetailMutationOutcome.Status.EXPECTED_STATE_CONFLICT);
+        }
+        if (compact.replacementFullId() == 0
+                || detail.occupancyMask() != -1L) {
+            return PreparedDetailChange.rejected(
+                    ChunkDetailMutationOutcome.Status.INVALID_COMPACTION);
+        }
+        for (byte blockId : detail.copyBlockIds()) {
+            if (blockId != compact.replacementFullId()) {
+                return PreparedDetailChange.rejected(
+                        ChunkDetailMutationOutcome.Status.INVALID_COMPACTION);
+            }
+        }
+        return PreparedDetailChange.applied(
+                new FullCellState(compact.replacementFullId()));
+    }
+
+    private static ChunkDetailMutationOutcome detailRejection(
+            ChunkDetailMutationOutcome.Status status,
+            Optional<ParentCellState> oldState,
+            long observedRevision) {
+        return new ChunkDetailMutationOutcome(
+                status,
+                oldState,
+                Optional.empty(),
+                observedRevision,
+                observedRevision,
+                List.of());
+    }
+
+    private ChunkSnapshot snapshotOf(
+            ChunkKey key,
+            long revision,
+            Chunk chunk,
+            byte[] fullBlocks) {
+        DetailChunkSnapshot details =
+                chunk.detailSnapshotForCapture();
+        return ChunkSnapshot.of(
+                key, revision, worldHeight, fullBlocks, details);
     }
 
     private boolean hasActiveGenerationAttempts() {
@@ -1919,20 +2323,25 @@ public final class ChunkRepository {
                     horizontal < GameConfig.Chunk.SIZE;
                     horizontal++) {
                 boolean northCellChanged =
-                        oldChunk.getBlock(horizontal, y, 0)
-                                != replacement.getBlock(horizontal, y, 0);
+                        !oldChunk.cellState(horizontal, y, 0)
+                                .equals(
+                                        replacement.cellState(
+                                                horizontal, y, 0));
                 boolean southCellChanged =
-                        oldChunk.getBlock(horizontal, y, last)
-                                != replacement.getBlock(
-                                        horizontal, y, last);
+                        !oldChunk.cellState(horizontal, y, last)
+                                .equals(
+                                        replacement.cellState(
+                                                horizontal, y, last));
                 boolean westCellChanged =
-                        oldChunk.getBlock(0, y, horizontal)
-                                != replacement.getBlock(
-                                        0, y, horizontal);
+                        !oldChunk.cellState(0, y, horizontal)
+                                .equals(
+                                        replacement.cellState(
+                                                0, y, horizontal));
                 boolean eastCellChanged =
-                        oldChunk.getBlock(last, y, horizontal)
-                                != replacement.getBlock(
-                                        last, y, horizontal);
+                        !oldChunk.cellState(last, y, horizontal)
+                                .equals(
+                                        replacement.cellState(
+                                                last, y, horizontal));
                 northChanged |= northCellChanged;
                 southChanged |= southCellChanged;
                 westChanged |= westCellChanged;
@@ -2328,6 +2737,8 @@ public final class ChunkRepository {
         private long revision;
         private long persistedRevision;
         private Throwable failure;
+        private ChunkMeshOutputLimitExceededException meshOutputLimitFailure;
+        private ChunkMeshMemoryBudgetExceededException meshMemoryBudgetFailure;
         private boolean voxelModified;
         private long meshingClaimId;
         private boolean meshingClaimQueued;
@@ -2429,6 +2840,30 @@ public final class ChunkRepository {
             ChunkKey key, long revision, Chunk chunk) {}
 
     private record DirtyCandidate(ChunkKey key, Entry entry) {}
+
+    private record PreparedDetailChange(
+            ChunkDetailMutationOutcome.Status status,
+            Optional<ParentCellState> replacement) {
+        private static PreparedDetailChange applied(
+                ParentCellState replacement) {
+            return new PreparedDetailChange(
+                    ChunkDetailMutationOutcome.Status.APPLIED,
+                    Optional.of(
+                            Objects.requireNonNull(
+                                    replacement, "replacement")));
+        }
+
+        private static PreparedDetailChange rejected(
+                ChunkDetailMutationOutcome.Status status) {
+            if (status == ChunkDetailMutationOutcome.Status.APPLIED) {
+                throw new IllegalArgumentException(
+                        "rejected status must not be APPLIED");
+            }
+            return new PreparedDetailChange(
+                    Objects.requireNonNull(status, "status"),
+                    Optional.empty());
+        }
+    }
 
     private record ChangedMeshingBoundaries(
             boolean north,
