@@ -12,9 +12,12 @@ import com.overlord.interaction.api.BlockHitResult;
 import com.overlord.physics.BlockRaycastHit;
 import com.overlord.physics.BlockRaycast;
 import com.overlord.physics.BlockCollisionShapeResolver;
+import com.overlord.physics.DetailRaycastTarget;
 import com.overlord.physics.SimulationOrigin;
 import com.overlord.physics.SpatialQueryResult;
 import com.overlord.voxel.ChunkKey;
+import com.overlord.voxel.LocalSubVoxelPosition;
+import com.overlord.voxel.VoxelScale;
 import com.overlord.voxel.World;
 import java.util.Optional;
 import org.joml.Vector3f;
@@ -22,6 +25,21 @@ import org.joml.Vector3fc;
 import org.junit.jupiter.api.Test;
 
 class GaiaBlockRaycastServiceTest {
+    @Test
+    void adapterHasNoWorldRepositoryOrIndependentTraversalDependency() {
+        for (java.lang.reflect.Field field
+                : GaiaBlockRaycastService.class.getDeclaredFields()) {
+            assertTrue(field.getType() != World.class);
+            assertTrue(field.getType()
+                    != com.overlord.voxel.ChunkRepository.class);
+            assertTrue(field.getType() != BlockCollisionShapeResolver.class);
+        }
+        assertTrue(com.overlord.interaction.api.BlockRaycastService.class
+                .isAssignableFrom(GaiaBlockRaycastService.class));
+        assertTrue(com.overlord.interaction.api.SpatialBlockRaycastService.class
+                .isAssignableFrom(GaiaBlockRaycastService.class));
+    }
+
     @Test
     void delegatesToPhaseSixRaycastAndMapsStoredIdentityExactly() {
         GaiaBlockRaycastService service = new GaiaBlockRaycastService(
@@ -94,6 +112,37 @@ class GaiaBlockRaycastServiceTest {
     }
 
     @Test
+    void mapsDetailTargetRevisionAndCanonicalPointWithoutLosingIdentity() {
+        DetailRaycastTarget target = new DetailRaycastTarget(
+                VoxelScale.DETAIL_4,
+                new LocalSubVoxelPosition(2, 1, 3));
+        GaiaBlockRaycastService service = new GaiaBlockRaycastService(
+                (origin, direction, distance) -> Optional.of(new BlockRaycastHit(
+                        1, 2, 3,
+                        0, 2, 3,
+                        (byte) 200,
+                        -1, 0, 0,
+                        1.5f, 2.375f, 3.875f,
+                        4.5f,
+                        1_600_000_001.5,
+                        2.375,
+                        -1_599_999_996.125,
+                        73L,
+                        target)),
+                id -> ResourceLocation.parse("gaia:detail_material"));
+
+        BlockHitResult hit = service.raycast(
+                new Vector3f(), new Vector3f(1, 0, 0), 6).orElseThrow();
+
+        assertEquals(ResourceLocation.parse("gaia:detail_material"), hit.block());
+        assertEquals(target, hit.target());
+        assertEquals(73L, hit.chunkRevision());
+        assertEquals(1_600_000_001.5, hit.worldPointX(), 1.0e-12);
+        assertEquals(2.375, hit.worldPointY(), 1.0e-12);
+        assertEquals(-1_599_999_996.125, hit.worldPointZ(), 1.0e-12);
+    }
+
+    @Test
     void typedUnknownPreservesCanonicalKeyWithoutThrowing() {
         ChunkKey key = new ChunkKey(100_000_000, -100_000_000);
         SimulationOrigin origin = new SimulationOrigin(key);
@@ -139,6 +188,30 @@ class GaiaBlockRaycastServiceTest {
         assertEquals(SpatialQueryResult.Status.FAILED, query.status());
         assertEquals(Optional.of(key), query.unavailableKey());
         assertTrue(query.result().isEmpty());
+    }
+
+    @Test
+    void legacyAdapterFailsClosedWhenCanonicalSpaceHasFailed() {
+        World world = new World();
+        ChunkKey key = new ChunkKey(0, 0);
+        world.generate(key, chunk -> chunk.setBlock(0, 1, 0, (byte) 1));
+        long revision = world.chunks().revision(key);
+        world.chunks().claimMeshing(key).orElseThrow();
+        world.chunks().markMeshingFailure(
+                key, revision, new IllegalStateException("fixture failure"));
+        BlockRaycast raycast = new BlockRaycast(
+                world, BlockCollisionShapeResolver.fullCubesForNonAir());
+        GaiaBlockRaycastService service = new GaiaBlockRaycastService(
+                (origin, direction, distance) ->
+                        raycast.cast(origin, direction, distance),
+                ignored -> ResourceLocation.parse("gaia:stone"));
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> service.raycast(
+                        new Vector3f(0.5f, 1.5f, 0.5f),
+                        new Vector3f(1, 0, 0),
+                        1));
     }
 
     @Test

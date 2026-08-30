@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.renderer.AxisAlignedBounds;
+import java.util.Arrays;
 import org.junit.jupiter.api.Test;
 
 class ChunkMeshDataTest {
@@ -84,5 +85,27 @@ class ChunkMeshDataTest {
                 NullPointerException.class,
                 () -> new ChunkMeshData(
                         new ChunkKey(0, 0), 1, null));
+    }
+
+    @Test
+    void canonicalHashUsesExactCpuVertexContentAndIsDefensive() {
+        float[] firstVertices = {
+            0.25f, 0.5f, 0.75f, 0.1f, 0.2f, 1, 0, 0, 95, 0.82f
+        };
+        float[] changedVertices = firstVertices.clone();
+        changedVertices[3] = Math.nextUp(changedVertices[3]);
+        ChunkMeshData first = new ChunkMeshData(
+                new ChunkKey(-4, 7), 19, firstVertices);
+        ChunkMeshData identical = new ChunkMeshData(
+                new ChunkKey(-4, 7), 19, firstVertices.clone());
+        ChunkMeshData changed = new ChunkMeshData(
+                new ChunkKey(-4, 7), 19, changedVertices);
+
+        byte[] hash = first.canonicalHash();
+        hash[0] ^= 0x7f;
+
+        assertArrayEquals(first.canonicalHash(), identical.canonicalHash());
+        assertFalse(Arrays.equals(first.canonicalHash(), changed.canonicalHash()));
+        assertFalse(Arrays.equals(hash, first.canonicalHash()));
     }
 }

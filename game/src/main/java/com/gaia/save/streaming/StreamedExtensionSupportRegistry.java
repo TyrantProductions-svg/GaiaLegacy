@@ -19,7 +19,7 @@ public final class StreamedExtensionSupportRegistry {
 
     public static StreamedExtensionSupportRegistry productionDefaults() {
         return builder()
-                .supportOptional(SaveSectionId.DETAIL_BLOCKS, 1)
+                .supportRequired(SaveSectionId.DETAIL_BLOCKS, 1)
                 .supportRequired(SaveSectionId.WORLD_ITEM_PAGE, 1)
                 .build();
     }

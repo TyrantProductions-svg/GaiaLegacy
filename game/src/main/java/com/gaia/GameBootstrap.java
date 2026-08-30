@@ -5,6 +5,7 @@ import com.gaia.assets.GaiaResourceLoader;
 import com.gaia.audio.GaiaAudioSettingsAdapter;
 import com.gaia.audio.GaiaMusicCatalog;
 import com.gaia.audio.MusicManager;
+import com.gaia.blocks.BlockRegistry;
 import com.gaia.save.archive.SaveArchiveReader;
 import com.gaia.save.archive.SaveArchiveWriter;
 import com.gaia.save.codec.ChunkSectionCodec;
@@ -169,7 +170,7 @@ public final class GameBootstrap {
                             MAX_FRAME_DELTA_SECONDS);
             Path saveRoot = new DefaultSaveRootProvider().saveRoot();
             GameSessionFactory.StreamingBackendFactory streamingBackends =
-                    composeStreamingBackends(saveRoot);
+                    composeStreamingBackends(saveRoot, catalog.blockRegistry());
             GameSessionFactory sessionFactory =
                     new GameSessionFactory(
                             engine,
@@ -190,7 +191,8 @@ public final class GameBootstrap {
                     sessionFactory::restore,
                     settingsLifecycle::newSessionConfig,
                     Instant::now,
-                    () -> SaveGameId.parse(UUID.randomUUID().toString()));
+                    () -> SaveGameId.parse(UUID.randomUUID().toString()),
+                    catalog.blockRegistry());
             ProductScreenPresenter productPresenter =
                     new ProductScreenPresenter(
                             saveComposition.catalog(),
@@ -228,6 +230,11 @@ public final class GameBootstrap {
 
     private static GameSessionFactory.StreamingBackendFactory
             composeStreamingBackends(Path saveRoot) {
+        return composeStreamingBackends(saveRoot, null);
+    }
+
+    private static GameSessionFactory.StreamingBackendFactory
+            composeStreamingBackends(Path saveRoot, BlockRegistry blockRegistry) {
         Path root = Objects.requireNonNull(saveRoot, "saveRoot");
         return saveGameId -> {
             SaveGameId id = Objects.requireNonNull(saveGameId, "saveGameId");
@@ -244,7 +251,8 @@ public final class GameBootstrap {
             return new GameSessionFactory.StreamingBackends(
                     store,
                     pages,
-                    Optional.of(composeStreamedSaveTarget(root, id, graph)));
+                    Optional.of(composeStreamedSaveTarget(
+                            root, id, graph, blockRegistry)));
         };
     }
 
@@ -255,6 +263,24 @@ public final class GameBootstrap {
             Supplier<GameSessionConfig> sessionDefaults,
             Supplier<Instant> clock,
             Supplier<SaveGameId> saveGameIds) {
+        return composeSaveLoad(
+                saveRoot,
+                newSessions,
+                restoredSessions,
+                sessionDefaults,
+                clock,
+                saveGameIds,
+                null);
+    }
+
+    static SaveComposition composeSaveLoad(
+            Path saveRoot,
+            GameSessionLauncher.NewSessionFactory newSessions,
+            GameSessionLauncher.RestoreSessionFactory restoredSessions,
+            Supplier<GameSessionConfig> sessionDefaults,
+            Supplier<Instant> clock,
+            Supplier<SaveGameId> saveGameIds,
+            BlockRegistry blockRegistry) {
         Path root = Objects.requireNonNull(saveRoot, "saveRoot");
         Objects.requireNonNull(newSessions, "newSessions");
         Objects.requireNonNull(restoredSessions, "restoredSessions");
@@ -278,7 +304,7 @@ public final class GameBootstrap {
             if (Phase14SaveMigrator.readPublished(
                     root, id, archiveReader, files).isPresent()) {
                 return new StreamedSessionSaveTarget(
-                        root, id, archiveReader, files);
+                        root, id, archiveReader, files, blockRegistry);
             }
             AtomicSaveStore store = new AtomicSaveStore(
                     root,
@@ -336,6 +362,15 @@ public final class GameBootstrap {
             Path saveRoot,
             SaveGameId saveGameId,
             GameSessionFactory.StreamingBackends backends) {
+        return composeStreamedSaveTarget(
+                saveRoot, saveGameId, backends, null);
+    }
+
+    private static SaveCoordinator.SaveTarget composeStreamedSaveTarget(
+            Path saveRoot,
+            SaveGameId saveGameId,
+            GameSessionFactory.StreamingBackends backends,
+            BlockRegistry blockRegistry) {
         SaveSnapshotCodec snapshotCodec = new SaveSnapshotCodec(
                 new ChunkSectionCodec(),
                 new PlayerSectionCodec(),
@@ -347,7 +382,8 @@ public final class GameBootstrap {
                 backends,
                 snapshotCodec,
                 new SaveArchiveReader(snapshotCodec),
-                new JdkSaveFileOperations());
+                new JdkSaveFileOperations(),
+                blockRegistry);
     }
 
     private static SaveCoordinator.SaveTarget composeStreamedSaveTarget(
@@ -357,6 +393,24 @@ public final class GameBootstrap {
             SaveSnapshotCodec snapshotCodec,
             SaveArchiveReader archiveReader,
             JdkSaveFileOperations files) {
+        return composeStreamedSaveTarget(
+                saveRoot,
+                saveGameId,
+                backends,
+                snapshotCodec,
+                archiveReader,
+                files,
+                null);
+    }
+
+    private static SaveCoordinator.SaveTarget composeStreamedSaveTarget(
+            Path saveRoot,
+            SaveGameId saveGameId,
+            GameSessionFactory.StreamingBackends backends,
+            SaveSnapshotCodec snapshotCodec,
+            SaveArchiveReader archiveReader,
+            JdkSaveFileOperations files,
+            BlockRegistry blockRegistry) {
         GameSessionFactory.StreamingBackends graph = Objects.requireNonNull(
                 backends, "backends");
         return new StreamedSessionSaveTarget(
@@ -374,7 +428,8 @@ public final class GameBootstrap {
                         archiveReader,
                         files,
                         snapshot,
-                        modifiedTime));
+                        modifiedTime),
+                blockRegistry);
     }
 
     private static void bootstrapFreshStreamedAuthority(

@@ -23,6 +23,7 @@ import com.overlord.interaction.api.EntityRef;
 import com.overlord.interaction.api.InteractionMode;
 import com.overlord.inventory.api.ItemStack;
 import com.overlord.physics.Aabb;
+import com.overlord.physics.DetailRaycastTarget;
 import com.overlord.physics.MassProperties;
 import com.overlord.physics.PhysicsBody;
 import com.overlord.physics.SpatialQueryResult;
@@ -34,6 +35,10 @@ import com.overlord.voxel.BlockRenderInfo;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkRepository;
 import com.overlord.voxel.DirtyChunkRevision;
+import com.overlord.voxel.LocalSubVoxelPosition;
+import com.overlord.voxel.FullCellState;
+import com.overlord.voxel.ParentCellState;
+import com.overlord.voxel.VoxelScale;
 import com.overlord.worlditem.LogicalWorldItemService;
 import java.lang.reflect.Proxy;
 import java.util.EnumMap;
@@ -51,6 +56,37 @@ class BlockInteractionControllerTest {
     private static final ResourceLocation AIR = ResourceLocation.parse("gaia:air");
     private static final ResourceLocation STONE = ResourceLocation.parse("gaia:stone");
     private static final ResourceLocation MISSING = ResourceLocation.parse("gaia:missing");
+
+    @Test
+    void detailTargetIsVisibleButCannotTriggerLegacyParentBreakOrPlacement() {
+        BlockHitResult detail = new BlockHitResult(
+                1, 2, 3, 0, 2, 3, STONE,
+                -1, 0, 0, 1.25f, 2.125f, 3.125f, 1,
+                1.25, 2.125, 3.125, 7L,
+                new DetailRaycastTarget(
+                        VoxelScale.DETAIL_4,
+                        new LocalSubVoxelPosition(0, 0, 0)));
+        Fixture fixture = fixture(() ->
+                SpatialQueryResult.available(Optional.of(detail)));
+        fixture.modes.setMode(GameMode.CREATIVE, 0);
+
+        fixture.controller.fixedUpdate(
+                mousePressed(GLFW_MOUSE_BUTTON_LEFT),
+                1.0 / 60.0, 1, 1, true);
+        fixture.controller.fixedUpdate(mouseReleased(), 1.0 / 60.0, 2, 2, true);
+        fixture.controller.fixedUpdate(
+                mousePressed(GLFW_MOUSE_BUTTON_RIGHT),
+                1.0 / 60.0, 3, 3, true);
+
+        assertEquals(0, fixture.mutations.get());
+        assertEquals(InteractionMode.NONE, fixture.controller.viewModel().mode());
+        assertEquals(
+                ResourceLocation.parse(
+                        "gaia:interaction/detail_target_unsupported"),
+                fixture.controller.viewModel().failureReason()
+                        .orElseThrow().code());
+        assertEquals(detail, fixture.controller.viewModel().target().orElseThrow());
+    }
 
     @Test
     void f4CancelsAndReturnsBeforeInteractionThenHeldEdgeDoesNotRetoggle() {
@@ -565,6 +601,11 @@ class BlockInteractionControllerTest {
             @Override
             public boolean isLoaded(int x, int y, int z) {
                 return true;
+            }
+
+            @Override
+            public ParentCellState parentStateAt(int x, int y, int z) {
+                return new FullCellState((byte) 0);
             }
 
             @Override

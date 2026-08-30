@@ -19,6 +19,8 @@ import com.overlord.physics.PhysicsBody;
 import com.overlord.voxel.BlockFace;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.DirtyChunkRevision;
+import com.overlord.voxel.FullCellState;
+import com.overlord.voxel.ParentCellState;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -199,6 +201,11 @@ class BlockPlacementTransactionTest {
             @Override
             public boolean isLoaded(int x, int y, int z) {
                 return loaded;
+            }
+
+            @Override
+            public ParentCellState parentStateAt(int x, int y, int z) {
+                return new FullCellState((byte) (block.equals(AIR) ? 0 : 1));
             }
 
             @Override

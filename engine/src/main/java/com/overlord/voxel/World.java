@@ -22,6 +22,11 @@ public final class World {
         return chunks.getBlock(x, y, z);
     }
 
+    public ParentCellObservationResult observeCell(
+            int x, int y, int z) {
+        return chunks.observeCell(x, y, z);
+    }
+
     public boolean setBlock(int x, int y, int z, byte blockId) {
         return chunks.setBlock(x, y, z, blockId);
     }

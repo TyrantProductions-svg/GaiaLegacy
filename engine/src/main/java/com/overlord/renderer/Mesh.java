@@ -3,11 +3,12 @@ package com.overlord.renderer;
 import static org.lwjgl.opengl.GL30C.*;
 
 import com.overlord.core.thread.MainThreadGuard;
+import com.overlord.voxel.ChunkMeshData;
 import com.overlord.voxel.VoxelVertexAttribute;
 import com.overlord.voxel.VoxelVertexFormat;
 import java.nio.FloatBuffer;
 import java.util.Objects;
-import org.lwjgl.BufferUtils;
+import org.lwjgl.system.MemoryUtil;
 
 public class Mesh implements ChunkGpuMesh {
     private final MainThreadGuard mainThreadGuard;
@@ -15,12 +16,13 @@ public class Mesh implements ChunkGpuMesh {
     private int vboId;
     private final int vertexCount;
 
-    public Mesh(MainThreadGuard mainThreadGuard, float[] vertices) {
+    public Mesh(MainThreadGuard mainThreadGuard, ChunkMeshData data) {
         this.mainThreadGuard = Objects.requireNonNull(mainThreadGuard, "mainThreadGuard");
         this.mainThreadGuard.assertMainThread("mesh GPU upload");
-        this.vertexCount = vertices.length
-                / VoxelVertexFormat.FLOATS_PER_VERTEX;
+        ChunkMeshData required = Objects.requireNonNull(data, "data");
+        this.vertexCount = required.vertexCount();
 
+        FloatBuffer vertexBuffer = null;
         try {
             vaoId = glGenVertexArrays();
             glBindVertexArray(vaoId);
@@ -28,8 +30,11 @@ public class Mesh implements ChunkGpuMesh {
             vboId = glGenBuffers();
             glBindBuffer(GL_ARRAY_BUFFER, vboId);
 
-            FloatBuffer vertexBuffer = BufferUtils.createFloatBuffer(vertices.length);
-            vertexBuffer.put(vertices).flip();
+            int floatCount = Math.toIntExact(
+                    required.outputByteSize() / Float.BYTES);
+            vertexBuffer = MemoryUtil.memAllocFloat(floatCount);
+            required.copyVerticesTo(vertexBuffer);
+            vertexBuffer.flip();
             glBufferData(GL_ARRAY_BUFFER, vertexBuffer, GL_STATIC_DRAW);
 
             for (VoxelVertexAttribute attribute
@@ -56,6 +61,10 @@ public class Mesh implements ChunkGpuMesh {
                 vaoId = 0;
             }
             throw failure;
+        } finally {
+            if (vertexBuffer != null) {
+                MemoryUtil.memFree(vertexBuffer);
+            }
         }
     }
 

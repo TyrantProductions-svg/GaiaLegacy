@@ -1380,7 +1380,8 @@ class ChunkMeshManagerTest {
     }
 
     private static ChunkRepository generatedRepository() {
-        ChunkRepository repository = new ChunkRepository();
+        ChunkRepository repository = new ChunkRepository(
+                4, new ChunkDirtyTracker());
         ChunkGenerationTicket ticket =
                 repository.beginGeneration(
                         KEY, ChunkGenerationMode.INITIAL);
@@ -1407,7 +1408,7 @@ class ChunkMeshManagerTest {
 
     private static ChunkGenerationData filledGenerationData(
             ChunkKey key, byte blockId) {
-        int worldHeight = GameConfig.Chunk.MAX_HEIGHT;
+        int worldHeight = 4;
         byte[] blocks =
                 new byte[
                         GameConfig.Chunk.SIZE

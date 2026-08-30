@@ -81,6 +81,18 @@ public class GameConfig {
         public static final int KEY_DEBUG_INVENTORY_CLEAR = org.lwjgl.glfw.GLFW.GLFW_KEY_F6;
         public static final int KEY_DEBUG_INVENTORY_FILL = org.lwjgl.glfw.GLFW.GLFW_KEY_F7;
         public static final int KEY_DEBUG_INVENTORY_PRINT = org.lwjgl.glfw.GLFW.GLFW_KEY_F8;
+        public static final int KEY_DEBUG_DETAIL_INSPECT = org.lwjgl.glfw.GLFW.GLFW_KEY_F9;
+        public static final int KEY_DEBUG_DETAIL_CONVERT = org.lwjgl.glfw.GLFW.GLFW_KEY_F10;
+        public static final int KEY_DEBUG_DETAIL_FILL = org.lwjgl.glfw.GLFW.GLFW_KEY_F11;
+        public static final int KEY_DEBUG_DETAIL_CLEAR = org.lwjgl.glfw.GLFW.GLFW_KEY_F12;
+        public static final int KEY_DEBUG_DETAIL_FIXTURE_NEXT =
+                org.lwjgl.glfw.GLFW.GLFW_KEY_9;
+        public static final int KEY_DEBUG_DETAIL_FIXTURE_APPLY =
+                org.lwjgl.glfw.GLFW.GLFW_KEY_0;
+        public static final int KEY_DEBUG_DETAIL_MODIFIER_LEFT =
+                org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_CONTROL;
+        public static final int KEY_DEBUG_DETAIL_MODIFIER_RIGHT =
+                org.lwjgl.glfw.GLFW.GLFW_KEY_RIGHT_CONTROL;
         public static final int MOUSE_PRIMARY = org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT;
         public static final int MOUSE_SECONDARY = org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_RIGHT;
     }

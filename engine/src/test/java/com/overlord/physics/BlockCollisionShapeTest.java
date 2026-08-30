@@ -8,6 +8,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
 import java.util.List;
+import com.overlord.voxel.DetailCellState;
+import com.overlord.voxel.FullCellState;
+import com.overlord.voxel.LocalSubVoxelPosition;
 import org.junit.jupiter.api.Test;
 
 class BlockCollisionShapeTest {
@@ -96,5 +99,29 @@ class BlockCollisionShapeTest {
         assertSame(BlockCollisionShape.empty(), resolver.shapeFor((byte) 0));
         assertSame(BlockCollisionShape.fullCube(), resolver.shapeFor((byte) 1));
         assertSame(BlockCollisionShape.fullCube(), resolver.shapeFor((byte) -1));
+    }
+
+    @Test
+    void resolverUsesTypedFullSemanticsAndOccupancyOnlyDetailGeometry() {
+        BlockCollisionShapeResolver resolver = blockId ->
+                blockId == 9
+                        ? BlockCollisionShape.of(
+                                List.of(new Aabb(0, 0, 0, 1, 0.5f, 1)))
+                        : BlockCollisionShape.empty();
+        byte[] ids = new byte[DetailCellState.CELL_COUNT];
+        LocalSubVoxelPosition first = new LocalSubVoxelPosition(0, 0, 0);
+        LocalSubVoxelPosition second = new LocalSubVoxelPosition(1, 0, 0);
+        ids[first.index()] = 7;
+        ids[second.index()] = 9;
+        DetailCellState detail = new DetailCellState(
+                (1L << first.index()) | (1L << second.index()), ids);
+        DetailCollisionBoxMerger merger = new DetailCollisionBoxMerger();
+
+        assertEquals(
+                List.of(new Aabb(0, 0, 0, 1, 0.5f, 1)),
+                resolver.shapeFor(new FullCellState((byte) 9), merger).boxes());
+        assertEquals(
+                List.of(new Aabb(0, 0, 0, 0.5f, 0.25f, 0.25f)),
+                resolver.shapeFor(detail, merger).boxes());
     }
 }

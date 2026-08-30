@@ -1,6 +1,7 @@
 package com.overlord.physics;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -48,6 +49,12 @@ class BlockRaycastTest {
                 hit.point(new Vector3f()));
         assertEquals(new Vector3f(0.5f, 1.5f, 0.5f), origin);
         assertEquals(new Vector3f(2, 0, 0), direction);
+        assertInstanceOf(FullRaycastTarget.class, hit.target());
+        assertEquals(world.chunks().revision(new ChunkKey(0, 0)),
+                hit.chunkRevision());
+        assertEquals(2.0, hit.worldPointX(), 1.0e-12);
+        assertEquals(1.5, hit.worldPointY(), 1.0e-12);
+        assertEquals(0.5, hit.worldPointZ(), 1.0e-12);
     }
 
     @Test
@@ -98,6 +105,7 @@ class BlockRaycastTest {
     @Test
     void crossesPositiveChunkBoundaryWithoutAllocatingMissingChunks() {
         World world = worldWithBlock(16, 1, 0);
+        loadEmptyChunk(world, new ChunkKey(0, 0));
         Set<ChunkKey> chunksBefore = world.chunks().keys();
 
         BlockRaycastHit hit =
@@ -116,6 +124,7 @@ class BlockRaycastTest {
     @Test
     void crossesNegativeChunkBoundaryUsingFloorCoordinates() {
         World world = worldWithBlock(-17, 1, -1);
+        loadEmptyChunk(world, new ChunkKey(-1, -1));
         Set<ChunkKey> chunksBefore = world.chunks().keys();
 
         BlockRaycastHit hit =
@@ -132,6 +141,37 @@ class BlockRaycastTest {
         assertEquals(-16, hit.adjacentX());
         assertEquals(1.5f, hit.distance(), EPSILON);
         assertEquals(chunksBefore, world.chunks().keys());
+    }
+
+    @Test
+    void legacyOptionalCastFailsClosedWhenCanonicalSpaceIsUnavailable() {
+        BlockRaycast raycast = raycastFor(new World());
+
+        assertThrows(
+                IllegalStateException.class,
+                () ->
+                        raycast.cast(
+                                new Vector3f(0.5f, 1.5f, 0.5f),
+                                new Vector3f(1, 0, 0),
+                                1));
+    }
+
+    @Test
+    void legacyOptionalCastFailsClosedWhenCanonicalSpaceHasFailed() {
+        World world = worldWithBlock(0, 1, 0);
+        ChunkKey key = new ChunkKey(0, 0);
+        long revision = world.chunks().revision(key);
+        world.chunks().claimMeshing(key).orElseThrow();
+        world.chunks().markMeshingFailure(
+                key, revision, new IllegalStateException("fixture failure"));
+
+        assertThrows(
+                IllegalStateException.class,
+                () ->
+                        raycastFor(world).cast(
+                                new Vector3f(0.5f, 1.5f, 0.5f),
+                                new Vector3f(1, 0, 0),
+                                1));
     }
 
     @Test
@@ -202,8 +242,11 @@ class BlockRaycastTest {
 
     @Test
     void originOnMinimumFaceMovingOutwardIsNotInsideOrAHit() {
+        World world = worldWithBlock(0, 0, 0);
+        loadEmptyChunk(world, new ChunkKey(-1, 0));
+
         assertTrue(
-                raycastFor(worldWithBlock(0, 0, 0))
+                raycastFor(world)
                         .cast(
                                 new Vector3f(0, 0.5f, 0.5f),
                                 new Vector3f(-1, 0, 0),
@@ -279,8 +322,13 @@ class BlockRaycastTest {
 
     @Test
     void edgeTouchChecksTheDeterministicXAxisSideCell() {
+        World world = worldWithBlock(-1, 0, 0);
+        loadEmptyChunk(world, new ChunkKey(0, 0));
+        loadEmptyChunk(world, new ChunkKey(0, -1));
+        loadEmptyChunk(world, new ChunkKey(-1, -1));
+
         BlockRaycastHit hit =
-                raycastFor(worldWithBlock(-1, 0, 0))
+                raycastFor(world)
                         .cast(
                                 new Vector3f(0.5f, 0.5f, 0.5f),
                                 new Vector3f(-1, 0, -1),
@@ -298,6 +346,8 @@ class BlockRaycastTest {
     void tiedCellsUseAscendingBlockCoordinatesAfterAxisPriority() {
         World world = worldWithBlock(-1, 0, 0);
         world.setBlock(-1, 0, -1, (byte) 2);
+        loadEmptyChunk(world, new ChunkKey(0, 0));
+        loadEmptyChunk(world, new ChunkKey(0, -1));
 
         BlockRaycastHit hit =
                 raycastFor(world)
@@ -385,6 +435,9 @@ class BlockRaycastTest {
     @Test
     void returnsEmptyWhenNoShapeIntersectsTheFiniteRay() {
         World world = worldWithBlock(3, 0, 0);
+        for (int chunkX = 1; chunkX <= 6; chunkX++) {
+            loadEmptyChunk(world, new ChunkKey(chunkX, 0));
+        }
         Set<ChunkKey> chunksBefore = world.chunks().keys();
 
         assertTrue(
@@ -514,5 +567,11 @@ class BlockRaycastTest {
         World world = new World();
         assertTrue(world.setBlock(x, y, z, blockId));
         return world;
+    }
+
+    private static void loadEmptyChunk(World world, ChunkKey key) {
+        if (!world.chunks().keys().contains(key)) {
+            world.generate(key, chunk -> {});
+        }
     }
 }

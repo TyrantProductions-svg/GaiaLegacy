@@ -21,6 +21,8 @@ import com.overlord.inventory.api.InventoryService;
 import com.overlord.inventory.api.ItemStack;
 import com.overlord.physics.Aabb;
 import com.overlord.physics.PhysicsBody;
+import com.overlord.voxel.DetailCellState;
+import com.overlord.voxel.ParentCellState;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
@@ -93,6 +95,12 @@ public final class BlockPlacementTransaction {
         if (!world.isLoaded(x, y, z)) {
             return rejected(
                     BlockPlacementResult.Status.CHUNK_NOT_LOADED, Optional.empty());
+        }
+        ParentCellState parentState = Objects.requireNonNull(
+                world.parentStateAt(x, y, z), "world.parentStateAt");
+        if (parentState instanceof DetailCellState) {
+            return rejected(
+                    BlockPlacementResult.Status.NOT_REPLACEABLE, Optional.empty());
         }
         ResourceLocation observed = Objects.requireNonNull(
                 world.blockAt(x, y, z), "world.blockAt");

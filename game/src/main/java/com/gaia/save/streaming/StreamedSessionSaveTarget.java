@@ -1,5 +1,6 @@
 package com.gaia.save.streaming;
 
+import com.gaia.blocks.BlockRegistry;
 import com.gaia.save.archive.SaveArchiveReader;
 import com.gaia.save.archive.SaveDiagnostic;
 import com.gaia.save.codec.InventorySectionCodec;
@@ -45,12 +46,22 @@ public final class StreamedSessionSaveTarget implements SaveCoordinator.SaveTarg
     private final StreamedChunkStore store;
     private final StreamedWorldItemPageBackend pages;
     private final FreshAuthorityBootstrap freshAuthorityBootstrap;
+    private final BlockRegistry blockRegistry;
 
     public StreamedSessionSaveTarget(
             Path saveRoot,
             SaveGameId saveGameId,
             SaveArchiveReader archiveReader,
             SaveFileOperations files) {
+        this(saveRoot, saveGameId, archiveReader, files, null);
+    }
+
+    public StreamedSessionSaveTarget(
+            Path saveRoot,
+            SaveGameId saveGameId,
+            SaveArchiveReader archiveReader,
+            SaveFileOperations files,
+            BlockRegistry blockRegistry) {
         this(
                 saveRoot,
                 saveGameId,
@@ -64,7 +75,8 @@ public final class StreamedSessionSaveTarget implements SaveCoordinator.SaveTarg
                         new StreamedChunkIndexCodec(),
                         Objects.requireNonNull(files, "files")),
                 null,
-                null);
+                null,
+                blockRegistry);
     }
 
     public StreamedSessionSaveTarget(
@@ -74,7 +86,7 @@ public final class StreamedSessionSaveTarget implements SaveCoordinator.SaveTarg
             SaveFileOperations files,
             StreamedChunkStore store,
             StreamedWorldItemPageBackend pages) {
-        this(saveRoot, saveGameId, archiveReader, files, store, pages, null);
+        this(saveRoot, saveGameId, archiveReader, files, store, pages, null, null);
     }
 
     public StreamedSessionSaveTarget(
@@ -85,6 +97,26 @@ public final class StreamedSessionSaveTarget implements SaveCoordinator.SaveTarg
             StreamedChunkStore store,
             StreamedWorldItemPageBackend pages,
             FreshAuthorityBootstrap freshAuthorityBootstrap) {
+        this(
+                saveRoot,
+                saveGameId,
+                archiveReader,
+                files,
+                store,
+                pages,
+                freshAuthorityBootstrap,
+                null);
+    }
+
+    public StreamedSessionSaveTarget(
+            Path saveRoot,
+            SaveGameId saveGameId,
+            SaveArchiveReader archiveReader,
+            SaveFileOperations files,
+            StreamedChunkStore store,
+            StreamedWorldItemPageBackend pages,
+            FreshAuthorityBootstrap freshAuthorityBootstrap,
+            BlockRegistry blockRegistry) {
         this.saveRoot = Objects.requireNonNull(saveRoot, "saveRoot")
                 .toAbsolutePath().normalize();
         this.saveGameId = Objects.requireNonNull(saveGameId, "saveGameId");
@@ -95,6 +127,7 @@ public final class StreamedSessionSaveTarget implements SaveCoordinator.SaveTarg
                 ? new StreamedWorldItemPageBackend(this.store)
                 : pages;
         this.freshAuthorityBootstrap = freshAuthorityBootstrap;
+        this.blockRegistry = blockRegistry;
     }
 
     @Override
@@ -462,6 +495,15 @@ public final class StreamedSessionSaveTarget implements SaveCoordinator.SaveTarg
                         "A first WorldItem page requires its exact resident Chunk"));
         String baseHash = Phase14SaveMigrator.reproducedBaseHash(
                 snapshot.metadata(), captured.key());
+        List<StreamedChunkPayload.ExtensionDescriptor> extensions =
+                ChunkDetailPersistence.mergeDetailExtension(
+                        captured,
+                        List.of(new StreamedChunkPayload.ExtensionDescriptor(
+                                SaveSectionId.WORLD_ITEM_PAGE,
+                                WorldItemPageCodec.CODEC_VERSION,
+                                true,
+                                pageBytes)),
+                        blockRegistry);
         StreamedChunkPayload payload = new StreamedChunkPayload(
                 saveGameId,
                 captured.key(),
@@ -472,12 +514,8 @@ public final class StreamedSessionSaveTarget implements SaveCoordinator.SaveTarg
                 true,
                 true,
                 captured.worldHeight(),
-                captured.copyBlocks(),
-                List.of(new StreamedChunkPayload.ExtensionDescriptor(
-                        SaveSectionId.WORLD_ITEM_PAGE,
-                        WorldItemPageCodec.CODEC_VERSION,
-                        true,
-                        pageBytes)));
+                ChunkDetailPersistence.canonicalFullVoxels(captured),
+                extensions);
         return new StreamedChunkStore.ExactChunkCapture(
                 payload,
                 () -> chunks.apply(captured.key())
@@ -523,8 +561,8 @@ public final class StreamedSessionSaveTarget implements SaveCoordinator.SaveTarg
                 }
                 StreamedChunkPayload current = read.payload().orElseThrow();
                 if (exact.revision() == persistedRevision
-                        && java.util.Arrays.equals(
-                                exact.copyBlocks(), current.copyCanonicalVoxels())) {
+                        && ChunkDetailPersistence.canonicalStateEquals(
+                                exact, current, blockRegistry)) {
                     continue;
                 }
                 extensions = current.extensions();
@@ -542,6 +580,8 @@ public final class StreamedSessionSaveTarget implements SaveCoordinator.SaveTarg
                 throw new IllegalStateException(
                         "The dirty Chunk base identity conflicts with durable state");
             }
+            extensions = ChunkDetailPersistence.mergeDetailExtension(
+                    exact, extensions, blockRegistry);
             StreamedChunkPayload payload = new StreamedChunkPayload(
                     saveGameId,
                     exact.key(),
@@ -552,7 +592,7 @@ public final class StreamedSessionSaveTarget implements SaveCoordinator.SaveTarg
                     true,
                     true,
                     exact.worldHeight(),
-                    exact.copyBlocks(),
+                    ChunkDetailPersistence.canonicalFullVoxels(exact),
                     extensions);
             captures.add(new StreamedChunkStore.ExactChunkCapture(
                     payload, prepared.stillCurrent()));
@@ -609,7 +649,7 @@ public final class StreamedSessionSaveTarget implements SaveCoordinator.SaveTarg
         return first.key().equals(second.key())
                 && first.revision() == second.revision()
                 && first.worldHeight() == second.worldHeight()
-                && java.util.Arrays.equals(first.copyBlocks(), second.copyBlocks());
+                && first.canonicalContentEquals(second);
     }
 
     private CheckpointBinding checkpointBinding(SaveGameSnapshot snapshot) {

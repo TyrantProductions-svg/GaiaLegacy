@@ -44,6 +44,24 @@ tasks.register('profileWorldItems', JavaExec) {
     args '12345', '1024', '512', '600', '3600'
 }
 
+tasks.register('profileDetailVoxels', JavaExec) {
+    group = 'verification'
+    description = 'Runs deterministic Phase 16 DETAIL resource measurements.'
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.gaia.tools.DetailVoxelPerformanceFixture'
+    args '1'
+}
+
+tasks.register('stressHybridMeshRetention', JavaExec) {
+    group = 'verification'
+    description = 'Runs the Phase 16 hybrid mesh lifecycle stress with a 512 MiB heap.'
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.gaia.tools.HybridMeshRetentionStressFixture'
+    maxHeapSize = '512m'
+}
+
 def generatedUiVerificationDir = layout.buildDirectory.dir(
     'generated-ui-verification')
 

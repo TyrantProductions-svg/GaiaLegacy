@@ -7,6 +7,8 @@ import com.overlord.interaction.BlockWorldMutationOutcome;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkMutationOutcome;
 import com.overlord.voxel.ChunkRepository;
+import com.overlord.voxel.FullCellState;
+import com.overlord.voxel.ParentCellState;
 import com.overlord.voxel.World;
 import java.util.Objects;
 
@@ -40,8 +42,22 @@ public final class GaiaBlockWorldAccess
     }
 
     @Override
+    public ParentCellState parentStateAt(int x, int y, int z) {
+        return world.observeCell(x, y, z)
+                .observation()
+                .orElseThrow(() -> new IllegalStateException(
+                        "canonical parent cell is unavailable"))
+                .state();
+    }
+
+    @Override
     public ResourceLocation blockAt(int x, int y, int z) {
-        return blocks.require(world.getBlock(x, y, z)).name();
+        ParentCellState state = parentStateAt(x, y, z);
+        if (!(state instanceof FullCellState full)) {
+            throw new IllegalStateException(
+                    "FULL block identity is unavailable for a DETAIL parent");
+        }
+        return blocks.require(full.blockId()).name();
     }
 
     @Override

@@ -1,6 +1,7 @@
 package com.overlord.voxel;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.overlord.config.GameConfig;
@@ -18,6 +19,52 @@ class ChunkMeshInputTest {
     private static final byte SOUTH_WEST_MARKER = 16;
     private static final byte WEST_MARKER = 17;
     private static final byte NORTH_WEST_MARKER = 18;
+
+    @Test
+    void typedSamplingCarriesCenterAndNeighborDetailSnapshots() {
+        ChunkKey centerKey = new ChunkKey(0, 0);
+        ChunkSnapshot center =
+                detailSnapshot(centerKey, 1L, 0, 2, 0, (byte) 21);
+        ChunkSnapshot west =
+                detailSnapshot(
+                        centerKey.west(),
+                        2L,
+                        CHUNK_SIZE - 1,
+                        2,
+                        0,
+                        (byte) 22);
+        ChunkMeshInput input =
+                new ChunkMeshInput(
+                        center,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        west,
+                        null);
+
+        DetailCellState centerDetail =
+                assertInstanceOf(
+                        DetailCellState.class,
+                        input.cellState(0, 2, 0));
+        DetailCellState westDetail =
+                assertInstanceOf(
+                        DetailCellState.class,
+                        input.cellState(-1, 2, 0));
+
+        assertEquals(
+                21,
+                Byte.toUnsignedInt(
+                        centerDetail.blockId(
+                                new LocalSubVoxelPosition(0, 0, 0))));
+        assertEquals(
+                22,
+                Byte.toUnsignedInt(
+                        westDetail.blockId(
+                                new LocalSubVoxelPosition(0, 0, 0))));
+    }
 
     @Test
     void preservesEveryNeighborInFixedThreeByThreeOrder() {
@@ -228,6 +275,30 @@ class ChunkMeshInputTest {
         byte[] blocks = new byte[CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE];
         blocks[x + 2 * CHUNK_SIZE + z * CHUNK_SIZE * WORLD_HEIGHT] = marker;
         return ChunkSnapshot.of(key, 1, WORLD_HEIGHT, blocks);
+    }
+
+    private static ChunkSnapshot detailSnapshot(
+            ChunkKey key,
+            long revision,
+            int localX,
+            int y,
+            int localZ,
+            byte blockId) {
+        int parentIndex =
+                localX
+                        + y * CHUNK_SIZE
+                        + localZ * CHUNK_SIZE * WORLD_HEIGHT;
+        byte[] ids = new byte[64];
+        ids[0] = blockId;
+        return ChunkSnapshot.of(
+                key,
+                revision,
+                WORLD_HEIGHT,
+                new byte[CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE],
+                DetailChunkSnapshot.of(
+                        new int[] {parentIndex},
+                        new long[] {1L},
+                        ids));
     }
 
     private static ChunkSnapshot empty(ChunkKey key) {

@@ -210,7 +210,7 @@ class StreamedChunkUnloadTransactionTest {
     }
 
     @Test
-    void cleanUnloadIsNoOpWhenExistingDurableBytesAlreadyEqualTheBaseCapture()
+    void cleanUnloadRemovesObsoleteModifiedPayloadWhenBaseBytesAreIdentical()
             throws Exception {
         Path root = Files.createDirectory(
                 temporaryDirectory.resolve("clean-equivalent"));
@@ -232,14 +232,16 @@ class StreamedChunkUnloadTransactionTest {
                         Optional.empty(), List.of(), false));
 
         assertEquals(StreamedChunkUnloadResult.Status.SUCCESS, result.status());
-        assertEquals(1L, store(root, new JdkSaveFileOperations())
+        assertTrue(result.persistedChunkRevision().isEmpty(),
+                "removing an obsolete payload does not write a Chunk revision");
+        assertTrue(store(root, new JdkSaveFileOperations())
                 .readCurrentAuthority(WorldItemPagingAcceptanceFixture.SAVE_ID)
-                .index().orElseThrow().entry(key).orElseThrow().revision(),
-                "an exact equivalent legacy payload needs no synchronous root rewrite");
+                .index().orElseThrow().entry(key).isEmpty(),
+                "returning to generated FULL-only state must remove the old payload");
     }
 
     @Test
-    void restoredModifiedUnloadIsNoOpWhenDurableChunkBytesAreAlreadyExact()
+    void restoredModifiedUnloadWritesHigherRevisionWhenBytesAreAlreadyExact()
             throws Exception {
         Path root = Files.createDirectory(
                 temporaryDirectory.resolve("modified-equivalent"));
@@ -261,12 +263,12 @@ class StreamedChunkUnloadTransactionTest {
                         Optional.empty(), List.of(), true));
 
         assertEquals(StreamedChunkUnloadResult.Status.SUCCESS, result.status());
-        assertTrue(result.persistedChunkRevision().isEmpty(),
-                "a no-op equality proof must not claim an unwritten Chunk revision");
-        assertEquals(1L, store(root, new JdkSaveFileOperations())
+        assertEquals(2L, result.persistedChunkRevision().orElseThrow(),
+                "a higher identical revision is acknowledged only after publication");
+        assertEquals(2L, store(root, new JdkSaveFileOperations())
                 .readCurrentAuthority(WorldItemPagingAcceptanceFixture.SAVE_ID)
                 .index().orElseThrow().entry(key).orElseThrow().revision(),
-                "an exact restored modified payload needs no root rewrite");
+                "an exact restored modified payload still needs its revision published");
     }
 
     @Test
@@ -321,7 +323,16 @@ class StreamedChunkUnloadTransactionTest {
             throws Exception {
         Path root = Files.createDirectory(
                 temporaryDirectory.resolve("preserve-independent-extension"));
-        StreamedChunkStore store = store(root, new JdkSaveFileOperations());
+        StreamedChunkStore store = new StreamedChunkStore(
+                root,
+                WorldItemPagingAcceptanceFixture.SAVE_ID,
+                new StreamedChunkCodec(
+                        StreamedExtensionSupportRegistry.builder()
+                                .supportRequired(SaveSectionId.WORLD_ITEM_PAGE, 1)
+                                .supportOptional(SaveSectionId.DISCOVERY_LORE, 1)
+                                .build()),
+                new StreamedChunkIndexCodec(),
+                new JdkSaveFileOperations());
         StreamedWorldItemPageBackend backend = new StreamedWorldItemPageBackend(store);
         ChunkKey key = new ChunkKey(81, -11);
         byte[] blocks = filled((byte) 9);
@@ -331,7 +342,7 @@ class StreamedChunkUnloadTransactionTest {
                 key, GENERATOR_VERSION, BASE_HASH, 1L, 0L,
                 true, true, 1, blocks,
                 List.of(new StreamedChunkPayload.ExtensionDescriptor(
-                        SaveSectionId.DETAIL_BLOCKS, 1, false, detail)));
+                        SaveSectionId.DISCOVERY_LORE, 1, false, detail)));
         assertEquals(StreamedChunkStore.CommitResult.Status.SUCCESS,
                 store.commitTransaction(new StreamedPersistenceTransaction(
                         List.of(new StreamedChunkMutation.Upsert(
@@ -355,12 +366,12 @@ class StreamedChunkUnloadTransactionTest {
                                 sessionExtension(100L))), true));
 
         assertEquals(StreamedChunkUnloadResult.Status.SUCCESS, result.status());
-        StreamedChunkPayload published = store(root, new JdkSaveFileOperations())
+        StreamedChunkPayload published = store
                 .readCurrentAuthority(WorldItemPagingAcceptanceFixture.SAVE_ID)
                 .payloads().get(0);
         assertArrayEquals(detail, published.extensions().stream()
                 .filter(extension -> extension.sectionId().equals(
-                        SaveSectionId.DETAIL_BLOCKS))
+                        SaveSectionId.DISCOVERY_LORE))
                 .findFirst().orElseThrow().copyBytes());
         assertTrue(published.extensions().stream().anyMatch(extension ->
                 extension.sectionId().equals(SaveSectionId.WORLD_ITEM_PAGE)));

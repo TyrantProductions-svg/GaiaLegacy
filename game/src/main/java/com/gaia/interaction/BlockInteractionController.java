@@ -17,6 +17,7 @@ import com.overlord.inventory.api.BodySlot;
 import com.overlord.inventory.api.ItemStack;
 import com.overlord.inventory.api.ItemStackView;
 import com.overlord.physics.SpatialQueryResult;
+import com.overlord.physics.DetailRaycastTarget;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.ChunkRepository;
 import java.util.HashSet;
@@ -136,6 +137,20 @@ public final class BlockInteractionController {
         Optional<BlockHitResult> target = targetQuery.result();
         if (!interactionEnabled) {
             cancelAndSuppressMouseInteraction();
+            view = snapshot(target, InteractionMode.NONE);
+            return;
+        }
+        if (target.map(BlockHitResult::target)
+                .filter(DetailRaycastTarget.class::isInstance)
+                .isPresent()) {
+            breakTracker.clear();
+            if (interactionInput.isMouseButtonDown(
+                            GameConfig.Input.MOUSE_PRIMARY)
+                    || interactionInput.isMouseButtonPressed(
+                            GameConfig.Input.MOUSE_SECONDARY)) {
+                failure = Optional.of(BlockInteractionFailures.of(
+                        "detail_target_unsupported"));
+            }
             view = snapshot(target, InteractionMode.NONE);
             return;
         }

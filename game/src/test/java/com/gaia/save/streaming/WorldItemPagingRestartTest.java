@@ -1,5 +1,6 @@
 package com.gaia.save.streaming;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -72,6 +73,98 @@ class WorldItemPagingRestartTest {
     private static final ChunkKey THIRD = new ChunkKey(-1, 12);
 
     @TempDir Path tempDirectory;
+
+    @Test
+    void exactChunkCaptureReplacesDurableDetailWhilePreservingWorldItemPage()
+            throws Exception {
+        Path root = Files.createDirectory(tempDirectory.resolve(
+                "exact-capture-detail-with-page"));
+        PageData durable = withDetail(
+                page(NEGATIVE, 1L, entry(40L, 1, 100L, 18_100L)),
+                (byte) 1);
+        publish(root, checkpoint(1L, 1_000L, 41L, List.of(durable)),
+                List.of(durable));
+        StreamedChunkStore.ExactChunkCapture changed = detailCapture(
+                durable, 2L, 1L, (byte) 2);
+        WorldItemPersistencePlan plan = new WorldItemPersistencePlan(
+                1L,
+                checkpoint(2L, 1_000L, 41L, List.of(durable)),
+                List.of(),
+                "91".repeat(32),
+                () -> true);
+
+        backend(root).persistAtomically(
+                plan, ignored -> List.of(), List.of(changed));
+
+        StreamedChunkPayload restored = readPayload(root, NEGATIVE);
+        assertArrayEquals(new byte[] {2}, extensionBytes(
+                restored, SaveSectionId.DETAIL_BLOCKS));
+        assertArrayEquals(extensionBytes(
+                        durable.payload(), SaveSectionId.WORLD_ITEM_PAGE),
+                extensionBytes(restored, SaveSectionId.WORLD_ITEM_PAGE));
+    }
+
+    @Test
+    void pageReplacementUsesExactCapturedDetailInsteadOfDurableDetail()
+            throws Exception {
+        Path root = Files.createDirectory(tempDirectory.resolve(
+                "page-replacement-with-detail"));
+        PageData durable = withDetail(
+                page(NEGATIVE, 1L, entry(40L, 1, 100L, 18_100L)),
+                (byte) 1);
+        publish(root, checkpoint(1L, 1_000L, 41L, List.of(durable)),
+                List.of(durable));
+        PageData replacement = page(
+                NEGATIVE, 2L, entry(40L, 2, 100L, 18_100L));
+        WorldItemPersistencePlan plan = new WorldItemPersistencePlan(
+                1L,
+                checkpoint(2L, 1_001L, 41L, List.of(replacement)),
+                List.of(new WorldItemPageMutation.Upsert(
+                        replacement.page(), Optional.of(durable.descriptor()))),
+                "92".repeat(32),
+                () -> true);
+
+        backend(root).persistAtomically(
+                plan,
+                ignored -> List.of(),
+                List.of(detailCapture(durable, 2L, 1L, (byte) 2)));
+
+        StreamedChunkPayload restored = readPayload(root, NEGATIVE);
+        assertArrayEquals(new byte[] {2}, extensionBytes(
+                restored, SaveSectionId.DETAIL_BLOCKS));
+        assertArrayEquals(extensionBytes(
+                        replacement.payload(), SaveSectionId.WORLD_ITEM_PAGE),
+                extensionBytes(restored, SaveSectionId.WORLD_ITEM_PAGE));
+    }
+
+    @Test
+    void pageRemovalKeepsExactCapturedDetailAndRemovesOnlyWorldItemPage()
+            throws Exception {
+        Path root = Files.createDirectory(tempDirectory.resolve(
+                "page-removal-with-detail"));
+        PageData durable = withDetail(
+                page(NEGATIVE, 1L, entry(40L, 1, 100L, 18_100L)),
+                (byte) 1);
+        publish(root, checkpoint(1L, 1_000L, 41L, List.of(durable)),
+                List.of(durable));
+        WorldItemPersistencePlan plan = new WorldItemPersistencePlan(
+                1L,
+                checkpoint(2L, 1_001L, 41L, List.of()),
+                List.of(new WorldItemPageMutation.Remove(durable.descriptor())),
+                "93".repeat(32),
+                () -> true);
+
+        backend(root).persistAtomically(
+                plan,
+                ignored -> List.of(),
+                List.of(detailCapture(durable, 2L, 1L, (byte) 2)));
+
+        StreamedChunkPayload restored = readPayload(root, NEGATIVE);
+        assertArrayEquals(new byte[] {2}, extensionBytes(
+                restored, SaveSectionId.DETAIL_BLOCKS));
+        assertTrue(restored.extensions().stream().noneMatch(extension ->
+                extension.sectionId().equals(SaveSectionId.WORLD_ITEM_PAGE)));
+    }
 
     @Test
     void legalOneThousandTwentyFourOwnerCheckpointPublishesThroughBoundedStaging()
@@ -976,6 +1069,82 @@ class WorldItemPagingRestartTest {
                         true,
                         pageBytes)));
         return new PageData(page, descriptor, payload);
+    }
+
+    private static PageData withDetail(PageData page, byte detailBytes) {
+        List<StreamedChunkPayload.ExtensionDescriptor> extensions =
+                new ArrayList<>(page.payload().extensions());
+        extensions.add(new StreamedChunkPayload.ExtensionDescriptor(
+                SaveSectionId.DETAIL_BLOCKS,
+                DetailBlocksCodec.CODEC_VERSION,
+                true,
+                new byte[] {detailBytes}));
+        StreamedChunkPayload source = page.payload();
+        return new PageData(
+                page.page(),
+                page.descriptor(),
+                new StreamedChunkPayload(
+                        source.saveGameId(),
+                        source.key(),
+                        source.generatorVersion(),
+                        source.baseHash(),
+                        source.revision(),
+                        source.persistedRevision(),
+                        true,
+                        source.voxelModified(),
+                        source.worldHeight(),
+                        source.copyCanonicalVoxels(),
+                        extensions));
+    }
+
+    private static StreamedChunkStore.ExactChunkCapture detailCapture(
+            PageData durable,
+            long revision,
+            long persistedRevision,
+            byte detailBytes) {
+        StreamedChunkPayload source = durable.payload();
+        return new StreamedChunkStore.ExactChunkCapture(
+                new StreamedChunkPayload(
+                        source.saveGameId(),
+                        source.key(),
+                        source.generatorVersion(),
+                        source.baseHash(),
+                        revision,
+                        persistedRevision,
+                        true,
+                        true,
+                        source.worldHeight(),
+                        source.copyCanonicalVoxels(),
+                        List.of(new StreamedChunkPayload.ExtensionDescriptor(
+                                SaveSectionId.DETAIL_BLOCKS,
+                                DetailBlocksCodec.CODEC_VERSION,
+                                true,
+                                new byte[] {detailBytes}))),
+                () -> true);
+    }
+
+    private static StreamedChunkPayload readPayload(Path root, ChunkKey key) {
+        return new StreamedChunkStore(
+                root,
+                SAVE_ID,
+                new StreamedChunkCodec(),
+                new StreamedChunkIndexCodec(),
+                new JdkSaveFileOperations())
+                .read(
+                        SAVE_ID,
+                        key,
+                        new StreamedChunkStore.ExpectedBase("v15", BASE_HASH))
+                .payload()
+                .orElseThrow();
+    }
+
+    private static byte[] extensionBytes(
+            StreamedChunkPayload payload, SaveSectionId sectionId) {
+        return payload.extensions().stream()
+                .filter(extension -> extension.sectionId().equals(sectionId))
+                .findFirst()
+                .orElseThrow()
+                .copyBytes();
     }
 
     private static WorldItemRestoreEntry entry(
