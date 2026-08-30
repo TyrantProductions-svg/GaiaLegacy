@@ -2,7 +2,7 @@
 
 ## Status
 
-Gates 16A through 16D are controller-accepted. Gate 16E Windows manual acceptance is recorded PASS and final local repository-wide verification is GREEN. Native Apple Silicon runtime remains `NOT RUN`. Phase 16 is ready for the separately authorized integration checkpoint but is not committed, pushed, opened as a PR, merged, tagged, or released.
+Gates 16A through 16D are controller-accepted. Gate 16E Windows manual acceptance is recorded PASS and final local repository-wide verification is GREEN. Native Apple Silicon runtime remains `NOT RUN`. Phase 16 is committed and pushed on `feat/small-voxel-core`; PR #28 is open for CI and review. It is not merged, tagged, or released.
 
 ## Completed work
 
@@ -43,8 +43,8 @@ Gates 16A through 16D are controller-accepted. Gate 16E Windows manual acceptanc
 
 ## Key modified files
 
-The final tracked diff is `48 files changed, 4,100 insertions(+), 408 deletions(-)`.
-The exact tracked inventory is:
+The committed Phase 16 diff is `131 files changed, 19,143 insertions(+), 408 deletions(-)`.
+The 48 modified-file portion of that inventory is:
 
 - Engine production: `GameConfig.java`, `BlockHitResult.java`,
   `BlockCollisionShapeResolver.java`, `BlockRaycast.java`, `BlockRaycastHit.java`,
@@ -70,7 +70,7 @@ The exact tracked inventory is:
   `WorldItemPagingRestartTest.java`, and `GameSessionEligibilityBoundaryTest.java`.
 - Tools build: `tools/build.gradle`.
 
-The 83 untracked Phase 16 source, test, documentation, and tooling files are:
+The 83 newly added Phase 16 source, test, documentation, and tooling files are:
 
 - Documentation: this handoff, `docs/architecture/small-block-voxel-core.md`,
   `docs/architecture/streamed-detail-blocks-format.md`, six Gate 16A-16E
@@ -191,10 +191,10 @@ Natural generated DETAIL must be deterministic staged world generation using the
 
 Later phases may use existing DETAIL targeting and repository mutation contracts for coarse parent break, precision subvoxel break, tool-gated recovery, and detail-unit material conservation. Canonical DETAIL needs no provenance flag: identical generated and player-placed material follows the same future harvest policy. Phase 16 adds no chisel, drops, inventory economy, or harvest fields.
 
-## Suggested eventual integration text
+## Integration record
 
-Suggested commit: `feat(voxel): add sparse 4x4x4 detail-block core`
+Phase 16 commit: `3cc2d70a8d62f4744a69960cb6890c3d45396c9b` — `feat(voxel): add sparse 4x4x4 detail-block core`
 
-Suggested PR title: `feat(voxel): establish small-block voxel data mesh raycast and collision`
+PR #28: `feat(voxel): establish small-block voxel data mesh raycast and collision`
 
-Suggested PR description: Introduce sparse Chunk-owned DETAIL_4 canonical state, repository-authoritative mutation and streamed persistence, typed raycast/collision integration, hybrid Chunk meshing, measured mesh-memory safety policies, deterministic diagnostics/fixtures, and cross-platform closure evidence without changing normal FULL world authority.
+PR scope: Introduce sparse Chunk-owned DETAIL_4 canonical state, repository-authoritative mutation and streamed persistence, typed raycast/collision integration, hybrid Chunk meshing, measured mesh-memory safety policies, deterministic diagnostics/fixtures, and cross-platform closure evidence without changing normal FULL world authority.
