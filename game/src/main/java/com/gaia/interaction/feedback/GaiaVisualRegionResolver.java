@@ -1,6 +1,8 @@
 package com.gaia.interaction.feedback;
 
 import com.gaia.blocks.BlockRegistry;
+import com.gaia.blocks.ItemVisualReference;
+import com.gaia.blocks.ItemVisualType;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.renderer.texture.TextureAtlasMetadata;
 import com.overlord.renderer.texture.TextureRegion;
@@ -30,6 +32,11 @@ public final class GaiaVisualRegionResolver {
 
     public TextureRegion resolve(ResourceLocation itemId) {
         Objects.requireNonNull(itemId, "itemId");
+        ItemVisualReference explicitVisual =
+                blocks.itemVisual(itemId).orElse(null);
+        if (explicitVisual != null) {
+            return resolveExplicit(itemId, explicitVisual);
+        }
         var block = blocks.blockForItem(itemId).orElse(null);
         if (block == null) {
             return fallback(itemId, new IllegalArgumentException("Unknown item: " + itemId));
@@ -51,6 +58,34 @@ public final class GaiaVisualRegionResolver {
                     itemId,
                     new IllegalStateException(
                             "Missing atlas region " + upTexture + " for item: " + itemId));
+        }
+        return region;
+    }
+
+    private TextureRegion resolveExplicit(
+            ResourceLocation itemId,
+            ItemVisualReference visual) {
+        if (visual.type() != ItemVisualType.ATLAS_REGION) {
+            return fallback(
+                    itemId,
+                    new IllegalStateException(
+                            "Unsupported item visual type " + visual.type()));
+        }
+        if (!blockAtlas.id().equals(visual.atlas())) {
+            return fallback(
+                    itemId,
+                    new IllegalStateException(
+                            "Missing item atlas " + visual.atlas()));
+        }
+        TextureRegion region = blockAtlas.regions().get(visual.region());
+        if (region == null) {
+            return fallback(
+                    itemId,
+                    new IllegalStateException(
+                            "Missing atlas region "
+                                    + visual.region()
+                                    + " for item: "
+                                    + itemId));
         }
         return region;
     }

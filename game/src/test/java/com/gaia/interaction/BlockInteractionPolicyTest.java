@@ -2,6 +2,7 @@ package com.gaia.interaction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.gaia.blocks.BlockDefinition;
@@ -40,6 +41,20 @@ class BlockInteractionPolicyTest {
         assertTrue(zero.breakable());
         assertEquals(0, zero.requiredSeconds());
         assertFalse(air.breakable());
+    }
+
+    @Test
+    void acceptsAlreadyResolvedDetailHardnessWithoutChangingModeSemantics() {
+        BreakRule survival = BlockInteractionPolicy.forMode(GameMode.SURVIVAL)
+                .breakRule(1.5, 2.0);
+        BreakRule creative = BlockInteractionPolicy.forMode(GameMode.CREATIVE)
+                .breakRule(1.5, 2.0);
+
+        assertAll(
+                () -> assertTrue(survival.breakable()),
+                () -> assertEquals(0.75, survival.requiredSeconds()),
+                () -> assertTrue(creative.breakable()),
+                () -> assertEquals(0.0, creative.requiredSeconds()));
     }
 
     private static BlockDefinition block(int id, String name, float hardness) {

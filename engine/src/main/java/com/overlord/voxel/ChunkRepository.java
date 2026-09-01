@@ -2107,6 +2107,86 @@ public final class ChunkRepository {
                     new DetailCellState(mask, ids));
         }
 
+        if (mutation
+                instanceof ChunkDetailMutation.RemoveDetailParent remove) {
+            if (!(oldState instanceof DetailCellState detail)) {
+                return PreparedDetailChange.rejected(
+                        ChunkDetailMutationOutcome.Status.REPRESENTATION_CONFLICT);
+            }
+            if (!detail.equals(remove.expectedState())) {
+                return PreparedDetailChange.rejected(
+                        ChunkDetailMutationOutcome.Status.EXPECTED_STATE_CONFLICT);
+            }
+            return PreparedDetailChange.applied(new FullCellState((byte) 0));
+        }
+
+        if (mutation
+                instanceof ChunkDetailMutation.SculptParentSubVoxel sculpt) {
+            if (!oldState.getClass().equals(sculpt.expectedState().getClass())) {
+                return PreparedDetailChange.rejected(
+                        ChunkDetailMutationOutcome.Status.REPRESENTATION_CONFLICT);
+            }
+            if (!oldState.equals(sculpt.expectedState())) {
+                return PreparedDetailChange.rejected(
+                        ChunkDetailMutationOutcome.Status.EXPECTED_STATE_CONFLICT);
+            }
+            int subIndex = sculpt.position().index();
+            if (oldState instanceof FullCellState full) {
+                if (full.blockId() == 0) {
+                    if (sculpt.replacementId() == 0) {
+                        return PreparedDetailChange.rejected(
+                                ChunkDetailMutationOutcome.Status.NO_CHANGE);
+                    }
+                    if (detailParentCount
+                            >= Chunk.MAX_DETAIL_PARENTS_PER_CHUNK) {
+                        return PreparedDetailChange.rejected(
+                                ChunkDetailMutationOutcome.Status.CAPACITY_EXCEEDED);
+                    }
+                    byte[] ids = new byte[DetailCellState.CELL_COUNT];
+                    ids[subIndex] = sculpt.replacementId();
+                    return PreparedDetailChange.applied(
+                            new DetailCellState(1L << subIndex, ids));
+                }
+                if (sculpt.replacementId() == full.blockId()) {
+                    return PreparedDetailChange.rejected(
+                            ChunkDetailMutationOutcome.Status.NO_CHANGE);
+                }
+                if (sculpt.replacementId() != 0) {
+                    return PreparedDetailChange.rejected(
+                            ChunkDetailMutationOutcome.Status.REPRESENTATION_CONFLICT);
+                }
+                if (detailParentCount
+                        >= Chunk.MAX_DETAIL_PARENTS_PER_CHUNK) {
+                    return PreparedDetailChange.rejected(
+                            ChunkDetailMutationOutcome.Status.CAPACITY_EXCEEDED);
+                }
+                byte[] ids = DetailCellState.uniform(full.blockId()).copyBlockIds();
+                ids[subIndex] = 0;
+                return PreparedDetailChange.applied(
+                        new DetailCellState(
+                                -1L & ~(1L << subIndex),
+                                ids));
+            }
+
+            DetailCellState detail = (DetailCellState) oldState;
+            byte[] ids = detail.copyBlockIds();
+            if (ids[subIndex] == sculpt.replacementId()) {
+                return PreparedDetailChange.rejected(
+                        ChunkDetailMutationOutcome.Status.NO_CHANGE);
+            }
+            long mask = detail.occupancyMask();
+            ids[subIndex] = sculpt.replacementId();
+            if (sculpt.replacementId() == 0) {
+                mask &= ~(1L << subIndex);
+            } else {
+                mask |= 1L << subIndex;
+            }
+            if (mask == 0L) {
+                return PreparedDetailChange.applied(new FullCellState((byte) 0));
+            }
+            return PreparedDetailChange.applied(new DetailCellState(mask, ids));
+        }
+
         ChunkDetailMutation.CompactDetailToFull compact =
                 (ChunkDetailMutation.CompactDetailToFull) mutation;
         if (!(oldState instanceof DetailCellState detail)) {

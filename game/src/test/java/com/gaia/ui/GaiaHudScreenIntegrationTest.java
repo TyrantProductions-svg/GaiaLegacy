@@ -9,6 +9,7 @@ import com.gaia.ui.widget.CrosshairWidget;
 import com.gaia.ui.widget.DebugHud;
 import com.gaia.ui.widget.GameModeWidget;
 import com.gaia.ui.widget.InteractionFailureWidget;
+import com.gaia.ui.widget.DetailToolWidget;
 import com.overlord.assets.AssetManager;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.interaction.api.BlockFace;
@@ -42,6 +43,7 @@ class GaiaHudScreenIntegrationTest {
         new BreakProgressWidget().append(snapshot, layout, expected);
         new GameModeWidget(text).append(snapshot, layout, expected);
         new InteractionFailureWidget(text).append(snapshot, layout, expected);
+        new DetailToolWidget(text).append(snapshot, layout, expected);
         new DebugHud(text).append(snapshot, layout, expected);
 
         assertEquals(expected.seal(), screen.compose(snapshot, layout));

@@ -1,6 +1,7 @@
 package com.gaia.ui;
 
 import com.gaia.interaction.GameMode;
+import com.gaia.interaction.DetailPreviewValidity;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.interaction.api.BlockFace;
 import com.overlord.interaction.api.BlockHitResult;
@@ -13,6 +14,8 @@ import java.util.EnumMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
+import com.overlord.voxel.LocalSubVoxelPosition;
 
 /** The sole immutable read-only HUD projection consumed by Phase 10 widgets. */
 public record HudPresentationSnapshot(
@@ -27,7 +30,8 @@ public record HudPresentationSnapshot(
         Optional<SlotTransition> slotTransition,
         Optional<TimedItemName> itemName,
         Optional<ModeNotice> modeNotice,
-        HudDebugSnapshot debug) {
+        HudDebugSnapshot debug,
+        DetailToolPresentation detailTool) {
     public HudPresentationSnapshot {
         Objects.requireNonNull(slots, "slots");
         EnumMap<BodySlot, HudSlotSnapshot> copy = new EnumMap<>(BodySlot.class);
@@ -52,6 +56,7 @@ public record HudPresentationSnapshot(
         itemName = Objects.requireNonNull(itemName, "itemName");
         modeNotice = Objects.requireNonNull(modeNotice, "modeNotice");
         debug = Objects.requireNonNull(debug, "debug");
+        detailTool = Objects.requireNonNull(detailTool, "detailTool");
         if (twoHanded != twoHandedAnchor.isPresent()) {
             throw new IllegalArgumentException("two-handed truth and anchor presence must agree");
         }
@@ -59,6 +64,24 @@ public record HudPresentationSnapshot(
         if (mode != GameMode.CREATIVE && creative.isPresent()) {
             throw new IllegalArgumentException("Creative selection cannot appear in Survival mode");
         }
+    }
+
+    public HudPresentationSnapshot(
+            Map<BodySlot, HudSlotSnapshot> slots,
+            BodySlot activeSlot,
+            boolean twoHanded,
+            Optional<BodySlot> twoHandedAnchor,
+            Optional<CreativeSelection> creative,
+            GameMode mode,
+            InteractionPresentation interaction,
+            HudVisibility visibility,
+            Optional<SlotTransition> slotTransition,
+            Optional<TimedItemName> itemName,
+            Optional<ModeNotice> modeNotice,
+            HudDebugSnapshot debug) {
+        this(slots, activeSlot, twoHanded, twoHandedAnchor, creative, mode,
+                interaction, visibility, slotTransition, itemName, modeNotice, debug,
+                DetailToolPresentation.cleared());
     }
 
     public HudSlotSnapshot slot(BodySlot slot) {
@@ -182,6 +205,53 @@ public record HudPresentationSnapshot(
             mode = Objects.requireNonNull(mode, "mode");
             requirePositiveFinite(remainingSeconds, "mode-notice remaining time");
             requireUnitInterval(opacity, "mode-notice opacity");
+        }
+    }
+
+    public enum DetailToolMode {
+        INACTIVE,
+        COARSE_REMOVE,
+        PRECISION_REMOVE,
+        PRECISION_PLACE
+    }
+
+    /** Bounded current-state projection; no history or gameplay authority. */
+    public record DetailToolPresentation(
+            DetailToolMode mode,
+            Optional<ResourceLocation> selectedMaterial,
+            OptionalInt availableUnits,
+            Optional<LocalSubVoxelPosition> localTarget,
+            Optional<DetailPreviewValidity> previewValidity,
+            Optional<String> previewReason,
+            Optional<InteractionFailureReason> latestFailure) {
+        public DetailToolPresentation {
+            mode = Objects.requireNonNull(mode, "mode");
+            selectedMaterial = Objects.requireNonNull(selectedMaterial, "selectedMaterial");
+            availableUnits = Objects.requireNonNull(availableUnits, "availableUnits");
+            localTarget = Objects.requireNonNull(localTarget, "localTarget");
+            previewValidity = Objects.requireNonNull(previewValidity, "previewValidity");
+            previewReason = Objects.requireNonNull(previewReason, "previewReason");
+            latestFailure = Objects.requireNonNull(latestFailure, "latestFailure");
+            if (previewReason.map(String::isBlank).orElse(false)
+                    || previewReason.map(String::length).orElse(0) > 64) {
+                throw new IllegalArgumentException("preview reason must be bounded and nonblank");
+            }
+            if (mode == DetailToolMode.INACTIVE
+                    && (selectedMaterial.isPresent() || availableUnits.isPresent()
+                            || localTarget.isPresent() || previewValidity.isPresent()
+                            || previewReason.isPresent() || latestFailure.isPresent())) {
+                throw new IllegalArgumentException("inactive detail HUD must be empty");
+            }
+        }
+
+        public boolean active() {
+            return mode != DetailToolMode.INACTIVE;
+        }
+
+        public static DetailToolPresentation cleared() {
+            return new DetailToolPresentation(
+                    DetailToolMode.INACTIVE, Optional.empty(), OptionalInt.empty(),
+                    Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
         }
     }
 

@@ -9,6 +9,10 @@ import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_RIGHT;
 import com.gaia.blocks.BlockDefinition;
 import com.gaia.blocks.BlockRegistry;
 import com.gaia.blocks.ItemFormDefinition;
+import com.gaia.blocks.ItemCapability;
+import com.gaia.blocks.ItemVisualReference;
+import com.gaia.blocks.ItemVisualType;
+import com.gaia.blocks.StandaloneItemDefinition;
 import com.gaia.inventory.BodyInventoryService;
 import com.gaia.interaction.feedback.CommittedGameplayFeedback;
 import com.overlord.assets.ResourceLocation;
@@ -55,7 +59,91 @@ class BlockInteractionControllerTest {
     private static final EntityRef OWNER = new EntityRef(42);
     private static final ResourceLocation AIR = ResourceLocation.parse("gaia:air");
     private static final ResourceLocation STONE = ResourceLocation.parse("gaia:stone");
+    private static final ResourceLocation DIRT = ResourceLocation.parse("gaia:dirt");
     private static final ResourceLocation MISSING = ResourceLocation.parse("gaia:missing");
+    private static final ResourceLocation CHISEL = ResourceLocation.parse("gaia:chisel");
+
+    @Test
+    void precisionItemPublishesReadOnlyRouteAndPreviewWithoutMutation() {
+        Fixture fixture = fixture();
+        fixture.modes.setMode(GameMode.CREATIVE, 0);
+        assertTrue(fixture.creativeSelection.select(CHISEL));
+
+        fixture.controller.fixedUpdate(
+                mousePressed(GLFW_MOUSE_BUTTON_LEFT), 1.0 / 60.0, 1, 1, true);
+
+        assertEquals(0, fixture.mutations.get());
+        assertEquals(BlockInteractionRoute.DETAIL_PRECISION_REMOVE,
+                fixture.controller.viewModel().route().route());
+        assertEquals(BlockInteractionRoute.DETAIL_PRECISION_REMOVE,
+                fixture.controller.viewModel().detailPreview().orElseThrow().action());
+        assertEquals(STONE,
+                fixture.controller.viewModel().detailPreview().orElseThrow().material());
+
+        fixture.controller.fixedUpdate(
+                new InputSnapshot(Set.of(GameConfig.Input.KEY_DETAIL_MATERIAL_CYCLE),
+                        Set.of(GameConfig.Input.KEY_DETAIL_MATERIAL_CYCLE)),
+                1.0 / 60.0, 2, 2, true);
+
+        assertEquals(DIRT,
+                fixture.controller.viewModel().detailPreview().orElseThrow().material());
+        assertEquals(0, fixture.mutations.get());
+        fixture.controller.fixedUpdate(mouseReleased(), 1.0 / 60.0, 3, 3, false);
+        assertTrue(fixture.controller.viewModel().detailPreview().isEmpty());
+    }
+
+    @Test
+    void consumedPickupSuppressesPrecisionPlacementRouteAndPreview() {
+        Fixture fixture = fixture();
+        fixture.modes.setMode(GameMode.CREATIVE, 0);
+        assertTrue(fixture.creativeSelection.select(CHISEL));
+
+        fixture.controller.fixedUpdate(
+                mouseReleased(), 1.0 / 60.0, 1, 1, true);
+        assertTrue(fixture.controller.viewModel().detailPreview().isPresent());
+
+        fixture.controller.fixedUpdate(
+                mousePressed(GLFW_MOUSE_BUTTON_RIGHT),
+                1.0 / 60.0,
+                2,
+                2,
+                true,
+                true);
+
+        assertEquals(
+                BlockInteractionRoute.REJECTED,
+                fixture.controller.viewModel().route().route());
+        assertEquals(
+                "pickup_consumed",
+                fixture.controller.viewModel().route().reason().orElseThrow());
+        assertTrue(fixture.controller.viewModel().detailPreview().isEmpty());
+        assertEquals(0, fixture.mutations.get());
+    }
+
+    @Test
+    void consumedPickupPrecedesUnavailableBlockObservation() {
+        ChunkKey unavailableKey = new ChunkKey(17, 2);
+        Fixture fixture = fixture(proxyTargeting(ignored ->
+                SpatialQueryResult.unavailable(
+                        SpatialQueryResult.Status.UNKNOWN, unavailableKey)));
+
+        fixture.controller.fixedUpdate(
+                mousePressed(GLFW_MOUSE_BUTTON_RIGHT),
+                1.0 / 60.0,
+                1,
+                1,
+                true,
+                true);
+
+        assertEquals(
+                BlockInteractionRoute.REJECTED,
+                fixture.controller.viewModel().route().route());
+        assertEquals(
+                "pickup_consumed",
+                fixture.controller.viewModel().route().reason().orElseThrow());
+        assertTrue(fixture.controller.viewModel().detailPreview().isEmpty());
+        assertEquals(0, fixture.mutations.get());
+    }
 
     @Test
     void detailTargetIsVisibleButCannotTriggerLegacyParentBreakOrPlacement() {
@@ -614,6 +702,8 @@ class BlockInteractionControllerTest {
             }
         };
         GameModeManager modes = new GameModeManager(GameMode.SURVIVAL, event -> {});
+        CreativeSelection creativeSelection =
+                new CreativeSelection(blocks, Optional.of(STONE));
         BlockInteractionController controller = new BlockInteractionController(
                 modes,
                 targeting,
@@ -621,7 +711,7 @@ class BlockInteractionControllerTest {
                 blocks,
                 inventory,
                 OWNER,
-                new CreativeSelection(blocks, Optional.of(STONE)),
+                creativeSelection,
                 new BlockBreakTransaction(
                         mutationService, inventory, OWNER, worldItems, AIR),
                 new BlockPlacementTransaction(
@@ -629,7 +719,8 @@ class BlockInteractionControllerTest {
                         placementWorld, body, AIR),
                 1,
                 feedback);
-        return new Fixture(controller, modes, inventory, worldItems, mutations);
+        return new Fixture(
+                controller, modes, inventory, worldItems, mutations, creativeSelection);
     }
 
     private static BlockHitResult hit(int x) {
@@ -648,6 +739,13 @@ class BlockInteractionControllerTest {
         BlockDefinition stone = definition(1, STONE, material.id());
         return BlockRegistry.create(
                 List.of(air, stone),
+                List.of(new StandaloneItemDefinition(
+                        new ItemFormDefinition(CHISEL, 1, false, false),
+                        Set.of(ItemCapability.DETAIL_PRECISION),
+                        new ItemVisualReference(
+                                ItemVisualType.ATLAS_REGION,
+                                ResourceLocation.parse("gaia:blocks"),
+                                ResourceLocation.parse("gaia:chisel")))),
                 Map.of(
                         0, BlockRenderInfo.nonRenderable(material, region),
                         1, renderInfo(material, region)));
@@ -679,5 +777,6 @@ class BlockInteractionControllerTest {
             GameModeManager modes,
             BodyInventoryService inventory,
             LogicalWorldItemService worldItems,
-            AtomicInteger mutations) {}
+            AtomicInteger mutations,
+            CreativeSelection creativeSelection) {}
 }

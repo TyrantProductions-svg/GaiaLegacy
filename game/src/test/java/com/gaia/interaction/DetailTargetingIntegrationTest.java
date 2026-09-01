@@ -158,6 +158,16 @@ class DetailTargetingIntegrationTest {
                 .result().orElseThrow();
         assertEquals(2, fullBehindGap.blockX());
         assertEquals(1, fullBehindGap.adjacentX());
+        DetailPlacementCandidate gapCandidate =
+                DetailTargeting.placementCandidate(
+                        fullBehindGap,
+                        STONE,
+                        new GaiaBlockWorldAccess(world, blocks));
+        assertEquals(2, gapCandidate.source().parentX());
+        assertEquals(1, gapCandidate.parentX());
+        assertEquals(
+                DetailPlacementCandidate.Status.VALID_DETAIL_EMPTY,
+                gapCandidate.status());
 
         EntityRef owner = new EntityRef(84);
         BodyInventoryService inventory = new BodyInventoryService(

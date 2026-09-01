@@ -18,6 +18,7 @@ import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class BlockRegistryTest {
@@ -67,6 +68,130 @@ class BlockRegistryTest {
                                         ResourceLocation.parse("gaia:high"))
                                 .orElseThrow()),
                 () -> assertTrue(registry.resolve(200).renderable()));
+    }
+
+    @Test
+    void indexesStandaloneItemsWithoutInventingBlockBacking() {
+        ResourceLocation chiselId = ResourceLocation.parse("gaia:chisel");
+        StandaloneItemDefinition chisel =
+                new StandaloneItemDefinition(
+                        new ItemFormDefinition(chiselId, 1, false, false),
+                        Set.of(ItemCapability.DETAIL_PRECISION),
+                        new ItemVisualReference(
+                                ItemVisualType.ATLAS_REGION,
+                                ResourceLocation.parse("gaia:blocks"),
+                                chiselId));
+
+        BlockRegistry registry =
+                BlockRegistry.create(
+                        List.of(definition(0, "gaia:air")),
+                        List.of(chisel),
+                        Map.of(0, renderInfo(false)));
+
+        assertAll(
+                () -> assertEquals(
+                        chisel.form(),
+                        registry.itemForm(chiselId).orElseThrow()),
+                () -> assertEquals(
+                        Set.of(ItemCapability.DETAIL_PRECISION),
+                        registry.itemCapabilities(chiselId)),
+                () -> assertEquals(
+                        chisel.visual(),
+                        registry.itemVisual(chiselId).orElseThrow()),
+                () -> assertTrue(registry.blockForItem(chiselId).isEmpty()));
+    }
+
+    @Test
+    void rejectsDuplicateItemIdAcrossBlockAndStandaloneForms() {
+        ResourceLocation stoneId = ResourceLocation.parse("gaia:stone");
+        StandaloneItemDefinition duplicate =
+                new StandaloneItemDefinition(
+                        new ItemFormDefinition(stoneId, 1, false, false),
+                        Set.of(),
+                        new ItemVisualReference(
+                                ItemVisualType.ATLAS_REGION,
+                                ResourceLocation.parse("gaia:blocks"),
+                                stoneId));
+
+        IllegalArgumentException error =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> BlockRegistry.create(
+                                List.of(
+                                        definition(0, "gaia:air"),
+                                        definition(1, "gaia:stone")),
+                                List.of(duplicate),
+                                Map.of(
+                                        0, renderInfo(false),
+                                        1, renderInfo(true))));
+
+        assertTrue(error.getMessage().contains("Duplicate item form id"));
+    }
+
+    @Test
+    void indexesDetailUnitMappingsInTheCanonicalRegistry() {
+        ResourceLocation stoneUnit =
+                ResourceLocation.parse("gaia:stone_detail_unit");
+        BlockDefinition air = definition(0, "gaia:air");
+        BlockDefinition stone = supportedDefinition(
+                1, "gaia:stone", stoneUnit);
+
+        BlockRegistry registry = BlockRegistry.create(
+                List.of(air, stone),
+                List.of(standaloneUnit(stoneUnit)),
+                Map.of(0, renderInfo(false), 1, renderInfo(true)));
+
+        assertAll(
+                () -> assertEquals(
+                        stoneUnit,
+                        registry.detailUnitForBlock(stone.name()).orElseThrow()),
+                () -> assertSame(
+                        stone,
+                        registry.blockForDetailUnit(stoneUnit).orElseThrow()),
+                () -> assertTrue(
+                        registry.detailUnitForBlock(air.name()).isEmpty()));
+    }
+
+    @Test
+    void rejectsUnknownMismatchedAndDuplicateDetailUnitMappings() {
+        ResourceLocation unit = ResourceLocation.parse("gaia:stone_detail_unit");
+        BlockDefinition air = definition(0, "gaia:air");
+        BlockDefinition stone = supportedDefinition(1, "gaia:stone", unit);
+        BlockDefinition dirt = supportedDefinition(2, "gaia:dirt", unit);
+
+        IllegalArgumentException unknown = assertThrows(
+                IllegalArgumentException.class,
+                () -> BlockRegistry.create(
+                        List.of(air, stone),
+                        List.of(),
+                        Map.of(0, renderInfo(false), 1, renderInfo(true))));
+        StandaloneItemDefinition wrongStack = new StandaloneItemDefinition(
+                new ItemFormDefinition(unit, 63, false, false),
+                Set.of(),
+                new ItemVisualReference(
+                        ItemVisualType.ATLAS_REGION,
+                        ResourceLocation.parse("gaia:blocks"),
+                        ResourceLocation.parse("gaia:stone")));
+        IllegalArgumentException mismatched = assertThrows(
+                IllegalArgumentException.class,
+                () -> BlockRegistry.create(
+                        List.of(air, stone),
+                        List.of(wrongStack),
+                        Map.of(0, renderInfo(false), 1, renderInfo(true))));
+        IllegalArgumentException duplicate = assertThrows(
+                IllegalArgumentException.class,
+                () -> BlockRegistry.create(
+                        List.of(air, stone, dirt),
+                        List.of(standaloneUnit(unit)),
+                        Map.of(
+                                0, renderInfo(false),
+                                1, renderInfo(true),
+                                2, renderInfo(true))));
+
+        assertAll(
+                () -> assertTrue(unknown.getMessage().contains("Unknown detail-unit item")),
+                () -> assertTrue(mismatched.getMessage().contains("max stack 64")),
+                () -> assertTrue(duplicate.getMessage().contains("Duplicate detail-unit mapping")));
     }
 
     @Test
@@ -314,6 +439,34 @@ class BlockRegistryTest {
                                 64,
                                 false,
                                 false));
+    }
+
+    private static BlockDefinition supportedDefinition(
+            int id, String name, ResourceLocation unitItem) {
+        return new BlockDefinition(
+                id,
+                ResourceLocation.parse(name),
+                MATERIAL.id(),
+                textures(),
+                1.0f,
+                1.0f,
+                1.0f,
+                false,
+                false,
+                1.0f,
+                new ItemFormDefinition(
+                        ResourceLocation.parse(name), 64, false, false),
+                new DetailSupportDefinition(unitItem));
+    }
+
+    private static StandaloneItemDefinition standaloneUnit(ResourceLocation id) {
+        return new StandaloneItemDefinition(
+                new ItemFormDefinition(id, 64, false, false),
+                Set.of(),
+                new ItemVisualReference(
+                        ItemVisualType.ATLAS_REGION,
+                        ResourceLocation.parse("gaia:blocks"),
+                        ResourceLocation.parse("gaia:stone")));
     }
 
     private static BlockDefinition definitionWithPhysicalValues(

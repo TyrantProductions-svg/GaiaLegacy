@@ -1,10 +1,13 @@
 package com.gaia.assets;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.gaia.blocks.ItemCapability;
+import com.gaia.blocks.ItemVisualType;
 import com.overlord.assets.AssetManager;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.renderer.RenderAssets;
@@ -22,6 +25,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class GaiaProductionAssetsTest {
+    private static final ResourceLocation CHISEL =
+            ResourceLocation.parse("gaia:chisel");
+    private static final ResourceLocation STONE_DETAIL_UNIT =
+            ResourceLocation.parse("gaia:stone_detail_unit");
+    private static final ResourceLocation DIRT_DETAIL_UNIT =
+            ResourceLocation.parse("gaia:dirt_detail_unit");
     private static final String DAMAGE_ATLAS_SHA256 =
             "10866639349013a1abf50472f32b2b06071bcdfabf26f4e5eaf9a304cb3b2fcb";
     private static final String ATLAS_PATH =
@@ -30,7 +39,7 @@ class GaiaProductionAssetsTest {
             "assets/gaia/textures/effects/block_damage.png";
 
     @Test
-    void packagesTenStageDamageAtlasWithoutChangingBlockAtlas() throws Exception {
+    void packagesTenStageDamageAtlasWithApprovedBlockAtlas() throws Exception {
         ClassLoader loader = GaiaProductionAssetsTest.class.getClassLoader();
         BufferedImage damage;
         try (InputStream input = loader.getResourceAsStream(DAMAGE_ATLAS_PATH)) {
@@ -60,8 +69,8 @@ class GaiaProductionAssetsTest {
             blockAtlas = ImageIO.read(input);
         }
         assertEquals(
-                "e5b2b34d81dcc396efff2c071f7f6bd3"
-                        + "b90e03b2278f8ce80c3fe98a314739f6",
+                "1329ff2c1761111aedcdb1d6681858f8"
+                        + "37129ffefb4d2e98aa2670ba8f6ea4c1",
                 hashArgbRegion(blockAtlas, 0, 0, 128, 64));
     }
 
@@ -133,6 +142,55 @@ class GaiaProductionAssetsTest {
                         .require(ResourceLocation.parse("gaia:oak_leaves"));
         assertEquals(4, oakLog.id());
         assertEquals(5, oakLeaves.id());
+        assertAll(
+                () -> assertEquals(
+                        1,
+                        catalog.blockRegistry()
+                                .itemForm(CHISEL)
+                                .orElseThrow()
+                                .maxStackSize()),
+                () -> assertEquals(
+                        64,
+                        catalog.blockRegistry()
+                                .itemForm(STONE_DETAIL_UNIT)
+                                .orElseThrow()
+                                .maxStackSize()),
+                () -> assertEquals(
+                        64,
+                        catalog.blockRegistry()
+                                .itemForm(DIRT_DETAIL_UNIT)
+                                .orElseThrow()
+                                .maxStackSize()),
+                () -> assertTrue(
+                        catalog.blockRegistry()
+                                .itemCapabilities(CHISEL)
+                                .contains(ItemCapability.DETAIL_PRECISION)),
+                () -> assertEquals(
+                        ItemVisualType.ATLAS_REGION,
+                        catalog.blockRegistry()
+                                .itemVisual(CHISEL)
+                                .orElseThrow()
+                                .type()),
+                () -> assertEquals(
+                        ResourceLocation.parse("gaia:chisel"),
+                        catalog.blockRegistry()
+                                .itemVisual(CHISEL)
+                                .orElseThrow()
+                                .region()),
+                () -> assertEquals(
+                        ResourceLocation.parse("gaia:stone"),
+                        catalog.blockRegistry()
+                                .itemVisual(STONE_DETAIL_UNIT)
+                                .orElseThrow()
+                                .region()),
+                () -> assertEquals(
+                        ResourceLocation.parse("gaia:dirt"),
+                        catalog.blockRegistry()
+                                .itemVisual(DIRT_DETAIL_UNIT)
+                                .orElseThrow()
+                                .region()),
+                () -> assertTrue(
+                        catalog.blockRegistry().blockForItem(CHISEL).isEmpty()));
         assertEquals(
                 ResourceLocation.parse("gaia:oak_log_top"),
                 oakLog.textures().get(BlockFace.UP));
@@ -212,7 +270,8 @@ class GaiaProductionAssetsTest {
                 atlas, "gaia:oak_log_top", 96, 48);
         assertRegion(
                 atlas, "gaia:oak_leaves", 112, 48);
-        assertEquals(15, atlas.regions().size());
+        assertEquals(16, atlas.regions().size());
+        assertRegion(atlas, "gaia:chisel", 0, 48);
         assertRegion(atlas, "gaia:dark_stone", 64, 0);
         assertRegion(atlas, "gaia:magma", 96, 0);
         assertRegion(atlas, "gaia:magma_variant_1", 112, 0);
@@ -254,9 +313,13 @@ class GaiaProductionAssetsTest {
                         + "be7f5d4469d4fb034d79fb9bbc0422bb",
                 hashArgbRegion(atlas, 48, 0));
         assertEquals(
-                "e5b2b34d81dcc396efff2c071f7f6bd3"
-                        + "b90e03b2278f8ce80c3fe98a314739f6",
+                "1329ff2c1761111aedcdb1d6681858f8"
+                        + "37129ffefb4d2e98aa2670ba8f6ea4c1",
                 hashArgbRegion(atlas, 0, 0, 128, 64));
+        assertEquals(
+                "f33ec2935cebe0d14e60f9315f036397"
+                        + "9f574f0f77fa1c9fcf0cecc69bc1297b",
+                hashArgbRegion(atlas, 0, 48));
         assertEquals(
                 "c162bb0cf28de1fa5a331a49da56ad1c"
                         + "7d66028a7247cdda98ad56f86730f6f8",

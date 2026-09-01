@@ -19,9 +19,10 @@ public final class CreativeSelection {
 
     private static Predicate<ResourceLocation> registrySelection(BlockRegistry blocks) {
         BlockRegistry registry = Objects.requireNonNull(blocks, "blocks");
-        return item -> registry.blockForItem(item)
-                        .filter(definition -> definition.id() != 0)
-                        .isPresent();
+        return item -> registry.itemForm(item).isPresent()
+                && registry.blockForItem(item)
+                        .map(definition -> definition.id() != 0)
+                        .orElse(true);
     }
 
     CreativeSelection(
@@ -32,7 +33,7 @@ public final class CreativeSelection {
                 .ifPresent(item -> {
                     if (!select(item)) {
                         throw new IllegalArgumentException(
-                                "initial creative selection is not a block item");
+                                "initial creative selection is not a canonical item");
                     }
                 });
     }

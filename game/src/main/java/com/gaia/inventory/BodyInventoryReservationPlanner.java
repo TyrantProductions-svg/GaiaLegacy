@@ -28,9 +28,25 @@ public final class BodyInventoryReservationPlanner {
             EntityRef owner,
             BodySlot preferredSlot,
             ItemStack requested) {
+        return reserve(owner, preferredSlot, requested, InventoryReservationOperation.INSERT);
+    }
+
+    public InventoryReservationBatch reserveExtraction(
+            EntityRef owner,
+            BodySlot preferredSlot,
+            ItemStack requested) {
+        return reserve(owner, preferredSlot, requested, InventoryReservationOperation.EXTRACT);
+    }
+
+    private InventoryReservationBatch reserve(
+            EntityRef owner,
+            BodySlot preferredSlot,
+            ItemStack requested,
+            InventoryReservationOperation operation) {
         Objects.requireNonNull(owner, "owner");
         Objects.requireNonNull(preferredSlot, "preferredSlot");
         Objects.requireNonNull(requested, "requested");
+        Objects.requireNonNull(operation, "operation");
         List<InventoryReservation> acquired = new ArrayList<>();
         Optional<ItemStack> remaining = Optional.of(requested);
         Set<BodySlot> order = new LinkedHashSet<>();
@@ -45,7 +61,7 @@ public final class BodyInventoryReservationPlanner {
                         new InventoryReservationRequest(
                                 owner,
                                 slot,
-                                InventoryReservationOperation.INSERT,
+                                operation,
                                 remaining.orElseThrow()));
                 result.reservation().ifPresent(acquired::add);
                 remaining = result.remainder();

@@ -9,12 +9,13 @@ import com.overlord.voxel.ChunkMutationOutcome;
 import com.overlord.voxel.ChunkRepository;
 import com.overlord.voxel.FullCellState;
 import com.overlord.voxel.ParentCellState;
+import com.overlord.voxel.ParentCellObservationResult;
 import com.overlord.voxel.World;
 import java.util.Objects;
 
 /** Resource-identity view over the authoritative ChunkRepository mutation path. */
 public final class GaiaBlockWorldAccess
-        implements BlockWorldAccess, BlockPlacementWorldView {
+        implements BlockWorldAccess, BlockPlacementWorldView, DetailTargetWorldView {
     private final World world;
     private final ChunkRepository chunks;
     private final BlockRegistry blocks;
@@ -48,6 +49,12 @@ public final class GaiaBlockWorldAccess
                 .orElseThrow(() -> new IllegalStateException(
                         "canonical parent cell is unavailable"))
                 .state();
+    }
+
+    @Override
+    public ParentCellObservationResult observeCell(
+            int x, int y, int z) {
+        return world.observeCell(x, y, z);
     }
 
     @Override

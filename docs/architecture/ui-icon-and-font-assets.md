@@ -62,7 +62,10 @@ Intentional source-resource regeneration:
 The task invokes `com.gaia.tools.ui.UiAssetGenerator` with four normalized
 relative output paths under `game/src/main/resources/assets/gaia/ui`. It rejects
 absolute, non-normalized, duplicate, symlink-escaping, or root-escaping output
-paths.
+paths. Block-backed icons continue to use the canonical block faces. The
+standalone `gaia:chisel` icon resolves its explicit `ATLAS_REGION` presentation
+through the same canonical item-form owner and block atlas; it does not require
+or invent block backing.
 
 Normal verification is compare-only:
 
@@ -135,10 +138,11 @@ Exact row-major mapping:
 
 `UiIconDefinition`, `UiIconAtlas`, and `UiIconResolver` are immutable
 presentation metadata keyed by canonical `ResourceLocation`. They do not define
-item rules, create stack identity, or form a second item registry. The five
-normal identities are derived from the existing `BlockRegistry` and
-`ItemFormDefinition` catalog. An unknown identity resolves only to
-`gaia:missing`, never to another real item, and is diagnosed once per ID.
+item rules, create stack identity, or form a second item registry. Block-backed
+identities and the explicit standalone `gaia:chisel` visual are resolved from
+the existing `BlockRegistry` item-form ownership slot. An unknown identity
+resolves only to `gaia:missing`, never to another real item, and is diagnosed
+once per ID.
 
 ## Exact SHA-256 fingerprints
 
@@ -148,8 +152,8 @@ Hashes verified from the current candidate resources:
 | --- | --- |
 | `ui_font.png` | `a6a27be503ff26fd119cfe3ab74375faf7fbc22e13e1ed5670e6f2d56f5fd1ca` |
 | `ui_font.json` | `ec98df77b826b03df7fecfa2e77fadf540c47dc6e01e3b2664dd8aff35636ac4` |
-| `ui_icons.png` | `f2748a3ba40e426c67855fa420f50607a6e7bc94c9415e22636d398cdfed8c41` |
-| `ui_icons.json` | `5cefdab102a062ebbf3fbd8a3bb1785bd22fcf8202c9eb2fd0f3ac49533015c5` |
+| `ui_icons.png` | `732a12f9815adfd3332b67466240a908481b29b845132a58ce2de4966d57fa75` |
+| `ui_icons.json` | `91b27613c0c45b523edeabc982a81b30ab8b34729605264aa6ac41af326dedb4` |
 
 PowerShell verification:
 

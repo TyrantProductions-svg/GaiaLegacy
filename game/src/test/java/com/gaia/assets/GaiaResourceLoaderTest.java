@@ -9,6 +9,8 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.gaia.blocks.ItemCapability;
+import com.gaia.blocks.ItemVisualType;
 import com.overlord.assets.AssetDiagnostic;
 import com.overlord.assets.AssetLoadException;
 import com.overlord.assets.AssetManager;
@@ -32,6 +34,7 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import javax.imageio.ImageIO;
@@ -61,8 +64,14 @@ class GaiaResourceLoaderTest {
             "assets/gaia/materials/opaque.json";
     private static final String BLOCK_ATLAS =
             "assets/test/atlases/blocks.json";
+    private static final String DECOR_ATLAS =
+            "assets/test/atlases/decor.json";
     private static final String ATLAS_IMAGE =
             "assets/test/textures/atlas.png";
+    private static final String CHISEL_ITEM =
+            "assets/test/items/chisel.json";
+    private static final String SECOND_ITEM =
+            "assets/test/items/second.json";
     private static final String DAMAGE_ATLAS_IMAGE =
             "assets/gaia/textures/effects/block_damage.png";
     private static final ResourceLocation TEST_MISSING =
@@ -170,6 +179,269 @@ class GaiaResourceLoaderTest {
                 ResourceLocation.parse("test:solid"),
                 catalog.blockRegistry().require(1).name());
         assertTrue(catalog.report().errors().isEmpty());
+    }
+
+    @Test
+    void loadsStandaloneItemsIntoTheCanonicalItemIndex() throws Exception {
+        Map<String, byte[]> entries = entriesWithStandaloneItem(
+                standaloneItemJson("test:chisel"));
+
+        GaiaAssetCatalog catalog = load(entries);
+        ResourceLocation chisel = ResourceLocation.parse("test:chisel");
+
+        assertAll(
+                () -> assertEquals(
+                        1,
+                        catalog.blockRegistry()
+                                .itemForm(chisel)
+                                .orElseThrow()
+                                .maxStackSize()),
+                () -> assertEquals(
+                        Set.of(ItemCapability.DETAIL_PRECISION),
+                        catalog.blockRegistry().itemCapabilities(chisel)),
+                () -> assertEquals(
+                        ItemVisualType.ATLAS_REGION,
+                        catalog.blockRegistry()
+                                .itemVisual(chisel)
+                                .orElseThrow()
+                                .type()),
+                () -> assertTrue(
+                        catalog.blockRegistry().blockForItem(chisel).isEmpty()));
+    }
+
+    @Test
+    void loadsStrictBlockDetailSupportIntoTheCanonicalRegistry() throws Exception {
+        ResourceLocation unit = ResourceLocation.parse("test:solid_detail_unit");
+        Map<String, byte[]> entries = entriesWithStandaloneItem(
+                standaloneDetailUnitJson(unit.toString()));
+        putJson(
+                entries,
+                SOLID,
+                solidJson(
+                                "test:solid",
+                                1,
+                                "test:opaque",
+                                texturesAll("test:missing"))
+                        .replace(
+                                "\"item\":",
+                                "\"detailSupport\":{\"unitItem\":\""
+                                        + unit
+                                        + "\"},\"item\":"));
+
+        GaiaAssetCatalog catalog = load(entries);
+
+        assertAll(
+                () -> assertEquals(
+                        unit,
+                        catalog.blockRegistry()
+                                .detailUnitForBlock(
+                                        ResourceLocation.parse("test:solid"))
+                                .orElseThrow()),
+                () -> assertEquals(
+                        ResourceLocation.parse("test:solid"),
+                        catalog.blockRegistry()
+                                .blockForDetailUnit(unit)
+                                .orElseThrow()
+                                .name()));
+    }
+
+    @Test
+    void rejectsUnknownDetailSupportField() throws Exception {
+        Map<String, byte[]> entries = entriesWithStandaloneItem(
+                standaloneDetailUnitJson("test:solid_detail_unit"));
+        putJson(
+                entries,
+                SOLID,
+                solidJson(
+                                "test:solid",
+                                1,
+                                "test:opaque",
+                                texturesAll("test:missing"))
+                        .replace(
+                                "\"item\":",
+                                "\"detailSupport\":{"
+                                        + "\"unitItem\":\"test:solid_detail_unit\","
+                                        + "\"surprise\":true},\"item\":"));
+
+        assertFatal(
+                entries,
+                "ASSET_JSON_UNKNOWN_FIELD",
+                SOLID,
+                ResourceLocation.parse("test:blocks/solid.json"),
+                "detailSupport.surprise");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"../escape.json", "items/../escape.json", "/absolute.json"})
+    void rejectsUnsafeStandaloneItemPaths(String unsafePath) throws Exception {
+        Map<String, byte[]> entries = validEntries();
+        putJson(
+                entries,
+                MANIFEST,
+                withItems(
+                        manifestJson(
+                                "test",
+                                List.of("blocks/air.json", "blocks/solid.json"),
+                                List.of(
+                                        "materials/missing.json",
+                                        "materials/opaque.json"),
+                                List.of("atlases/blocks.json")),
+                        List.of(unsafePath)));
+
+        assertFatal(
+                entries,
+                "ASSET_JSON_INVALID",
+                MANIFEST,
+                ResourceLocation.parse("test:resource-index.json"),
+                "items[0]");
+    }
+
+    @Test
+    void rejectsUnknownStandaloneItemField() throws Exception {
+        Map<String, byte[]> entries = entriesWithStandaloneItem(
+                standaloneItemJson("test:chisel")
+                        .replace("\"visual\":", "\"surprise\":true,\"visual\":"));
+
+        assertFatal(
+                entries,
+                "ASSET_JSON_UNKNOWN_FIELD",
+                CHISEL_ITEM,
+                ResourceLocation.parse("test:items/chisel.json"),
+                "surprise");
+    }
+
+    @Test
+    void rejectsDuplicateStandaloneItemField() throws Exception {
+        Map<String, byte[]> entries = entriesWithStandaloneItem(
+                standaloneItemJson("test:chisel")
+                        .replace(
+                                "{\"id\":\"test:chisel\"",
+                                "{\"id\":\"test:chisel\","
+                                        + "\"id\":\"test:chisel\""));
+
+        assertFatal(
+                entries,
+                "ASSET_JSON_INVALID",
+                CHISEL_ITEM,
+                ResourceLocation.parse("test:items/chisel.json"),
+                "id");
+    }
+
+    @Test
+    void rejectsDuplicateStandaloneItemIds() throws Exception {
+        Map<String, byte[]> entries = entriesWithStandaloneItem(
+                standaloneItemJson("test:chisel"));
+        putJson(
+                entries,
+                MANIFEST,
+                withItems(
+                        manifestJson(
+                                "test",
+                                List.of("blocks/air.json", "blocks/solid.json"),
+                                List.of(
+                                        "materials/missing.json",
+                                        "materials/opaque.json"),
+                                List.of("atlases/blocks.json")),
+                        List.of("items/chisel.json", "items/second.json")));
+        putJson(entries, SECOND_ITEM, standaloneItemJson("test:chisel"));
+
+        assertFatal(
+                entries,
+                "ASSET_ITEM_ID_DUPLICATE",
+                SECOND_ITEM,
+                ResourceLocation.parse("test:items/second.json"),
+                "id");
+    }
+
+    @Test
+    void rejectsStandaloneItemIdCollidingWithBlockItem() throws Exception {
+        Map<String, byte[]> entries = entriesWithStandaloneItem(
+                standaloneItemJson("test:solid"));
+
+        assertFatal(
+                entries,
+                "ASSET_ITEM_ID_DUPLICATE",
+                CHISEL_ITEM,
+                ResourceLocation.parse("test:items/chisel.json"),
+                "id");
+    }
+
+    @ParameterizedTest
+    @MethodSource("invalidStandaloneItemFields")
+    void rejectsInvalidStandaloneItemSemantics(
+            String current, String replacement, String expectedField)
+            throws Exception {
+        Map<String, byte[]> entries = entriesWithStandaloneItem(
+                standaloneItemJson("test:chisel").replace(current, replacement));
+
+        assertFatal(
+                entries,
+                "ASSET_JSON_INVALID",
+                CHISEL_ITEM,
+                ResourceLocation.parse("test:items/chisel.json"),
+                expectedField);
+    }
+
+    @Test
+    void rejectsStandaloneItemOwnedByAnotherNamespace() throws Exception {
+        Map<String, byte[]> entries = entriesWithStandaloneItem(
+                standaloneItemJson("gaia:chisel"));
+
+        assertFatal(
+                entries,
+                "ASSET_NAMESPACE_MISMATCH",
+                CHISEL_ITEM,
+                ResourceLocation.parse("test:items/chisel.json"),
+                "id");
+    }
+
+    @ParameterizedTest
+    @MethodSource("missingStandaloneVisualReferences")
+    void rejectsMissingStandaloneVisualReference(
+            String current, String replacement, String expectedField)
+            throws Exception {
+        Map<String, byte[]> entries = entriesWithStandaloneItem(
+                standaloneItemJson("test:chisel").replace(current, replacement));
+
+        assertFatal(
+                entries,
+                "ASSET_DEFINITION_NOT_FOUND",
+                CHISEL_ITEM,
+                ResourceLocation.parse("test:items/chisel.json"),
+                expectedField);
+    }
+
+    @Test
+    void rejectsStandaloneVisualFromAtlasThatRuntimeDoesNotUpload()
+            throws Exception {
+        Map<String, byte[]> entries = entriesWithStandaloneItem(
+                standaloneItemJson("test:chisel")
+                        .replace("\"atlas\":\"test:blocks\"", "\"atlas\":\"test:decor\"")
+                        .replace("\"region\":\"test:missing\"", "\"region\":\"test:decor_region\""));
+        putJson(
+                entries,
+                MANIFEST,
+                withItems(
+                        manifestJson(
+                                "test",
+                                List.of("blocks/air.json", "blocks/solid.json"),
+                                List.of("materials/missing.json", "materials/opaque.json"),
+                                List.of("atlases/blocks.json", "atlases/decor.json")),
+                        List.of("items/chisel.json")));
+        putJson(
+                entries,
+                DECOR_ATLAS,
+                atlasJson(
+                        "test:decor",
+                        "test:textures/decor.png",
+                        Map.of("test:decor_region", region())));
+
+        assertFatal(
+                entries,
+                "ASSET_ITEM_VISUAL_ATLAS_UNAVAILABLE",
+                CHISEL_ITEM,
+                ResourceLocation.parse("test:items/chisel.json"),
+                "visual.atlas");
     }
 
     @ParameterizedTest
@@ -1627,6 +1899,25 @@ class GaiaResourceLoaderTest {
         return entries;
     }
 
+    private static Map<String, byte[]> entriesWithStandaloneItem(
+            String itemJson) {
+        Map<String, byte[]> entries = validEntries();
+        putJson(
+                entries,
+                MANIFEST,
+                withItems(
+                        manifestJson(
+                                "test",
+                                List.of("blocks/air.json", "blocks/solid.json"),
+                                List.of(
+                                        "materials/missing.json",
+                                        "materials/opaque.json"),
+                                List.of("atlases/blocks.json")),
+                        List.of("items/chisel.json")));
+        putJson(entries, CHISEL_ITEM, itemJson);
+        return entries;
+    }
+
     private static byte[] damageAtlasPng() {
         BufferedImage image =
                 new BufferedImage(160, 16, BufferedImage.TYPE_INT_ARGB);
@@ -1695,6 +1986,34 @@ class GaiaResourceLoaderTest {
                         "\"maxStackSize\":64",
                         "\"maxStackSize\":0",
                         "item.maxStackSize"));
+    }
+
+    private static Stream<Arguments> invalidStandaloneItemFields() {
+        return Stream.of(
+                Arguments.of(
+                        "DETAIL_PRECISION",
+                        "UNKNOWN_CAPABILITY",
+                        "capabilities[0]"),
+                Arguments.of(
+                        "ATLAS_REGION",
+                        "UNKNOWN_VISUAL",
+                        "visual.type"),
+                Arguments.of(
+                        "\"maxStackSize\":1",
+                        "\"maxStackSize\":0",
+                        "maxStackSize"));
+    }
+
+    private static Stream<Arguments> missingStandaloneVisualReferences() {
+        return Stream.of(
+                Arguments.of(
+                        "\"atlas\":\"test:blocks\"",
+                        "\"atlas\":\"test:not_present\"",
+                        "visual.atlas"),
+                Arguments.of(
+                        "\"region\":\"test:missing\"",
+                        "\"region\":\"test:not_present\"",
+                        "visual.region"));
     }
 
     private static Stream<Arguments>
@@ -1813,6 +2132,34 @@ class GaiaResourceLoaderTest {
                 + ",\"ui\":"
                 + strings(ui)
                 + "}";
+    }
+
+    private static String withItems(String manifest, List<String> items) {
+        return manifest.substring(0, manifest.length() - 1)
+                + ",\"items\":"
+                + strings(items)
+                + "}";
+    }
+
+    private static String standaloneItemJson(String id) {
+        return "{\"id\":\""
+                + id
+                + "\",\"maxStackSize\":1,"
+                + "\"mouthHoldable\":false,"
+                + "\"twoHanded\":false,"
+                + "\"capabilities\":[\"DETAIL_PRECISION\"],"
+                + "\"visual\":{"
+                + "\"type\":\"ATLAS_REGION\","
+                + "\"atlas\":\"test:blocks\","
+                + "\"region\":\"test:missing\"}}";
+    }
+
+    private static String standaloneDetailUnitJson(String id) {
+        return standaloneItemJson(id)
+                .replace("\"maxStackSize\":1", "\"maxStackSize\":64")
+                .replace(
+                        "\"capabilities\":[\"DETAIL_PRECISION\"]",
+                        "\"capabilities\":[]");
     }
 
     private static String airJson() {

@@ -3,7 +3,9 @@ package com.gaia.interaction.feedback;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.gaia.worlditem.WorldItemPickupReceipt;
+import com.gaia.interaction.DetailPrecisionTarget;
 import com.overlord.assets.ResourceLocation;
+import com.overlord.interaction.api.BlockFace;
 import com.overlord.interaction.api.BlockHitResult;
 import com.overlord.inventory.api.ItemStack;
 import com.overlord.renderer.feedback.WorldItemFaceRegions;
@@ -11,6 +13,11 @@ import com.overlord.renderer.particle.ParticleCategory;
 import com.overlord.renderer.particle.ParticlePriority;
 import com.overlord.renderer.particle.ParticleSystem;
 import com.overlord.renderer.texture.TextureRegion;
+import com.overlord.physics.DetailRaycastTarget;
+import com.overlord.physics.SimulationOrigin;
+import com.overlord.voxel.ChunkKey;
+import com.overlord.voxel.LocalSubVoxelPosition;
+import com.overlord.voxel.VoxelScale;
 import com.overlord.worlditem.api.WorldItemId;
 import org.junit.jupiter.api.Test;
 
@@ -69,6 +76,34 @@ class GameplayParticleFeedbackTest {
                     + towardZ * particle.velocityZ();
             org.junit.jupiter.api.Assertions.assertTrue(dot > 0.0);
             assertEquals(ParticlePriority.HIGH, particle.priority());
+        });
+    }
+
+    @Test
+    void committedDetailParticlesStartInResidentLocalCoordinatesAfterRebase() {
+        SimulationOrigin origin = new SimulationOrigin(new ChunkKey(100_000_000, -100_000_000));
+        int parentX = Math.toIntExact(origin.worldOriginX()) + 2;
+        int parentZ = Math.toIntExact(origin.worldOriginZ()) + 3;
+        LocalSubVoxelPosition local = new LocalSubVoxelPosition(1, 2, 3);
+        DetailPrecisionTarget target = new DetailPrecisionTarget(
+                parentX,
+                4,
+                parentZ,
+                local,
+                BlockFace.EAST,
+                STONE,
+                5L,
+                new DetailRaycastTarget(VoxelScale.DETAIL_4, local));
+        ParticleSystem particles = new ParticleSystem();
+        GameplayParticleFeedback feedback =
+                new GameplayParticleFeedback(particles, () -> origin);
+
+        feedback.onDetailRemoval(target, FACES, 123L);
+
+        assertEquals(4, particles.snapshot().particles().size());
+        particles.snapshot().particles().forEach(particle -> {
+            org.junit.jupiter.api.Assertions.assertTrue(Math.abs(particle.x()) < 100.0f);
+            org.junit.jupiter.api.Assertions.assertTrue(Math.abs(particle.z()) < 100.0f);
         });
     }
 

@@ -5,6 +5,8 @@ import java.util.Objects;
 public sealed interface ChunkDetailMutation
         permits ChunkDetailMutation.ConvertFullToDetail,
                 ChunkDetailMutation.SetSubVoxel,
+                ChunkDetailMutation.RemoveDetailParent,
+                ChunkDetailMutation.SculptParentSubVoxel,
                 ChunkDetailMutation.CompactDetailToFull {
     int x();
 
@@ -57,6 +59,35 @@ public sealed interface ChunkDetailMutation
             expectedState =
                     Objects.requireNonNull(
                             expectedState, "expectedState");
+        }
+    }
+
+    record RemoveDetailParent(
+            int x,
+            int y,
+            int z,
+            long expectedRevision,
+            DetailCellState expectedState)
+            implements ChunkDetailMutation {
+        public RemoveDetailParent {
+            requireRevision(expectedRevision);
+            expectedState = Objects.requireNonNull(expectedState, "expectedState");
+        }
+    }
+
+    record SculptParentSubVoxel(
+            int x,
+            int y,
+            int z,
+            long expectedRevision,
+            ParentCellState expectedState,
+            LocalSubVoxelPosition position,
+            byte replacementId)
+            implements ChunkDetailMutation {
+        public SculptParentSubVoxel {
+            requireRevision(expectedRevision);
+            expectedState = Objects.requireNonNull(expectedState, "expectedState");
+            position = Objects.requireNonNull(position, "position");
         }
     }
 

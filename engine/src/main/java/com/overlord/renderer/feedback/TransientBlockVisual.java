@@ -18,6 +18,7 @@ public record TransientBlockVisual(
 
     public enum Type {
         PLACEMENT,
-        BREAK
+        BREAK,
+        PREVIEW
     }
 }

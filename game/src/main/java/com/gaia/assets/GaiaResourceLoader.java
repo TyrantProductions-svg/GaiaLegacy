@@ -2,7 +2,12 @@ package com.gaia.assets;
 
 import com.gaia.blocks.BlockDefinition;
 import com.gaia.blocks.BlockRegistry;
+import com.gaia.blocks.DetailSupportDefinition;
+import com.gaia.blocks.ItemCapability;
 import com.gaia.blocks.ItemFormDefinition;
+import com.gaia.blocks.ItemVisualReference;
+import com.gaia.blocks.ItemVisualType;
+import com.gaia.blocks.StandaloneItemDefinition;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.overlord.assets.AssetDiagnostic;
@@ -33,10 +38,12 @@ import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.Function;
@@ -67,6 +74,12 @@ public final class GaiaResourceLoader {
                 parseMaterials(indexes, diagnostics, context);
         List<BlockDefinition> blocks =
                 parseBlocks(indexes, diagnostics, context);
+        List<StandaloneItemDefinition> standaloneItems =
+                parseStandaloneItems(
+                        indexes,
+                        blocks,
+                        diagnostics,
+                        context);
         diagnostics.throwIfErrors();
 
         GaiaAssetCatalog catalog =
@@ -75,6 +88,7 @@ public final class GaiaResourceLoader {
                         atlases,
                         materials,
                         blocks,
+                        standaloneItems,
                         diagnostics,
                         context);
         diagnostics.throwIfErrors();
@@ -110,6 +124,7 @@ public final class GaiaResourceLoader {
                         "blocks",
                         "materials",
                         "atlases",
+                        "items",
                         "ui");
                 String namespace =
                         strict.requireString("namespace");
@@ -123,6 +138,16 @@ public final class GaiaResourceLoader {
                                 "ui[" + index + "]",
                                 () -> ResourceLocation.of(namespace, path));
                     }
+                }
+                List<String> itemPaths =
+                        root.has("items")
+                                ? strict.requireStringList("items")
+                                : List.of();
+                for (int index = 0; index < itemPaths.size(); index++) {
+                    String path = itemPaths.get(index);
+                    strict.requireSemantic(
+                            "items[" + index + "]",
+                            () -> ResourceLocation.of(namespace, path));
                 }
                 ResourceIndex index =
                         new ResourceIndex(
@@ -150,6 +175,8 @@ public final class GaiaResourceLoader {
                     continue;
                 }
                 context.manifests.put(namespace, current);
+                context.itemPathsByNamespace.put(
+                        namespace, List.copyOf(itemPaths));
                 indexes.add(index);
             } catch (StrictJson.UnknownFieldException failure) {
                 addJsonFailure(
@@ -546,6 +573,140 @@ public final class GaiaResourceLoader {
         return List.copyOf(blocks);
     }
 
+    private List<StandaloneItemDefinition> parseStandaloneItems(
+            List<ResourceIndex> indexes,
+            List<BlockDefinition> blocks,
+            AssetLoadReport.Builder diagnostics,
+            LoadContext context) {
+        List<DefinitionRequest> requests =
+                standaloneItemRequests(indexes, context);
+        Map<ResourceLocation, DefinitionSource> seenIds =
+                new LinkedHashMap<>();
+        for (BlockDefinition block : blocks) {
+            if (block.item() != null) {
+                seenIds.put(
+                        block.item().id(),
+                        context.blockSources.get(block.name()));
+            }
+        }
+
+        List<StandaloneItemDefinition> items = new ArrayList<>();
+        for (DefinitionRequest request : requests) {
+            StandaloneItemDefinition item =
+                    readDefinition(
+                            request,
+                            diagnostics,
+                            false,
+                            root -> parseStandaloneItem(
+                                    root, request, diagnostics));
+            if (item == null) {
+                continue;
+            }
+            DefinitionSource source = request.sourceContext();
+            if (seenIds.putIfAbsent(item.form().id(), source) != null) {
+                addError(
+                        diagnostics,
+                        "ASSET_ITEM_ID_DUPLICATE",
+                        source,
+                        "id",
+                        "Duplicate item form id " + item.form().id());
+                continue;
+            }
+            items.add(item);
+            context.itemSources.put(item.form().id(), source);
+        }
+        return List.copyOf(items);
+    }
+
+    private List<DefinitionRequest> standaloneItemRequests(
+            List<ResourceIndex> indexes,
+            LoadContext context) {
+        List<DefinitionRequest> requests = new ArrayList<>();
+        for (ResourceIndex index : indexes) {
+            for (String relativePath :
+                    context.itemPathsByNamespace.getOrDefault(
+                            index.namespace(), List.of())) {
+                ResourceLocation location =
+                        ResourceLocation.of(index.namespace(), relativePath);
+                requests.add(
+                        new DefinitionRequest(
+                                index.namespace(),
+                                location,
+                                new DefinitionSource(
+                                        location.toClasspathPath(),
+                                        location,
+                                        index.namespace())));
+            }
+        }
+        requests.sort(Comparator.comparing(DefinitionRequest::source));
+        return List.copyOf(requests);
+    }
+
+    private StandaloneItemDefinition parseStandaloneItem(
+            JsonObject root,
+            DefinitionRequest request,
+            AssetLoadReport.Builder diagnostics) {
+        StrictJson strict = new StrictJson(root, request.source());
+        strict.requireOnly(
+                "id",
+                "maxStackSize",
+                "mouthHoldable",
+                "twoHanded",
+                "capabilities",
+                "visual");
+
+        ResourceLocation id = resourceLocation(strict, "id");
+        if (!ownedByManifest(id, request, "id", diagnostics)) {
+            return null;
+        }
+        int maxStackSize = strict.requireInt("maxStackSize");
+        strict.requireSemantic(
+                "maxStackSize",
+                maxStackSize >= 1 && maxStackSize <= 64,
+                "within 1..64");
+
+        List<String> capabilityNames =
+                strict.requireStringList("capabilities");
+        Set<ItemCapability> capabilities = new LinkedHashSet<>();
+        for (int index = 0; index < capabilityNames.size(); index++) {
+            String capabilityName = capabilityNames.get(index);
+            ItemCapability capability =
+                    strict.requireSemantic(
+                            "capabilities[" + index + "]",
+                            () -> ItemCapability.valueOf(capabilityName));
+            strict.requireSemantic(
+                    "capabilities[" + index + "]",
+                    capabilities.add(capability),
+                    "a unique capability");
+        }
+
+        StrictJson visual =
+                new StrictJson(
+                        strict.requireObject("visual"),
+                        request.source(),
+                        "visual");
+        visual.requireOnly("type", "atlas", "region");
+        ItemVisualType visualType =
+                visual.requireSemantic(
+                        "type",
+                        () -> ItemVisualType.valueOf(
+                                visual.requireString("type")));
+        ItemVisualReference visualReference =
+                new ItemVisualReference(
+                        visualType,
+                        resourceLocation(visual, "atlas"),
+                        resourceLocation(visual, "region"));
+
+        return new StandaloneItemDefinition(
+                new ItemFormDefinition(
+                        id,
+                        maxStackSize,
+                        strict.requireBoolean("mouthHoldable"),
+                        strict.requireBoolean("twoHanded")),
+                capabilities,
+                visualReference);
+    }
+
     private BlockDefinition parseBlock(
             JsonObject root,
             DefinitionRequest request,
@@ -563,6 +724,7 @@ public final class GaiaResourceLoader {
                 "gravity",
                 "flammable",
                 "blastResistance",
+                "detailSupport",
                 "item");
 
         int id = strict.requireInt("id");
@@ -591,6 +753,11 @@ public final class GaiaResourceLoader {
                         ? null
                         : parseItem(
                                 itemObject, name, source);
+        JsonObject detailSupportObject = strict.optionalObject("detailSupport");
+        DetailSupportDefinition detailSupport =
+                detailSupportObject == null
+                        ? null
+                        : parseDetailSupport(detailSupportObject, source);
         strict.requireSemantic(
                 "item",
                 id != 0 || item == null,
@@ -629,7 +796,17 @@ public final class GaiaResourceLoader {
                 strict.requireBoolean("gravity"),
                 strict.requireBoolean("flammable"),
                 blastResistance,
-                item);
+                item,
+                detailSupport);
+    }
+
+    private static DetailSupportDefinition parseDetailSupport(
+            JsonObject object, String source) {
+        StrictJson detailSupport =
+                new StrictJson(object, source, "detailSupport");
+        detailSupport.requireOnly("unitItem");
+        return new DetailSupportDefinition(
+                resourceLocation(detailSupport, "unitItem"));
     }
 
     private static ItemFormDefinition parseItem(
@@ -807,6 +984,7 @@ public final class GaiaResourceLoader {
             List<TextureAtlasMetadata> atlases,
             List<MaterialDefinition> materials,
             List<BlockDefinition> blocks,
+            List<StandaloneItemDefinition> standaloneItems,
             AssetLoadReport.Builder diagnostics,
             LoadContext context) {
         Map<ResourceLocation, TextureAtlasMetadata> atlasById =
@@ -828,6 +1006,12 @@ public final class GaiaResourceLoader {
                         atlasById,
                         diagnostics,
                         context);
+        validateStandaloneItemVisuals(
+                standaloneItems,
+                atlasById,
+                selectedAtlasId,
+                diagnostics,
+                context);
         if (blocks.stream()
                 .noneMatch(block -> block.id() == 0)) {
             DefinitionSource source =
@@ -947,7 +1131,9 @@ public final class GaiaResourceLoader {
 
         BlockRegistry registry =
                 BlockRegistry.create(
-                        sortedBlocks, renderInfoById);
+                        sortedBlocks,
+                        standaloneItems,
+                        renderInfoById);
         ResourceLocation worldMaterialId =
                 ResourceLocation.parse("gaia:opaque");
         MaterialDefinition worldMaterial =
@@ -985,6 +1171,49 @@ public final class GaiaResourceLoader {
                 selectedAtlas,
                 renderAssets,
                 diagnostics.build());
+    }
+
+    private static void validateStandaloneItemVisuals(
+            List<StandaloneItemDefinition> standaloneItems,
+            Map<ResourceLocation, TextureAtlasMetadata> atlases,
+            ResourceLocation selectedAtlasId,
+            AssetLoadReport.Builder diagnostics,
+            LoadContext context) {
+        for (StandaloneItemDefinition item : standaloneItems) {
+            ItemVisualReference visual = item.visual();
+            DefinitionSource source = context.itemSources.get(item.form().id());
+            TextureAtlasMetadata atlas = atlases.get(visual.atlas());
+            if (atlas == null) {
+                addError(
+                        diagnostics,
+                        "ASSET_DEFINITION_NOT_FOUND",
+                        source,
+                        "visual.atlas",
+                        "Standalone item references missing atlas "
+                                + visual.atlas());
+                continue;
+            }
+            if (!visual.atlas().equals(selectedAtlasId)) {
+                addError(
+                        diagnostics,
+                        "ASSET_ITEM_VISUAL_ATLAS_UNAVAILABLE",
+                        source,
+                        "visual.atlas",
+                        "Standalone item visual atlas is not uploaded by the v1 item "
+                                + "presentation path: "
+                                + visual.atlas());
+                continue;
+            }
+            if (!atlas.regions().containsKey(visual.region())) {
+                addError(
+                        diagnostics,
+                        "ASSET_DEFINITION_NOT_FOUND",
+                        source,
+                        "visual.region",
+                        "Standalone item references missing atlas region "
+                                + visual.region());
+            }
+        }
     }
 
     private LoadedAtlas loadSelectedAtlas(
@@ -1458,11 +1687,15 @@ public final class GaiaResourceLoader {
     private static final class LoadContext {
         private final Map<String, DefinitionSource> manifests =
                 new HashMap<>();
+        private final Map<String, List<String>> itemPathsByNamespace =
+                new HashMap<>();
         private final Map<ResourceLocation, DefinitionSource>
                 atlasSources = new HashMap<>();
         private final Map<ResourceLocation, DefinitionSource>
                 materialSources = new HashMap<>();
         private final Map<ResourceLocation, DefinitionSource>
                 blockSources = new HashMap<>();
+        private final Map<ResourceLocation, DefinitionSource>
+                itemSources = new HashMap<>();
     }
 }

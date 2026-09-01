@@ -38,6 +38,19 @@ class UiIconResolverTest {
     }
 
     @Test
+    void explicitStandaloneAliasesReuseCanonicalUiIconsWithoutDiagnostics() {
+        List<ResourceLocation> diagnostics = new ArrayList<>();
+        UiIconAtlas atlas = atlas();
+        ResourceLocation unit = ResourceLocation.parse("gaia:stone_detail_unit");
+        ResourceLocation grass = ResourceLocation.parse("gaia:grass");
+        UiIconResolver resolver = new UiIconResolver(
+                atlas, Map.of(unit, grass), diagnostics::add);
+
+        assertSame(atlas.icons().get(grass), resolver.resolve(unit));
+        assertEquals(List.of(), diagnostics);
+    }
+
+    @Test
     void differentUnknownIdentitiesAreDiagnosedIndependently() {
         List<ResourceLocation> diagnostics = new ArrayList<>();
         UiIconResolver resolver = new UiIconResolver(atlas(), diagnostics::add);

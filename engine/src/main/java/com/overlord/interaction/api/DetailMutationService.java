@@ -7,6 +7,12 @@ public interface DetailMutationService {
     DetailMutationResult setSubVoxel(
             DetailMutationRequest request);
 
+    DetailMutationResult removeDetailParent(
+            RemoveDetailParentRequest request);
+
+    DetailMutationResult sculptParentSubVoxel(
+            SculptParentSubVoxelRequest request);
+
     DetailMutationResult compactDetailToFull(
             DetailToFullRequest request);
 }

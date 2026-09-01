@@ -62,6 +62,15 @@ tasks.register('stressHybridMeshRetention', JavaExec) {
     maxHeapSize = '512m'
 }
 
+tasks.register('profileDetailEdits', JavaExec) {
+    group = 'verification'
+    description = 'Runs the bounded Phase 17 pressed-edge DETAIL edit fixture.'
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.gaia.tools.DetailEditPerformanceFixture'
+    args '120', '0'
+}
+
 def generatedUiVerificationDir = layout.buildDirectory.dir(
     'generated-ui-verification')
 

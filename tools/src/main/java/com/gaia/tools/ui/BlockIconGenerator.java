@@ -3,6 +3,8 @@ package com.gaia.tools.ui;
 import com.gaia.assets.GaiaAssetCatalog;
 import com.gaia.assets.GaiaResourceLoader;
 import com.gaia.blocks.BlockDefinition;
+import com.gaia.blocks.ItemVisualReference;
+import com.gaia.blocks.ItemVisualType;
 import com.overlord.assets.AssetManager;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.renderer.texture.TextureAtlasMetadata;
@@ -30,6 +32,8 @@ public final class BlockIconGenerator {
             new IconRequest(ResourceLocation.parse("gaia:stone"), "Stone"),
             new IconRequest(ResourceLocation.parse("gaia:oak_log"), "Oak Log"),
             new IconRequest(ResourceLocation.parse("gaia:oak_leaves"), "Oak Leaves"));
+    private static final IconRequest CHISEL =
+            new IconRequest(ResourceLocation.parse("gaia:chisel"), "Chisel");
 
     public GeneratedIcons generate(AssetManager assetManager) throws IOException {
         Objects.requireNonNull(assetManager, "assetManager");
@@ -63,6 +67,19 @@ public final class BlockIconGenerator {
                     catalog.blockRegistry().resolve(block.id()).region(BlockFace.EAST));
         }
         drawMissing(rgba, REQUIRED.size());
+        ItemVisualReference chiselVisual = catalog.blockRegistry().itemVisual(CHISEL.itemId())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "required standalone item has no explicit visual: " + CHISEL.itemId()));
+        if (chiselVisual.type() != ItemVisualType.ATLAS_REGION
+                || !atlas.id().equals(chiselVisual.atlas())) {
+            throw new IllegalArgumentException(
+                    "required standalone item has an unsupported visual: " + CHISEL.itemId());
+        }
+        drawAtlasIcon(
+                rgba,
+                REQUIRED.size() + 1,
+                source,
+                atlas.requireRegion(chiselVisual.region()));
         return new GeneratedIcons(encodePng(rgba), encodeJson());
     }
 
@@ -171,6 +188,32 @@ public final class BlockIconGenerator {
         put(target, originX + 16, originY + 19, 155, 131, 207, 255);
     }
 
+    private static void drawAtlasIcon(
+            byte[] target,
+            int cell,
+            BufferedImage source,
+            TextureRegion region) {
+        int originX = cell % COLUMNS * CELL_SIZE;
+        int originY = cell / COLUMNS * CELL_SIZE;
+        for (int y = 0; y < CELL_SIZE; y++) {
+            int sourceY = region.y() + y * region.height() / CELL_SIZE;
+            for (int x = 0; x < CELL_SIZE; x++) {
+                int sourceX = region.x() + x * region.width() / CELL_SIZE;
+                int argb = source.getRGB(sourceX, sourceY);
+                int alpha = argb >>> 24;
+                if (alpha == 0) {
+                    put(target, originX + x, originY + y, 255, 255, 255, 0);
+                } else {
+                    put(target, originX + x, originY + y,
+                            argb >>> 16 & 0xff,
+                            argb >>> 8 & 0xff,
+                            argb & 0xff,
+                            alpha);
+                }
+            }
+        }
+    }
+
     private static void line(
             byte[] target, int x0, int y0, int x1, int y1,
             int red, int green, int blue, int alpha) {
@@ -219,10 +262,11 @@ public final class BlockIconGenerator {
             appendIcon(json, REQUIRED.get(index).itemId().toString(),
                     REQUIRED.get(index).displayName(), index, false, true);
         }
-        appendIcon(json, "gaia:missing", "Missing", REQUIRED.size(), true, false);
+        appendIcon(json, "gaia:missing", "Missing", REQUIRED.size(), true, true);
+        appendIcon(json, CHISEL.itemId().toString(), CHISEL.displayName(),
+                REQUIRED.size() + 1, false, false);
         json.append("  ],\n")
                 .append("  \"unassignedCells\": [\n")
-                .append("    {\"column\": 2, \"row\": 1},\n")
                 .append("    {\"column\": 3, \"row\": 1}\n")
                 .append("  ]\n")
                 .append("}\n");

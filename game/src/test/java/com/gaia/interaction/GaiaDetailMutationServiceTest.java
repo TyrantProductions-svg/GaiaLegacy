@@ -18,6 +18,8 @@ import com.overlord.interaction.api.DetailToFullRequest;
 import com.overlord.interaction.api.EntityRef;
 import com.overlord.interaction.api.FullToDetailRequest;
 import com.overlord.interaction.api.InteractionAction;
+import com.overlord.interaction.api.RemoveDetailParentRequest;
+import com.overlord.interaction.api.SculptParentSubVoxelRequest;
 import com.overlord.inventory.api.BodySlot;
 import com.overlord.renderer.material.MaterialDefinition;
 import com.overlord.renderer.material.RenderType;
@@ -201,6 +203,131 @@ class GaiaDetailMutationServiceTest {
 
         assertEquals(DetailMutationResult.Status.APPLIED, compacted.status());
         assertEquals(new FullCellState((byte) 1), compacted.newState().orElseThrow());
+    }
+
+    @Test
+    void removesExactDetailParentWithoutMaterialTranslation() {
+        Fixture fixture = fixture((byte) 1);
+        GaiaInteractionContext context = context();
+        long before = fixture.repository().revision(new ChunkKey(0, 0));
+        DetailMutationResult converted =
+                fixture.service().convertFullToDetail(
+                        new FullToDetailRequest(
+                                context, 4, 7, 6, before, STONE));
+        DetailCellState expected =
+                assertInstanceOf(
+                        DetailCellState.class,
+                        converted.newState().orElseThrow());
+
+        DetailMutationResult removed =
+                fixture.service().removeDetailParent(
+                        new RemoveDetailParentRequest(
+                                context,
+                                4,
+                                7,
+                                6,
+                                converted.resultingChunkRevision(),
+                                expected));
+
+        assertEquals(DetailMutationResult.Status.APPLIED, removed.status());
+        assertSame(context, removed.context());
+        assertEquals(expected, removed.oldState().orElseThrow());
+        assertEquals(new FullCellState((byte) 0), removed.newState().orElseThrow());
+        assertEquals(
+                converted.resultingChunkRevision() + 1,
+                removed.resultingChunkRevision());
+        assertEquals(List.of(new ChunkKey(0, 0)), removed.dirtiedChunks().stream()
+                .map(dirty -> dirty.key()).toList());
+    }
+
+    @Test
+    void sculptsFullAndDetailThroughCanonicalRegistryTranslation() {
+        Fixture fixture = fixture((byte) 1);
+        GaiaInteractionContext context = context();
+        long before = fixture.repository().revision(new ChunkKey(0, 0));
+        LocalSubVoxelPosition position = new LocalSubVoxelPosition(2, 1, 3);
+
+        DetailMutationResult sculpted =
+                fixture.service().sculptParentSubVoxel(
+                        new SculptParentSubVoxelRequest(
+                                context,
+                                4,
+                                7,
+                                6,
+                                before,
+                                new FullCellState((byte) 1),
+                                position,
+                                Optional.empty()));
+        DetailCellState detail =
+                assertInstanceOf(
+                        DetailCellState.class,
+                        sculpted.newState().orElseThrow());
+        assertFalse(detail.occupied(position));
+        assertSame(context, sculpted.context());
+
+        DetailMutationResult replaced =
+                fixture.service().sculptParentSubVoxel(
+                        new SculptParentSubVoxelRequest(
+                                context,
+                                4,
+                                7,
+                                6,
+                                sculpted.resultingChunkRevision(),
+                                detail,
+                                position,
+                                Optional.of(DIRT)));
+        DetailCellState replacedDetail =
+                assertInstanceOf(
+                        DetailCellState.class,
+                        replaced.newState().orElseThrow());
+        assertEquals(2, Byte.toUnsignedInt(replacedDetail.blockId(position)));
+    }
+
+    @Test
+    void explicitAirReplacementIsRejectedInsteadOfBecomingRemoval() {
+        Fixture fixture = fixture((byte) 1);
+        long before = fixture.repository().revision(new ChunkKey(0, 0));
+
+        DetailMutationResult result = fixture.service().sculptParentSubVoxel(
+                new SculptParentSubVoxelRequest(
+                        context(),
+                        4,
+                        7,
+                        6,
+                        before,
+                        new FullCellState((byte) 1),
+                        new LocalSubVoxelPosition(2, 1, 3),
+                        Optional.of(ResourceLocation.parse("gaia:air"))));
+
+        assertEquals(DetailMutationResult.Status.UNKNOWN_MATERIAL, result.status());
+        assertEquals(before, fixture.repository().revision(new ChunkKey(0, 0)));
+        assertEquals(
+                new FullCellState((byte) 1),
+                fixture.repository().snapshot(new ChunkKey(0, 0))
+                        .orElseThrow().cellState(4, 7, 6));
+        assertTrue(result.dirtiedChunks().isEmpty());
+    }
+
+    @Test
+    void sculptUnknownMaterialRejectsBeforeRepositoryMutation() {
+        Fixture fixture = fixture((byte) 0);
+        long before = fixture.repository().revision(new ChunkKey(0, 0));
+
+        DetailMutationResult result =
+                fixture.service().sculptParentSubVoxel(
+                        new SculptParentSubVoxelRequest(
+                                context(),
+                                4,
+                                7,
+                                6,
+                                before,
+                                new FullCellState((byte) 0),
+                                new LocalSubVoxelPosition(0, 0, 0),
+                                Optional.of(MISSING)));
+
+        assertEquals(DetailMutationResult.Status.UNKNOWN_MATERIAL, result.status());
+        assertEquals(before, fixture.repository().revision(new ChunkKey(0, 0)));
+        assertTrue(result.dirtiedChunks().isEmpty());
     }
 
     @Test
