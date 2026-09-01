@@ -153,7 +153,7 @@ public final class DetailParentBreakTransaction implements AutoCloseable {
         if (output.isPresent() && reservation.isEmpty()) {
             return result(
                     DetailParentBreakResult.Status.RESERVATION_REJECTED,
-                    Optional.empty(), 1, 0, Optional.empty());
+                    Optional.empty(), 0, 0, Optional.empty());
         }
 
         DetailMutationResult mutation;
@@ -179,7 +179,7 @@ public final class DetailParentBreakTransaction implements AutoCloseable {
                     new IllegalStateException("detail parent mutation rejected: " + mutation.status()));
             return result(
                     DetailParentBreakResult.Status.MUTATION_REJECTED,
-                    Optional.of(mutation), output.map(ItemStack::count).orElse(0),
+                    Optional.of(mutation), 0,
                     0, Optional.empty());
         }
 

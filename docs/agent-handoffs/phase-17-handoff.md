@@ -1,6 +1,6 @@
 # Phase 17 handoff - small-block tools and building
 
-## Status
+## Pre-integration status (historical)
 
 Gates 17A-D are controller-accepted. Phase 17 implementation, automated
 verification, Windows interactive acceptance, resource/package verification,
@@ -8,6 +8,41 @@ and independent review are complete. Native Apple Silicon interactive remains
 `NOT RUN`. Phase 17 is ready for the separately authorized integration
 checkpoint and is not yet committed, pushed, opened as a PR, merged, tagged,
 or released.
+
+## Integration and closure record
+
+- feature branch: `feat/small-voxel-tools`;
+- original feature commit: `7e3d0782bd67e184f3dd6b23c9749765fdcf3f1a`;
+- pull request: `#29 - feat(building): implement small-block chiseling placement
+  and material conservation`;
+- original base: `4e45a6681f169e070500e4580c62fb37dc53d4ed`;
+- original local verification: engine 1505/1505, game 2275/2275, tools 34
+  passed / 1 skipped, zero failures/errors, full Gradle GREEN, and Windows
+  interactive PASS;
+- original PR CI attempt 1 on the original feature commit: Windows, Ubuntu,
+  and macOS GREEN;
+- original PR CI attempt 2 on the original feature commit: Windows, Ubuntu,
+  and macOS GREEN;
+- Native Apple Silicon interactive remains `NOT RUN`; macOS CI is not an
+  interactive-runtime claim.
+
+The final PR review identified two Minor findings. The first was a result-contract
+error: rejected recoverable coarse breaks reported their planned output as
+`producedItems` even though reservation rejection or mutation rollback committed
+nothing. The closure patch keeps reserve-before-mutate, rollback, CAS, and
+applied-state reconciliation unchanged while making all non-applied outcomes
+report zero produced and committed items. Focused TDD witnessed the two intended
+failures, then passed all 11 transaction tests; the adjacent interaction and
+conservation regression set passed 62/62 with zero failures/errors/skips. The
+second Minor was this handoff's necessarily historical pre-integration wording;
+this separate record preserves that evidence rather than rewriting it.
+
+The closure commit is the commit containing this record. Git commits cannot
+embed their own final object ID without changing that ID, so the exact closure
+SHA, its two consecutive same-SHA PR CI matrices, and the eventual merge/main
+SHA are recorded in PR #29 and the controller closure report. No extra
+post-merge documentation-only commit is required solely to duplicate those
+immutable external identifiers.
 
 ## Completed architecture
 

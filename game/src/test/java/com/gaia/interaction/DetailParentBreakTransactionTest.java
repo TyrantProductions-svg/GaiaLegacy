@@ -33,6 +33,7 @@ import com.overlord.interaction.api.RemoveDetailParentRequest;
 import com.overlord.interaction.api.SculptParentSubVoxelRequest;
 import com.overlord.inventory.api.BodySlot;
 import com.overlord.physics.DetailRaycastTarget;
+import com.overlord.physics.FullRaycastTarget;
 import com.overlord.voxel.ChunkKey;
 import com.overlord.voxel.BlockFace;
 import com.overlord.voxel.BlockRenderInfo;
@@ -160,6 +161,7 @@ class DetailParentBreakTransactionTest {
                 DetailParentBreakResult.Status.APPLIED_WITH_NOTIFICATION_FAILURE,
                 result.status());
         assertEquals(1, mutations.removeCalls);
+        assertEquals(1, result.producedItems());
         assertEquals(1, result.worldItemCommitted());
         assertEquals(1, worldItems.snapshots().size());
         assertTrue(result.notificationFailure().isPresent());
@@ -204,7 +206,10 @@ class DetailParentBreakTransactionTest {
                         Optional.empty(), BodySlot.RIGHT_HAND, 12L, 13L);
 
         assertEquals(DetailParentBreakResult.Status.RESERVATION_REJECTED, result.status());
+        assertEquals(0, result.producedItems());
+        assertEquals(0, result.worldItemCommitted());
         assertEquals(0, mutations.removeCalls);
+        assertEquals(1, fullWorldItems.snapshots().size());
     }
 
     @Test
@@ -223,7 +228,9 @@ class DetailParentBreakTransactionTest {
 
         assertEquals(DetailParentBreakResult.Status.MUTATION_REJECTED, result.status());
         assertTrue(worldItems.snapshots().isEmpty());
+        assertEquals(0, result.producedItems());
         assertEquals(0, result.worldItemCommitted());
+        assertEquals(1, mutations.removeCalls);
     }
 
     @Test
@@ -240,6 +247,36 @@ class DetailParentBreakTransactionTest {
                         Optional.empty(), BodySlot.RIGHT_HAND, 12L, 13L);
 
         assertEquals(DetailParentBreakResult.Status.ACTION_REJECTED, result.status());
+        assertEquals(0, result.producedItems());
+        assertEquals(0, result.worldItemCommitted());
+        assertEquals(0, mutations.removeCalls);
+    }
+
+    @Test
+    void invalidTargetReportsNoProducedOrCommittedOutput() {
+        RecordingMutations mutations = new RecordingMutations();
+        BlockRegistry registry = registry();
+        BlockHitResult invalid = new BlockHitResult(
+                4, 7, 6,
+                5, 7, 6,
+                STONE,
+                1, 0, 0,
+                5.0f, 7.1f, 6.1f,
+                2.0f,
+                5.0, 7.1, 6.1,
+                11L,
+                FullRaycastTarget.INSTANCE);
+
+        DetailParentBreakResult result = new DetailParentBreakTransaction(
+                mutations, new EntityRef(42), registry,
+                new Phase17DetailActionPolicy(registry), worldItems(1))
+                .executeSurvival(
+                        invalid, DetailCellState.uniform((byte) 1), Optional.empty(),
+                        BodySlot.RIGHT_HAND, 12L, 13L);
+
+        assertEquals(DetailParentBreakResult.Status.INVALID_TARGET, result.status());
+        assertEquals(0, result.producedItems());
+        assertEquals(0, result.worldItemCommitted());
         assertEquals(0, mutations.removeCalls);
     }
 
