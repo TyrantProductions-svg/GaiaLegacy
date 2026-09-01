@@ -2,6 +2,8 @@ package com.gaia.interaction.feedback;
 
 import com.gaia.interaction.BlockInteractionViewModel;
 import com.gaia.interaction.GameMode;
+import com.gaia.interaction.DetailPlacementCandidate;
+import com.gaia.interaction.DetailPrecisionTarget;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.interaction.api.BlockChangedEvent;
 import com.overlord.interaction.api.BlockFace;
@@ -25,6 +27,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
+import java.util.function.Supplier;
+import com.overlord.physics.SimulationOrigin;
 
 /** Owns CPU-only transient interaction presentation state. */
 public final class InteractionFeedbackCoordinator
@@ -42,6 +46,7 @@ public final class InteractionFeedbackCoordinator
     private final CameraImpulseController cameraImpulses;
     private final TransientBlockVisualSystem transientBlocks;
     private final GameplayParticleFeedback committedParticles;
+    private final DetailPlacementGhostAdapter detailGhosts;
 
     private TargetKey cadenceTarget;
     private int validBreakingSteps;
@@ -75,6 +80,28 @@ public final class InteractionFeedbackCoordinator
             FirstPersonActionAnimator firstPersonActions,
             CameraImpulseController cameraImpulses,
             TransientBlockVisualSystem transientBlocks) {
+        this(
+                committedBreaks,
+                particles,
+                worldItems,
+                regionResolver,
+                faceResolver,
+                firstPersonActions,
+                cameraImpulses,
+                transientBlocks,
+                () -> new SimulationOrigin(new ChunkKey(0, 0)));
+    }
+
+    public InteractionFeedbackCoordinator(
+            CommittedBreakVisualAdapter committedBreaks,
+            ParticleSystem particles,
+            WorldItemVisualTracker worldItems,
+            Function<ResourceLocation, TextureRegion> regionResolver,
+            Function<ResourceLocation, WorldItemFaceRegions> faceResolver,
+            FirstPersonActionAnimator firstPersonActions,
+            CameraImpulseController cameraImpulses,
+            TransientBlockVisualSystem transientBlocks,
+            Supplier<SimulationOrigin> simulationOrigin) {
         this.committedBreaks = Objects.requireNonNull(committedBreaks, "committedBreaks");
         this.particles = Objects.requireNonNull(particles, "particles");
         this.worldItems = Objects.requireNonNull(worldItems, "worldItems");
@@ -84,7 +111,10 @@ public final class InteractionFeedbackCoordinator
                 firstPersonActions, "firstPersonActions");
         this.cameraImpulses = Objects.requireNonNull(cameraImpulses, "cameraImpulses");
         this.transientBlocks = Objects.requireNonNull(transientBlocks, "transientBlocks");
-        committedParticles = new GameplayParticleFeedback(particles);
+        detailGhosts = new DetailPlacementGhostAdapter(this.faceResolver);
+        committedParticles = new GameplayParticleFeedback(
+                particles,
+                Objects.requireNonNull(simulationOrigin, "simulationOrigin"));
     }
 
     public void onBlockChanged(BlockChangedEvent event) {
@@ -139,6 +169,42 @@ public final class InteractionFeedbackCoordinator
             firstPersonActions.triggerBreak(eventIdentity);
             cameraImpulses.triggerBreak(eventIdentity);
             committedParticles.onBreak(target, faces, eventIdentity);
+        });
+    }
+
+    @Override
+    public void onDetailRemovalCommitted(
+            DetailPrecisionTarget target,
+            ResourceLocation material,
+            long eventIdentity) {
+        Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(material, "material");
+        if (closed) {
+            return;
+        }
+        safely(() -> {
+            WorldItemFaceRegions faces = Objects.requireNonNull(
+                    faceResolver.apply(material), "detail material faces");
+            firstPersonActions.triggerBreak(eventIdentity);
+            cameraImpulses.triggerBreak(eventIdentity);
+            committedParticles.onDetailRemoval(target, faces, eventIdentity);
+        });
+    }
+
+    @Override
+    public void onDetailPlacementCommitted(
+            DetailPlacementCandidate candidate,
+            long eventIdentity) {
+        Objects.requireNonNull(candidate, "candidate");
+        if (closed) {
+            return;
+        }
+        safely(() -> {
+            WorldItemFaceRegions faces = Objects.requireNonNull(
+                    faceResolver.apply(candidate.material()), "detail material faces");
+            firstPersonActions.triggerPlacement(eventIdentity);
+            cameraImpulses.triggerPlacement(eventIdentity);
+            committedParticles.onDetailPlacement(candidate, faces, eventIdentity);
         });
     }
 
@@ -320,6 +386,21 @@ public final class InteractionFeedbackCoordinator
                     localCoordinate(target.blockZ(), renderOrigin.worldOriginZ(), "z"),
                     view.crackStage()));
         }
+        List<com.overlord.renderer.feedback.TransientBlockVisual> currentTransient =
+                visibility.showGameplayFeedback() && transientBlocks.isOpen()
+                        ? transientBlocks.snapshot(renderOrigin)
+                        : List.of();
+        if (visibility.showGameplayFeedback() && interactionEnabled) {
+            List<com.overlord.renderer.feedback.TransientBlockVisual> preview =
+                    detailGhosts.visuals(view.detailPreview(), renderOrigin);
+            if (!preview.isEmpty()) {
+                java.util.ArrayList<com.overlord.renderer.feedback.TransientBlockVisual> combined =
+                        new java.util.ArrayList<>(currentTransient.size() + 1);
+                combined.addAll(currentTransient);
+                combined.addAll(preview);
+                currentTransient = List.copyOf(combined);
+            }
+        }
         return new InteractionFeedbackFrame(
                 visibility,
                 damage,
@@ -332,9 +413,7 @@ public final class InteractionFeedbackCoordinator
                 visibility.showGameplayFeedback()
                         ? cameraImpulses.snapshot()
                         : com.overlord.renderer.feedback.CameraImpulseVisual.identity(),
-                visibility.showGameplayFeedback() && transientBlocks.isOpen()
-                        ? transientBlocks.snapshot(renderOrigin)
-                        : List.of(),
+                currentTransient,
                 visibility.showGameplayFeedback() && transientBlocks.isOpen()
                         ? transientBlocks.excludedCells(renderOrigin)
                         : List.of());

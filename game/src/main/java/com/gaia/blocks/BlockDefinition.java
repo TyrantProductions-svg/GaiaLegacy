@@ -16,7 +16,8 @@ public record BlockDefinition(
         boolean gravity,
         boolean flammable,
         float blastResistance,
-        ItemFormDefinition item) {
+        ItemFormDefinition item,
+        DetailSupportDefinition detailSupport) {
     public BlockDefinition {
         if (id < 0 || id > 255) {
             throw new IllegalArgumentException(
@@ -31,6 +32,33 @@ public record BlockDefinition(
         requireFiniteNonNegative("tolerance", tolerance);
         requireFiniteNonNegative(
                 "blastResistance", blastResistance);
+    }
+
+    public BlockDefinition(
+            int id,
+            ResourceLocation name,
+            ResourceLocation material,
+            Map<BlockFace, ResourceLocation> textures,
+            float hardness,
+            float structuralIntegrity,
+            float tolerance,
+            boolean gravity,
+            boolean flammable,
+            float blastResistance,
+            ItemFormDefinition item) {
+        this(
+                id,
+                name,
+                material,
+                textures,
+                hardness,
+                structuralIntegrity,
+                tolerance,
+                gravity,
+                flammable,
+                blastResistance,
+                item,
+                null);
     }
 
     public boolean renderable() {

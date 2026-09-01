@@ -1,0 +1,14 @@
+{
+  "id": "gaia:chisel",
+  "maxStackSize": 1,
+  "mouthHoldable": false,
+  "twoHanded": false,
+  "capabilities": [
+    "DETAIL_PRECISION"
+  ],
+  "visual": {
+    "type": "ATLAS_REGION",
+    "atlas": "gaia:blocks",
+    "region": "gaia:chisel"
+  }
+}

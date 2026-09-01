@@ -7,7 +7,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.gaia.blocks.BlockDefinition;
 import com.gaia.blocks.BlockRegistry;
+import com.gaia.blocks.ItemCapability;
 import com.gaia.blocks.ItemFormDefinition;
+import com.gaia.blocks.ItemVisualReference;
+import com.gaia.blocks.ItemVisualType;
+import com.gaia.blocks.StandaloneItemDefinition;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.renderer.material.MaterialDefinition;
 import com.overlord.renderer.material.RenderType;
@@ -19,6 +23,7 @@ import com.overlord.voxel.BlockRenderInfo;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class GaiaVisualRegionResolverTest {
@@ -49,6 +54,37 @@ class GaiaVisualRegionResolverTest {
         GaiaVisualRegionResolver resolver = resolver(STONE_TOP);
 
         assertEquals(TOP_REGION, resolver.resolve(STONE_ITEM));
+    }
+
+    @Test
+    void resolvesExplicitStandaloneVisualWithoutBlockBacking() {
+        ResourceLocation chisel = ResourceLocation.parse("gaia:chisel");
+        StandaloneItemDefinition standalone =
+                new StandaloneItemDefinition(
+                        new ItemFormDefinition(chisel, 1, false, false),
+                        Set.of(ItemCapability.DETAIL_PRECISION),
+                        new ItemVisualReference(
+                                ItemVisualType.ATLAS_REGION,
+                                ATLAS,
+                                STONE_TOP));
+        BlockRegistry registry =
+                BlockRegistry.create(
+                        List.of(definition(0, "gaia:air", textures(MISSING), null)),
+                        List.of(standalone),
+                        Map.of(
+                                0,
+                                BlockRenderInfo.nonRenderable(
+                                        MATERIAL, MISSING_REGION)));
+
+        TextureRegion resolved =
+                new GaiaVisualRegionResolver(
+                                registry,
+                                atlas(),
+                                (item, cause) -> {})
+                        .resolve(chisel);
+
+        assertEquals(TOP_REGION, resolved);
+        assertTrue(registry.blockForItem(chisel).isEmpty());
     }
 
     @Test

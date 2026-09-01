@@ -10,6 +10,7 @@ import com.overlord.inventory.api.InventoryChangeRequest;
 import com.overlord.inventory.api.InventoryChangeResult;
 import com.overlord.inventory.api.InventoryReservation;
 import com.overlord.inventory.api.InventoryReservationId;
+import com.overlord.inventory.api.InventoryReservationOperation;
 import com.overlord.inventory.api.InventoryReservationRequest;
 import com.overlord.inventory.api.InventoryReservationResult;
 import com.overlord.inventory.api.InventoryReserveResult;
@@ -70,6 +71,24 @@ final class BodyInventoryReservationPlannerTest {
         assertEquals("reserve failed", primary.getMessage());
         assertEquals(List.of(new InventoryReservationId(1), new InventoryReservationId(0)),
                 inventory.rollbackOrder);
+    }
+
+    @Test
+    void extractionUsesPreferredSlotThenRemainingBodySlots() {
+        RecordingInventory inventory = new RecordingInventory(Map.of(
+                BodySlot.LEFT_HAND, 0,
+                BodySlot.MOUTH, 1));
+
+        InventoryReservationBatch batch = new BodyInventoryReservationPlanner(inventory)
+                .reserveExtraction(OWNER, BodySlot.LEFT_HAND, new ItemStack(DIRT, 1));
+
+        assertEquals(List.of(BodySlot.LEFT_HAND, BodySlot.RIGHT_HAND, BodySlot.MOUTH),
+                inventory.reserveOrder);
+        assertEquals(1, batch.acceptedCount());
+        assertEquals(Optional.empty(), batch.remainder());
+        assertEquals(
+                InventoryReservationOperation.EXTRACT,
+                batch.reservations().get(0).request().operation());
     }
 
     private static final class RecordingInventory implements InventoryService {

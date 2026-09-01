@@ -6,6 +6,7 @@ import com.gaia.ui.widget.CrosshairWidget;
 import com.gaia.ui.widget.DebugHud;
 import com.gaia.ui.widget.GameModeWidget;
 import com.gaia.ui.widget.InteractionFailureWidget;
+import com.gaia.ui.widget.DetailToolWidget;
 import com.overlord.renderer.ui.TextRenderer;
 import com.overlord.renderer.ui.UiDrawList;
 import com.overlord.renderer.ui.UiFrame;
@@ -18,6 +19,7 @@ public final class GaiaHudScreen {
     private final BreakProgressWidget breakProgress;
     private final GameModeWidget gameMode;
     private final InteractionFailureWidget failure;
+    private final DetailToolWidget detailTool;
     private final DebugHud debug;
 
     public GaiaHudScreen(UiIconResolver icons, TextRenderer text) {
@@ -28,6 +30,7 @@ public final class GaiaHudScreen {
         breakProgress = new BreakProgressWidget();
         gameMode = new GameModeWidget(text);
         failure = new InteractionFailureWidget(text);
+        detailTool = new DetailToolWidget(text);
         debug = new DebugHud(text);
     }
 
@@ -40,6 +43,7 @@ public final class GaiaHudScreen {
         breakProgress.append(snapshot, layout, out);
         gameMode.append(snapshot, layout, out);
         failure.append(snapshot, layout, out);
+        detailTool.append(snapshot, layout, out);
         debug.append(snapshot, layout, out);
         return out.seal();
     }

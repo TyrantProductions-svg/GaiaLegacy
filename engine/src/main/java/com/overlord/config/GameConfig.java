@@ -72,6 +72,7 @@ public class GameConfig {
         public static final int KEY_SELECT_RIGHT = org.lwjgl.glfw.GLFW.GLFW_KEY_2;
         public static final int KEY_SELECT_MOUTH = org.lwjgl.glfw.GLFW.GLFW_KEY_3;
         public static final int KEY_DROP = org.lwjgl.glfw.GLFW.GLFW_KEY_Q;
+        public static final int KEY_DETAIL_MATERIAL_CYCLE = org.lwjgl.glfw.GLFW.GLFW_KEY_R;
         public static final int KEY_DROP_ALL_LEFT =
                 org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_CONTROL;
         public static final int KEY_DROP_ALL_RIGHT =

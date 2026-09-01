@@ -43,7 +43,7 @@ class BlockIconGeneratorTest {
     private static final int FIXTURE_EAST = 0xff1e3cf0;
     private static final List<String> REQUIRED_IDS = List.of(
             "gaia:grass", "gaia:dirt", "gaia:stone", "gaia:oak_log",
-            "gaia:oak_leaves", "gaia:missing");
+            "gaia:oak_leaves", "gaia:missing", "gaia:chisel");
 
     @Test
     void canonicalCatalogProducesDeterministicGridMetadataAndPixels() throws Exception {
@@ -53,9 +53,9 @@ class BlockIconGeneratorTest {
 
         assertArrayEquals(first.png(), second.png());
         assertArrayEquals(first.json(), second.json());
-        assertEquals("f2748a3ba40e426c67855fa420f50607a6e7bc94c9415e22636d398cdfed8c41",
+        assertEquals("732a12f9815adfd3332b67466240a908481b29b845132a58ce2de4966d57fa75",
                 sha256(first.png()));
-        assertEquals("5cefdab102a062ebbf3fbd8a3bb1785bd22fcf8202c9eb2fd0f3ac49533015c5",
+        assertEquals("91b27613c0c45b523edeabc982a81b30ab8b34729605264aa6ac41af326dedb4",
                 sha256(first.json()));
 
         BufferedImage image = ImageIO.read(new ByteArrayInputStream(first.png()));
@@ -78,7 +78,9 @@ class BlockIconGeneratorTest {
         assertEquals(REQUIRED_IDS, icons.asList().stream()
                 .map(element -> element.getAsJsonObject().get("itemId").getAsString())
                 .toList());
-        assertEquals(List.of("Grass", "Dirt", "Stone", "Oak Log", "Oak Leaves", "Missing"),
+        assertEquals(List.of(
+                        "Grass", "Dirt", "Stone", "Oak Log", "Oak Leaves", "Missing",
+                        "Chisel"),
                 icons.asList().stream()
                         .map(element -> element.getAsJsonObject().get("displayName").getAsString())
                         .toList());
@@ -88,11 +90,9 @@ class BlockIconGeneratorTest {
         assertEquals("gaia:missing", icons.get(5).getAsJsonObject().get("itemId").getAsString());
 
         JsonArray unassigned = root.getAsJsonArray("unassignedCells");
-        assertEquals(2, unassigned.size());
-        assertEquals(2, unassigned.get(0).getAsJsonObject().get("column").getAsInt());
+        assertEquals(1, unassigned.size());
+        assertEquals(3, unassigned.get(0).getAsJsonObject().get("column").getAsInt());
         assertEquals(1, unassigned.get(0).getAsJsonObject().get("row").getAsInt());
-        assertEquals(3, unassigned.get(1).getAsJsonObject().get("column").getAsInt());
-        assertEquals(1, unassigned.get(1).getAsJsonObject().get("row").getAsInt());
 
         Set<String> cellHashes = new HashSet<>();
         List<String> expectedCellHashes = List.of(
@@ -101,15 +101,16 @@ class BlockIconGeneratorTest {
                 "595ffdc1065c42ad2f7bf1b0c83df707085000ab558027d3db5069f91cabad6a",
                 "48eea7c6f67198e2eb29672d5de3d0183f1dc020379830d6e43fcaff4b8349cd",
                 "07ecb48a53b6e3f75dc3d6fc9455071482c50ab69ea94e82dc1c0a53e2bc0ef6",
-                "2c025b2b3c6d68bea799d5a938b841c0d204fae616a436167a65409c2e6af56e");
-        for (int index = 0; index < 6; index++) {
+                "2c025b2b3c6d68bea799d5a938b841c0d204fae616a436167a65409c2e6af56e",
+                "9e9a37864b07846801d3e476bb3345063ba046b0da6442bf28dd688fbba603d7");
+        for (int index = 0; index < 7; index++) {
             String hash = cellHash(image, index);
             assertEquals(expectedCellHashes.get(index), hash);
             cellHashes.add(hash);
         }
-        assertEquals(6, cellHashes.size());
+        assertEquals(7, cellHashes.size());
         assertNotEquals(cellHash(image, 0), cellHash(image, 5));
-        assertEquals(blankCellHash(), cellHash(image, 6));
+        assertNotEquals(blankCellHash(), cellHash(image, 6));
         assertEquals(blankCellHash(), cellHash(image, 7));
     }
 
@@ -198,6 +199,9 @@ class BlockIconGeneratorTest {
                 "assets/gaia/blocks/stone.json",
                 "assets/gaia/blocks/oak_log.json",
                 "assets/gaia/blocks/oak_leaves.json",
+                "assets/gaia/items/chisel.json",
+                "assets/gaia/items/stone_detail_unit.json",
+                "assets/gaia/items/dirt_detail_unit.json",
                 "assets/gaia/materials/opaque.json",
                 "assets/gaia/materials/missing.json",
                 "assets/gaia/atlases/blocks.json",

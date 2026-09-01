@@ -10,10 +10,10 @@
     {"itemId": "gaia:stone", "displayName": "Stone", "cell": {"column": 2, "row": 0}, "region": {"x": 64, "y": 0, "width": 32, "height": 32}, "fallback": false},
     {"itemId": "gaia:oak_log", "displayName": "Oak Log", "cell": {"column": 3, "row": 0}, "region": {"x": 96, "y": 0, "width": 32, "height": 32}, "fallback": false},
     {"itemId": "gaia:oak_leaves", "displayName": "Oak Leaves", "cell": {"column": 0, "row": 1}, "region": {"x": 0, "y": 32, "width": 32, "height": 32}, "fallback": false},
-    {"itemId": "gaia:missing", "displayName": "Missing", "cell": {"column": 1, "row": 1}, "region": {"x": 32, "y": 32, "width": 32, "height": 32}, "fallback": true}
+    {"itemId": "gaia:missing", "displayName": "Missing", "cell": {"column": 1, "row": 1}, "region": {"x": 32, "y": 32, "width": 32, "height": 32}, "fallback": true},
+    {"itemId": "gaia:chisel", "displayName": "Chisel", "cell": {"column": 2, "row": 1}, "region": {"x": 64, "y": 32, "width": 32, "height": 32}, "fallback": false}
   ],
   "unassignedCells": [
-    {"column": 2, "row": 1},
     {"column": 3, "row": 1}
   ]
 }

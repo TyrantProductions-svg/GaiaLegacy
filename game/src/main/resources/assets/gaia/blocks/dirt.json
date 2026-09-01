@@ -11,6 +11,9 @@
   "gravity": false,
   "flammable": false,
   "blastResistance": 1.0,
+  "detailSupport": {
+    "unitItem": "gaia:dirt_detail_unit"
+  },
   "item": {
     "id": "gaia:dirt",
     "maxStackSize": 64,

@@ -9,6 +9,8 @@ import com.overlord.interaction.api.DetailMutationService;
 import com.overlord.interaction.api.DetailToFullRequest;
 import com.overlord.interaction.api.FullToDetailRequest;
 import com.overlord.interaction.api.InteractionContext;
+import com.overlord.interaction.api.RemoveDetailParentRequest;
+import com.overlord.interaction.api.SculptParentSubVoxelRequest;
 import com.overlord.voxel.ChunkDetailMutation;
 import com.overlord.voxel.ChunkDetailMutationOutcome;
 import com.overlord.voxel.ChunkRepository;
@@ -72,6 +74,49 @@ public final class GaiaDetailMutationService
                 request.context(),
                 chunks.mutateDetail(
                         new ChunkDetailMutation.SetSubVoxel(
+                                request.x(),
+                                request.y(),
+                                request.z(),
+                                request.expectedChunkRevision(),
+                                request.expectedState(),
+                                request.position(),
+                                replacementId)));
+    }
+
+    @Override
+    public DetailMutationResult removeDetailParent(
+            RemoveDetailParentRequest request) {
+        mainThreadGuard.assertMainThread("detail mutation");
+        Objects.requireNonNull(request, "request");
+        return map(
+                request.context(),
+                chunks.mutateDetail(
+                        new ChunkDetailMutation.RemoveDetailParent(
+                                request.x(),
+                                request.y(),
+                                request.z(),
+                                request.expectedChunkRevision(),
+                                request.expectedState())));
+    }
+
+    @Override
+    public DetailMutationResult sculptParentSubVoxel(
+            SculptParentSubVoxelRequest request) {
+        mainThreadGuard.assertMainThread("detail mutation");
+        Objects.requireNonNull(request, "request");
+        byte replacementId = 0;
+        if (request.replacementBlock().isPresent()) {
+            Optional<Byte> resolved =
+                    storedId(request.replacementBlock().orElseThrow());
+            if (resolved.isEmpty() || resolved.orElseThrow() == 0) {
+                return unknownMaterial(request.context());
+            }
+            replacementId = resolved.orElseThrow();
+        }
+        return map(
+                request.context(),
+                chunks.mutateDetail(
+                        new ChunkDetailMutation.SculptParentSubVoxel(
                                 request.x(),
                                 request.y(),
                                 request.z(),

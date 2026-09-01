@@ -9,6 +9,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.gaia.interaction.BlockInteractionSnapshot;
 import com.gaia.interaction.BlockInteractionViewModel;
 import com.gaia.interaction.GameMode;
+import com.gaia.interaction.BlockInteractionRoute;
+import com.gaia.interaction.DetailPlacementPreview;
+import com.gaia.interaction.DetailPrecisionTarget;
+import com.gaia.interaction.DetailPreviewValidity;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.interaction.api.BlockFace;
 import com.overlord.interaction.api.BlockHitResult;
@@ -16,12 +20,16 @@ import com.overlord.interaction.api.InteractionMode;
 import com.overlord.inventory.api.ItemStack;
 import com.overlord.renderer.feedback.FeedbackVisibility;
 import com.overlord.renderer.feedback.InteractionFeedbackFrame;
+import com.overlord.renderer.feedback.TransientBlockVisual;
 import com.overlord.renderer.feedback.ParticleVisual;
 import com.overlord.renderer.RenderOrigin;
 import com.overlord.renderer.particle.ParticleCategory;
 import com.overlord.renderer.particle.ParticleSystem;
 import com.overlord.renderer.texture.TextureRegion;
 import com.overlord.voxel.ChunkKey;
+import com.overlord.voxel.LocalSubVoxelPosition;
+import com.overlord.physics.Aabb;
+import com.overlord.physics.FullRaycastTarget;
 import com.overlord.worlditem.api.WorldItemId;
 import com.overlord.worlditem.api.WorldItemSnapshot;
 import java.util.ArrayList;
@@ -37,6 +45,35 @@ class InteractionFeedbackCoordinatorTest {
     private static final TextureRegion DIRT_REGION = region("gaia:dirt_top", 16);
     private static final FeedbackVisibility VISIBLE =
             new FeedbackVisibility(true, true, true, false);
+
+    @Test
+    void currentDetailPreviewAddsExactlyOneQuarterGhostAndNoExcludedCell() {
+        DetailPlacementPreview preview = new DetailPlacementPreview(
+                BlockInteractionRoute.DETAIL_PRECISION_PLACE,
+                ResourceLocation.parse("gaia:chisel"),
+                new DetailPrecisionTarget(
+                        17, 4, -16, new LocalSubVoxelPosition(2, 1, 3),
+                        BlockFace.EAST, STONE, 9L, FullRaycastTarget.INSTANCE),
+                17, 4, -16, new LocalSubVoxelPosition(2, 1, 3), BlockFace.EAST,
+                STONE, 9L, DetailPreviewValidity.VALID, Optional.empty(),
+                new Aabb(.5f, .25f, .75f, .75f, .5f, 1f));
+        DetailPlacementGhostAdapter adapter = new DetailPlacementGhostAdapter(
+                item -> com.overlord.renderer.feedback.WorldItemFaceRegions.uniform(
+                        STONE_REGION));
+
+        List<TransientBlockVisual> ghosts = adapter.visuals(
+                Optional.of(preview), new RenderOrigin(new ChunkKey(1, -1)));
+
+        assertEquals(1, ghosts.size());
+        TransientBlockVisual ghost = ghosts.get(0);
+        assertEquals(TransientBlockVisual.Type.PREVIEW, ghost.type());
+        assertEquals(.25f, ghost.transform().scale());
+        assertEquals(.125f, ghost.transform().translationX());
+        assertEquals(-.125f, ghost.transform().translationY());
+        assertEquals(.375f, ghost.transform().translationZ());
+        assertEquals(List.of(), adapter.excludedCells(Optional.of(preview)));
+        assertEquals(List.of(), adapter.visuals(Optional.empty(), new RenderOrigin(new ChunkKey(0, 0))));
+    }
 
     @Test
     void tenValidSurvivalFixedUpdatesEmitExactlyOneContinuousParticle() {

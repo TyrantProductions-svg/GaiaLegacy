@@ -15,6 +15,11 @@
   "atlases": [
     "atlases/blocks.json"
   ],
+  "items": [
+    "items/chisel.json",
+    "items/stone_detail_unit.json",
+    "items/dirt_detail_unit.json"
+  ],
   "ui": [
     "ui/ui-assets.json",
     "ui/ui_font.png",

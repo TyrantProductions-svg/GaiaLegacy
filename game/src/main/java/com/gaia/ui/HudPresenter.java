@@ -4,6 +4,8 @@ import com.gaia.world.streaming.ChunkStreamingMetrics;
 import com.gaia.blocks.ItemFormDefinition;
 import com.gaia.interaction.BlockInteractionViewModel;
 import com.gaia.interaction.GameMode;
+import com.gaia.interaction.BlockInteractionRoute;
+import com.gaia.interaction.DetailPlacementPreview;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.config.GameConfig;
 import com.overlord.core.input.InputSnapshot;
@@ -111,7 +113,42 @@ public final class HudPresenter {
                 modeNotice(),
                 new HudDebugSnapshot(
                         input.previousFrameMetrics(), input.feet(), input.counts(),
-                        input.streamingMetrics()));
+                        input.streamingMetrics()),
+                detailProjection(input.interaction(), visibility.interactionEligible()));
+    }
+
+    private static HudPresentationSnapshot.DetailToolPresentation detailProjection(
+            BlockInteractionViewModel interaction, boolean eligible) {
+        if (!eligible) {
+            return HudPresentationSnapshot.DetailToolPresentation.cleared();
+        }
+        Optional<DetailPlacementPreview> preview = interaction.detailPreview();
+        BlockInteractionRoute route = interaction.route().route();
+        HudPresentationSnapshot.DetailToolMode mode = switch (route) {
+            case DETAIL_COARSE_REMOVE -> HudPresentationSnapshot.DetailToolMode.COARSE_REMOVE;
+            case DETAIL_PRECISION_REMOVE -> HudPresentationSnapshot.DetailToolMode.PRECISION_REMOVE;
+            case DETAIL_PRECISION_PLACE -> HudPresentationSnapshot.DetailToolMode.PRECISION_PLACE;
+            default -> preview.map(value -> value.action()
+                            == BlockInteractionRoute.DETAIL_PRECISION_REMOVE
+                                    ? HudPresentationSnapshot.DetailToolMode.PRECISION_REMOVE
+                                    : HudPresentationSnapshot.DetailToolMode.PRECISION_PLACE)
+                    .orElse(interaction.selectedDetailMaterial().isPresent()
+                            ? HudPresentationSnapshot.DetailToolMode.PRECISION_PLACE
+                            : HudPresentationSnapshot.DetailToolMode.INACTIVE);
+        };
+        if (mode == HudPresentationSnapshot.DetailToolMode.INACTIVE) {
+            return HudPresentationSnapshot.DetailToolPresentation.cleared();
+        }
+        return new HudPresentationSnapshot.DetailToolPresentation(
+                mode,
+                interaction.selectedDetailMaterial(),
+                interaction.gameMode() == GameMode.SURVIVAL
+                        ? interaction.availableDetailUnitCount()
+                        : java.util.OptionalInt.empty(),
+                preview.map(DetailPlacementPreview::localPosition),
+                preview.map(DetailPlacementPreview::validity),
+                preview.flatMap(DetailPlacementPreview::reason),
+                interaction.failureReason());
     }
 
     private void processPresentationInput(FrameInput input) {

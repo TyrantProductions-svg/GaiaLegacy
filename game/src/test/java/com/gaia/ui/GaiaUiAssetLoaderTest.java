@@ -60,12 +60,12 @@ class GaiaUiAssetLoaderTest {
 
         assertEquals(List.of(
                         "gaia:grass", "gaia:dirt", "gaia:stone", "gaia:oak_log",
-                        "gaia:oak_leaves", "gaia:missing"),
+                        "gaia:oak_leaves", "gaia:missing", "gaia:chisel"),
                 loaded.icons().icons().keySet().stream().map(Object::toString).toList());
         assertEquals("Grass", loaded.icons().icons()
                 .get(ResourceLocation.parse("gaia:grass")).displayName());
         assertEquals("Missing", loaded.icons().fallback().displayName());
-        assertEquals(List.of(6, 7), loaded.icons().unassignedCells());
+        assertEquals(List.of(7), loaded.icons().unassignedCells());
 
         ByteBuffer firstView = loaded.renderAssets().icons().rgba();
         ByteBuffer secondView = loaded.renderAssets().icons().rgba();
@@ -186,10 +186,10 @@ class GaiaUiAssetLoaderTest {
         GaiaUiAssetLoadException cells = loadFailure(
                 temporary, "cells", resources -> mutateJson(resources,
                         "assets/gaia/ui/ui_icons.json", root -> root.getAsJsonArray(
-                                "unassignedCells").remove(1)));
+                                "unassignedCells").remove(0)));
 
         assertTrue(fallback.getCause().getMessage().contains("exactly one fallback"));
-        assertTrue(cells.getCause().getMessage().contains("two unassigned"));
+        assertTrue(cells.getCause().getMessage().contains("exactly 1 unassigned"));
     }
 
     @Test

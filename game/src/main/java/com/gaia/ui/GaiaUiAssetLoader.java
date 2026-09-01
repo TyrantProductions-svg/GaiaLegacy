@@ -47,6 +47,7 @@ public final class GaiaUiAssetLoader {
             ResourceLocation.parse("gaia:stone"),
             ResourceLocation.parse("gaia:oak_log"),
             ResourceLocation.parse("gaia:oak_leaves"),
+            ResourceLocation.parse("gaia:chisel"),
             ResourceLocation.parse("gaia:missing"));
 
     private final AssetManager assetManager;
@@ -242,8 +243,11 @@ public final class GaiaUiAssetLoader {
         }
 
         JsonArray unassignedArray = requireArray(root, "unassignedCells");
-        if (unassignedArray.size() != 2) {
-            throw new IllegalArgumentException("icon metadata requires exactly two unassigned cells");
+        int expectedUnassigned = 8 - assignedCells.size();
+        if (unassignedArray.size() != expectedUnassigned) {
+            throw new IllegalArgumentException(
+                    "icon metadata requires exactly " + expectedUnassigned
+                            + " unassigned cells");
         }
         List<Integer> unassigned = new ArrayList<>();
         for (JsonElement element : unassignedArray) {

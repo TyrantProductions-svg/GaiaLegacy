@@ -5,8 +5,10 @@ import com.gaia.assets.GaiaResourceLoader;
 import com.gaia.blocks.BlockRegistry;
 import com.gaia.debug.DetailDebugInputController;
 import com.gaia.debug.DetailDebugTools;
+import com.gaia.debug.DetailToolDebugProvisioner;
 import com.gaia.inventory.BodyInventoryInputController;
 import com.gaia.inventory.BodyInventoryService;
+import com.gaia.inventory.BodyInventoryReservationPlanner;
 import com.gaia.inventory.DebugInventoryProfile;
 import com.gaia.inventory.InventoryDebugCommands;
 import com.gaia.inventory.InventoryDebugSeeder;
@@ -17,6 +19,11 @@ import com.gaia.interaction.BlockBreakTransaction;
 import com.gaia.interaction.BlockInteractionController;
 import com.gaia.interaction.BlockPlacementTransaction;
 import com.gaia.interaction.CreativeSelection;
+import com.gaia.interaction.CreativeDetailEditTransaction;
+import com.gaia.interaction.DetailParentBreakTransaction;
+import com.gaia.interaction.DetailPlacementCollisionValidator;
+import com.gaia.interaction.Phase17DetailActionPolicy;
+import com.gaia.interaction.SurvivalDetailEditTransaction;
 import com.gaia.interaction.GaiaBlockRaycastService;
 import com.gaia.interaction.GaiaBlockWorldAccess;
 import com.gaia.interaction.GaiaDetailMutationService;
@@ -1018,6 +1025,11 @@ public final class GameSessionFactory {
                         new GaiaHudScreen(
                                 new UiIconResolver(
                                         uiAssets.icons(),
+                                        Map.of(
+                                                ResourceLocation.parse("gaia:stone_detail_unit"),
+                                                ResourceLocation.parse("gaia:stone"),
+                                                ResourceLocation.parse("gaia:dirt_detail_unit"),
+                                                ResourceLocation.parse("gaia:dirt")),
                                         item ->
                                                 System.err.println(
                                                         "[UI] Missing icon for "
@@ -1085,8 +1097,7 @@ public final class GameSessionFactory {
         GaiaWorldItemFaceResolver worldItemFaces =
                 new GaiaWorldItemFaceResolver(
                         blocks,
-                        catalog.blockAtlas().requireRegion(
-                                ResourceLocation.parse("gaia:missing")),
+                        catalog.blockAtlas(),
                         visualRegionDiagnostics);
         ParticleSystem particles = new ParticleSystem();
         com.gaia.interaction.feedback.TransientBlockVisualSystem transientBlocks =
@@ -1106,6 +1117,8 @@ public final class GameSessionFactory {
                         visualRegions::resolve,
                         particles,
                         visualDiagnostics);
+        AtomicReference<SimulationOriginCoordinator> originCoordinatorReference =
+                new AtomicReference<>();
         InteractionFeedbackCoordinator feedback =
                 new InteractionFeedbackCoordinator(
                         committedBreaks,
@@ -1115,7 +1128,11 @@ public final class GameSessionFactory {
                          worldItemFaces::resolve,
                          new com.gaia.interaction.feedback.FirstPersonActionAnimator(),
                          new com.gaia.interaction.feedback.CameraImpulseController(),
-                         transientBlocks);
+                         transientBlocks,
+                         () -> Objects.requireNonNull(
+                                 originCoordinatorReference.get(),
+                                 "simulation origin coordinator")
+                                 .simulationOrigin());
         Consumer<Throwable> fatalSpawnBarrier =
                 failure -> {
                     throw new IllegalStateException(
@@ -1145,8 +1162,6 @@ public final class GameSessionFactory {
         GaiaDetailMutationService detailMutations =
                 new GaiaDetailMutationService(
                         mainThreadGuard, blocks, world.chunks());
-        AtomicReference<SimulationOriginCoordinator> originCoordinatorReference =
-                new AtomicReference<>();
         GaiaBlockRaycastService blockRaycasts = new GaiaBlockRaycastService(
                 blockRaycast,
                 blocks,
@@ -1199,7 +1214,10 @@ public final class GameSessionFactory {
         CreativeSelection creativeSelection =
                 new CreativeSelection(
                         blocks,
-                        Optional.of(ResourceLocation.parse("gaia:dirt")));
+                        Optional.of(ResourceLocation.parse(
+                                inventoryDebugShortcuts
+                                        ? "gaia:chisel"
+                                        : "gaia:dirt")));
         BlockBreakTransaction blockBreak =
                 new BlockBreakTransaction(
                         worldMutations,
@@ -1209,6 +1227,21 @@ public final class GameSessionFactory {
                         playerBody,
                         ResourceLocation.parse("gaia:air"),
                         fatalSpawnBarrier);
+        DetailPlacementCollisionValidator detailPlacementCollision =
+                new DetailPlacementCollisionValidator(
+                        () -> Objects.requireNonNull(
+                                originCoordinatorReference.get(),
+                                "simulation origin coordinator")
+                                .simulationOrigin());
+        Phase17DetailActionPolicy detailActionPolicy =
+                new Phase17DetailActionPolicy(blocks);
+        DetailParentBreakTransaction detailParentBreak =
+                new DetailParentBreakTransaction(
+                        detailMutations,
+                        inventoryOwner,
+                        blocks,
+                        detailActionPolicy,
+                        worldItems);
         BlockInteractionController blockInteraction =
                 new BlockInteractionController(
                         gameModes,
@@ -1228,7 +1261,24 @@ public final class GameSessionFactory {
                                 playerBody,
                                 ResourceLocation.parse("gaia:air")),
                         GameConfig.Interaction.BASE_BREAK_SPEED,
-                        feedback);
+                        feedback,
+                        blockWorld,
+                        new CreativeDetailEditTransaction(
+                                detailMutations,
+                                blockWorld,
+                                detailPlacementCollision,
+                                playerBody,
+                                inventoryOwner),
+                        new SurvivalDetailEditTransaction(
+                                detailMutations,
+                                blockWorld,
+                                new BodyInventoryReservationPlanner(inventoryService),
+                                inventoryService,
+                                inventoryOwner,
+                                detailPlacementCollision,
+                                playerBody),
+                        detailParentBreak,
+                        detailActionPolicy);
         if (restoreSnapshot.isEmpty()) {
             runConfiguredInventoryDebugCommand(inventoryDebugCommands);
         }
@@ -1317,6 +1367,8 @@ public final class GameSessionFactory {
                 "inventory-drop", inventoryDrop::close);
         shutdown.register(
                 "block-break", blockBreak::close);
+        shutdown.register(
+                "detail-parent-break", detailParentBreak::close);
 
         Optional<WorldLoader> sessionWorldLoader = Optional.empty();
         Optional<ExecutorService> sessionWorldExecutor = Optional.empty();
@@ -2146,7 +2198,8 @@ public final class GameSessionFactory {
                         inventoryService, owner, profile),
                 inventoryService,
                 owner,
-                new InventorySnapshotFormatter());
+                new InventorySnapshotFormatter(),
+                new DetailToolDebugProvisioner(inventoryService, owner));
     }
 
     private static void runConfiguredInventoryDebugCommand(
@@ -4421,7 +4474,8 @@ public final class GameSessionFactory {
                     fixedDelta,
                     inventoryTick,
                     Math.max(0L, System.nanoTime()),
-                    fixedInteractionEnabled);
+                    fixedInteractionEnabled,
+                    routed.pickupPressed());
             feedback.fixedUpdate(
                     blockInteraction.viewModel(),
                     fixedInteractionEnabled,

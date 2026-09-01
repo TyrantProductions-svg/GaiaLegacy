@@ -1,0 +1,12 @@
+{
+  "id": "gaia:dirt_detail_unit",
+  "maxStackSize": 64,
+  "mouthHoldable": false,
+  "twoHanded": false,
+  "capabilities": [],
+  "visual": {
+    "type": "ATLAS_REGION",
+    "atlas": "gaia:blocks",
+    "region": "gaia:dirt"
+  }
+}
