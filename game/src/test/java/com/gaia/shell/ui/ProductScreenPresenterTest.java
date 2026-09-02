@@ -28,6 +28,8 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 class ProductScreenPresenterTest {
     private static final ProductShellSnapshot MAIN_MENU = snapshot(ScreenId.MAIN_MENU);
@@ -85,6 +87,23 @@ class ProductScreenPresenterTest {
                         && command.framebufferBounds().equals(
                                 CONTEXT.toFramebuffer(CONTEXT.safeArea()))
                         && command.tint().alpha() >= 0.9f));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = UiActionId.class, names = {"LOAD_WORLD", "RESUME"})
+    void mainMenuRejectsDisabledOrAbsentActionsWithoutManufacturingFocus(UiActionId action) {
+        ProductUiLayout layout = presenter.present(MAIN_MENU, CONTEXT, Optional.of(action));
+
+        long enabledTintCount = layout.hitRegions().stream()
+                .filter(UiHitRegion::enabled)
+                .map(region -> layout.frame().commands().stream()
+                        .filter(command -> command.texture() == UiTextureId.SOLID)
+                        .filter(command -> command.framebufferBounds().equals(
+                                CONTEXT.toFramebuffer(region.logicalBounds())))
+                        .findFirst().orElseThrow().tint())
+                .distinct().count();
+        assertEquals(1L, enabledTintCount,
+                "an invalid focused action must leave all enabled menu items unselected");
     }
 
     @Test

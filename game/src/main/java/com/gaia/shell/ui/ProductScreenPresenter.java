@@ -929,9 +929,7 @@ public final class ProductScreenPresenter {
             UiLayoutContext context,
             UiDrawList draw,
             List<UiHitRegion> hitRegions) {
-        UiActionId selected = focusedAction.filter(action -> buttons.stream()
-                        .anyMatch(button -> button.action() == action && button.enabled()))
-                .orElse(UiActionId.NEW_WORLD);
+        UiActionId selected = selectedAction(buttons, focusedAction);
         double left = 84.0d;
         double width = 292.0d;
         double step = 48.0d;

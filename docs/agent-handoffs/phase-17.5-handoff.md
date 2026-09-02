@@ -11,7 +11,49 @@ post-merge CI success. The final controller report supplies feature, PR and
 merge identities after those events; no direct main documentation commit is
 needed merely to insert a self-referential SHA.
 
-## Completed scope
+## PR #30 focus-contract closure record
+
+This section supplements (does not replace) the pre-integration evidence above.
+Original feature SHA `59daf8c53f83a7556635c96f9ca3c6da2b1cc016` is historical
+RED evidence. PR #30 targets main at `d4740726fe611c20b4ae1b96e5387c532c21cb1e`.
+Build run `33593438681` failed on Windows, Ubuntu and macOS; Ubuntu reported
+2,309 game tests, 10 failures and 31 skips. The previously recorded focused
+suite omitted ProductLoopTest and was not a full-repository pass.
+
+Root cause: appendMainMenuButtons manufactured NEW_WORLD selection when the
+input/focus owner supplied no valid focused action. The sole production fix
+delegates to the unchanged selectedAction(buttons, focusedAction) helper.
+No input ownership, hit region, menu ordering or accepted visual asset changes.
+
+Strict RED/GREEN evidence:
+
+- Unmodified initialMainMenuWithPointerOutsideHasNoSelectedTint: RED on the
+  original SHA (expected one enabled tint, observed two), then GREEN after fix.
+- Added disabled LOAD_WORLD / absent RESUME presenter cases: both RED before
+  the fix, both GREEN after it. Existing integration assertions are untouched.
+- Complete ProductLoopTest: 47/47 GREEN, zero failures/errors/skips.
+- Proportional closure matrix: 260/260 GREEN, zero failures/errors/skips,
+  including those 47 tests (213 adjacent tests, not 260 additional tests).
+- installDist: GREEN. Scoped independent code review: 0 Critical / 0 Important /
+  0 Minor. The user subsequently completed the requested Windows focus smoke
+  and reported all normal, highlight PASS: pointer enter/leave, keyboard focus
+  and normal exit. This is human-confirmed runtime evidence. Earlier Computer
+  Use did not visibly confirm those transitions; no PASS is inferred from it
+  or from automated fixtures. The accepted visual composition is unchanged.
+
+Commands, with the previously documented process-local JDK selector:
+
+```powershell
+.\gradlew.bat :game:test --tests 'com.gaia.shell.ProductLoopTest.initialMainMenuWithPointerOutsideHasNoSelectedTint' --console=plain --no-daemon
+.\gradlew.bat :game:test --tests 'com.gaia.shell.ProductLoopTest' --console=plain --no-daemon
+.\gradlew.bat :game:test --tests 'com.gaia.shell.ui.*' --tests 'com.gaia.shell.ProductShellControllerTest' --tests 'com.gaia.shell.ScreenRouterTest' --tests 'com.gaia.shell.ScreenRouterSaveFlowTest' --tests 'com.gaia.shell.SettingsShellIntegrationTest' --tests 'com.gaia.shell.ProductLoop*' :game:installDist --console=plain --no-daemon
+```
+
+Closure commit, new-head three-platform PR CI, normal merge and exact-main CI
+are pending; original RED jobs can never satisfy the new-head merge gate.
+Windows 125% interactive DPI and Apple Silicon interactive remain NOT RUN.
+
+## Completed scope (pre-integration)
 
 - One semantic TypographyCatalog/TextRenderer/UiRenderer. Pixelify Bold700 title,
   SemiBold600 heading; Inter400/500/600 body/functional/HUD.
