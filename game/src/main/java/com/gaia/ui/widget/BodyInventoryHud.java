@@ -8,6 +8,7 @@ import com.gaia.ui.UiIconResolver;
 import com.overlord.inventory.api.BodySlot;
 import com.overlord.inventory.api.ItemStack;
 import com.overlord.renderer.ui.TextRenderer;
+import com.overlord.renderer.ui.TypographyRole;
 import com.overlord.renderer.ui.UiColor;
 import com.overlord.renderer.ui.UiDrawCommand;
 import com.overlord.renderer.ui.UiDrawList;
@@ -297,7 +298,12 @@ public final class BodyInventoryHud {
         if (slot == BodySlot.MOUTH) {
             baseline = line == 0 ? bounds.bottom() + 5 : bounds.bottom() - 8;
         } else {
-            baseline = bounds.bottom() + 5 + line * 6;
+            // Keep the final row within the existing bottom margin, but allow the
+            // production font's ink height at a DPI scale step (not only 8x8 fixtures).
+            double scaleY = pixelGridScale(STATE_SCALE, layout.contentScaleY());
+            double lineStep = Math.max(6, Math.ceil(
+                    text.lineHeight(TypographyRole.HUD, scaleY) + 1) / layout.contentScaleY());
+            baseline = bounds.bottom() + 11 - (1 - line) * lineStep;
         }
         appendCentered(label, centerX(bounds), baseline, STATE_SCALE, color, layout, out);
     }
@@ -313,14 +319,14 @@ public final class BodyInventoryHud {
         double availableLogicalWidth = logicalSafeArea.right() - logicalSafeArea.left();
         double logicalScale = Math.min(
                 maxLogicalScale,
-                availableLogicalWidth / text.measure(quantity, 1));
+                availableLogicalWidth / text.measure(quantity, TypographyRole.HUD, 1));
         double scaleX = pixelGridScale(logicalScale, layout.contentScaleX());
         double scaleY = pixelGridScale(logicalScale, layout.contentScaleY());
         double right = layout.snapX(logicalSafeArea.right());
-        double x = right - text.measure(quantity, scaleX);
+        double x = right - text.measure(quantity, TypographyRole.HUD, scaleX);
         double baseline = layout.snapY(
                 logicalSafeArea.bottom() - (compactVerticalBand ? 0 : 1));
-        text.append(quantity, x, baseline, scaleX, scaleY, color,
+        text.append(quantity, TypographyRole.HUD, x, baseline, scaleX, scaleY, color,
                 Optional.empty(), out);
     }
 
@@ -334,8 +340,10 @@ public final class BodyInventoryHud {
             UiDrawList out) {
         double scaleX = pixelGridScale(logicalScale, layout.contentScaleX());
         double scaleY = pixelGridScale(logicalScale, layout.contentScaleY());
-        double x = layout.snapX(logicalCenterX) - text.measure(label, scaleX) / 2;
-        text.append(label, x, layout.snapY(logicalBaseline), scaleX, scaleY, color,
+        double x = layout.snapX(logicalCenterX)
+                - text.measure(label, TypographyRole.HUD, scaleX) / 2;
+        text.append(label, TypographyRole.HUD,
+                x, layout.snapY(logicalBaseline), scaleX, scaleY, color,
                 Optional.empty(), out);
     }
 

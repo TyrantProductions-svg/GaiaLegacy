@@ -118,10 +118,14 @@ class UiFrameTest {
     }
 
     @Test
-    void textureIdentityIsLimitedToTheThreeEngineAtlasKinds() {
-        assertEquals(
-                List.of(UiTextureId.SOLID, UiTextureId.ICON_ATLAS, UiTextureId.FONT_ATLAS),
-                List.of(UiTextureId.values()));
+    void framePreservesLegacyAndMultiPageTextureIdentitiesInSubmissionOrder() {
+        List<UiTextureId> textures = List.of(UiTextureId.SOLID, UiTextureId.ICON_ATLAS,
+                UiTextureId.FONT_ATLAS, UiTextureId.FONT_DISPLAY, UiTextureId.FONT_BODY,
+                UiTextureId.HERO_BACKGROUND, UiTextureId.BRAND_EMBLEM);
+        UiDrawList draw = new UiDrawList();
+        textures.forEach(texture -> draw.append(command(texture, 0)));
+        assertEquals(textures, draw.seal().commands().stream()
+                .map(UiDrawCommand::texture).toList());
     }
 
     private static UiDrawCommand command(UiTextureId texture, double left) {

@@ -5,6 +5,7 @@ import com.gaia.ui.HudDebugSnapshot;
 import com.gaia.ui.HudPresentationSnapshot;
 import com.overlord.renderer.metrics.RenderMetricsSnapshot;
 import com.overlord.renderer.ui.TextRenderer;
+import com.overlord.renderer.ui.TypographyRole;
 import com.overlord.renderer.ui.UiDrawCommand;
 import com.overlord.renderer.ui.UiDrawList;
 import com.overlord.renderer.ui.UiLayoutContext;
@@ -20,8 +21,6 @@ public final class DebugHud {
     private static final double MARGIN = 12;
     private static final double PADDING = 6;
     private static final double SCALE = 0.75;
-    private static final double GLYPH_HEIGHT = 8;
-    private static final double LINE_STEP = 9;
     private static final int LINE_COUNT = 12;
     private static final UiUvRect SOLID_UV = new UiUvRect(0, 0, 1, 1);
 
@@ -43,15 +42,17 @@ public final class DebugHud {
         }
 
         List<String> lines = lines(snapshot);
+        double glyphHeight = text.lineHeight(TypographyRole.HUD, SCALE);
+        double lineStep = Math.max(9.0d, glyphHeight + 1.0d);
         double contentWidth = lines.stream()
-                .mapToDouble(line -> text.measure(line, SCALE))
+                .mapToDouble(line -> text.measure(line, TypographyRole.HUD, SCALE))
                 .max()
                 .orElseThrow();
         UiRect panel = new UiRect(
                 MARGIN,
                 MARGIN,
                 MARGIN + contentWidth + PADDING * 2,
-                MARGIN + PADDING * 2 + lines.size() * LINE_STEP);
+                MARGIN + PADDING * 2 + lines.size() * lineStep);
         if (panel.right() > layout.logicalWidth() - MARGIN
                 || panel.bottom() > layout.logicalHeight() - MARGIN) {
             throw new IllegalArgumentException(
@@ -68,9 +69,10 @@ public final class DebugHud {
         double framebufferScaleX = SCALE * layout.contentScaleX();
         double framebufferScaleY = SCALE * layout.contentScaleY();
         for (int index = 0; index < lines.size(); index++) {
-            double baseline = panel.top() + PADDING + GLYPH_HEIGHT * SCALE + index * LINE_STEP;
+            double baseline = panel.top() + PADDING + glyphHeight + index * lineStep;
             text.append(
                     lines.get(index),
+                    TypographyRole.HUD,
                     x,
                     layout.snapY(baseline),
                     framebufferScaleX,

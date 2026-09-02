@@ -113,6 +113,42 @@ class UiRendererTest {
     }
 
     @Test
+    void bindsDisplayAndBodyPagesThroughTheSameRenderer() {
+        RecordingBackend backend = new RecordingBackend();
+        UiRenderer renderer = UiRenderer.create(
+                multiPageBundle(), backend, MainThreadGuard.captureCurrentThread());
+        backend.resetFrame();
+
+        renderer.render(new UiFrame(List.of(
+                command(UiTextureId.FONT_DISPLAY, 0.0d, Optional.empty()),
+                command(UiTextureId.FONT_BODY, 10.0d, Optional.empty()))), SURFACE);
+
+        assertEquals(List.of(21, 22), backend.boundTextures);
+        assertEquals(List.of(true, true), backend.textureSampling);
+    }
+
+    @Test
+    void drawsOneFullscreenHeroThroughTheExistingRendererAndShaderPath() {
+        RecordingBackend backend = new RecordingBackend();
+        UiRenderer renderer = UiRenderer.create(
+                multiPageBundle(), backend, MainThreadGuard.captureCurrentThread());
+        backend.resetFrame();
+        UiDrawCommand hero = command(
+                UiTextureId.HERO_BACKGROUND,
+                new UiRect(0.0d, 0.0d, 640.0d, 360.0d),
+                new UiUvRect(0.0f, 0.0f, 1.0f, 1.0f),
+                new UiColor(1.0f, 1.0f, 1.0f, 1.0f),
+                Optional.empty());
+
+        renderer.render(new UiFrame(List.of(hero)), SURFACE);
+
+        assertEquals(List.of(23), backend.boundTextures);
+        assertEquals(List.of(true), backend.textureSampling);
+        assertEquals(List.of(6), backend.drawCounts);
+        assertEquals(32, backend.uploadedVertices.get(0).length);
+    }
+
+    @Test
     void zeroFramebufferPerformsNoCaptureUploadOrDraw() {
         RecordingBackend backend = new RecordingBackend();
         UiRenderer renderer = create(backend);
@@ -213,6 +249,35 @@ class UiRendererTest {
         BitmapGlyph missing = new BitmapGlyph(
                 0xfffd, new UiUvRect(0.0f, 0.0f, 1.0f, 1.0f), 1, 0, 1);
         return new UiAssetBundle(texture, texture, new BitmapFont(1, 1, Map.of(), missing));
+    }
+
+    private static UiAssetBundle multiPageBundle() {
+        UiTextureData nearest = new UiTextureData(
+                1, 1, ByteBuffer.wrap(new byte[] {-1, -1, -1, -1}));
+        UiTextureData linear = new UiTextureData(
+                1, 1, ByteBuffer.wrap(new byte[] {-1, -1, -1, -1}),
+                UiTextureSampling.LINEAR);
+        BitmapGlyph missing = new BitmapGlyph(
+                0xfffd, new UiUvRect(0.0f, 0.0f, 1.0f, 1.0f), 1, 0, 1);
+        BitmapFont font = new BitmapFont(1, 1, Map.of(), missing);
+        TypographyCatalog.Face display = new TypographyCatalog.Face(
+                font, UiTextureId.FONT_DISPLAY);
+        TypographyCatalog.Face body = new TypographyCatalog.Face(
+                font, UiTextureId.FONT_BODY);
+        return new UiAssetBundle(
+                Map.of(
+                        UiTextureId.ICON_ATLAS, nearest,
+                        UiTextureId.FONT_DISPLAY, nearest,
+                        UiTextureId.FONT_BODY, linear,
+                        UiTextureId.HERO_BACKGROUND, linear),
+                new TypographyCatalog(
+                        Map.of(
+                                TypographyRole.DISPLAY_TITLE, display,
+                                TypographyRole.HEADING_LARGE, display,
+                                TypographyRole.BODY, body,
+                                TypographyRole.FUNCTIONAL, body,
+                                TypographyRole.HUD, body),
+                        TypographyRole.BODY));
     }
 
     private static UiDrawCommand command(

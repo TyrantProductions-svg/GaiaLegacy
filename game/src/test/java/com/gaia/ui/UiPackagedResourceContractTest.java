@@ -24,10 +24,37 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class UiPackagedResourceContractTest {
+    @Test
+    void distributedFontDerivativesIncludeCompleteUnmodifiedUpstreamLicenses() throws Exception {
+        Map<String, String> licenses = Map.of(
+                "assets/gaia/ui/licenses/pixelify-OFL.txt",
+                "b66ba46f511a851ab09998b5a5a9fdbb102545a3864cb993095e1745996873a7",
+                "assets/gaia/ui/licenses/inter-LICENSE.txt",
+                "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a");
+        for (var license : licenses.entrySet()) {
+            try (InputStream input = getClass().getClassLoader()
+                    .getResourceAsStream(license.getKey())) {
+                assertNotNull(input, "distributed font license missing: " + license.getKey());
+                assertEquals(license.getValue(), java.util.HexFormat.of().formatHex(
+                        java.security.MessageDigest.getInstance("SHA-256")
+                                .digest(input.readAllBytes())), license.getKey());
+            }
+        }
+    }
+
     private static final List<String> GAME_UI_RESOURCES = List.of(
             "assets/gaia/ui/ui-assets.json",
+            "assets/gaia/ui/brand/gaia-emblem.png",
+            "assets/gaia/ui/brand/brand-manifest.json",
             "assets/gaia/ui/ui_font.png",
             "assets/gaia/ui/ui_font.json",
+            "assets/gaia/ui/ui_font_body.png",
+            "assets/gaia/ui/ui_font_display.png",
+            "assets/gaia/ui/ui_typography.json",
+            "assets/gaia/ui/hero/gaia-hero-dawn.png",
+            "assets/gaia/ui/hero/gaia-hero-highlands.png",
+            "assets/gaia/ui/hero/gaia-hero-twilight.png",
+            "assets/gaia/ui/hero/hero-manifest.json",
             "assets/gaia/ui/ui_icons.png",
             "assets/gaia/ui/ui_icons.json");
     private static final List<String> ENGINE_UI_RESOURCES = List.of(
@@ -56,7 +83,9 @@ class UiPackagedResourceContractTest {
 
             AssetManager assets = new AssetManager(loader);
             GaiaUiAssets ui = new GaiaUiAssetLoader(assets).load();
-            assertEquals(128, ui.renderAssets().font().width());
+            assertEquals(256, ui.renderAssets().font().width());
+            assertEquals(512, ui.renderAssets()
+                    .texture(com.overlord.renderer.ui.UiTextureId.FONT_DISPLAY).height());
             assertEquals(128, ui.renderAssets().icons().width());
             var shaders = new ShaderResourceLoader(assets).load(
                     "ui",
@@ -111,8 +140,17 @@ class UiPackagedResourceContractTest {
 
         assertEquals(List.of(
                 "ui/ui-assets.json",
+                "ui/brand/gaia-emblem.png",
+                "ui/brand/brand-manifest.json",
                 "ui/ui_font.png",
                 "ui/ui_font.json",
+                "ui/ui_font_body.png",
+                "ui/ui_font_display.png",
+                "ui/ui_typography.json",
+                "ui/hero/gaia-hero-dawn.png",
+                "ui/hero/gaia-hero-highlands.png",
+                "ui/hero/gaia-hero-twilight.png",
+                "ui/hero/hero-manifest.json",
                 "ui/ui_icons.png",
                 "ui/ui_icons.json"), indexed);
     }

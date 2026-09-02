@@ -37,6 +37,18 @@ test {
     useJUnitPlatform()
 }
 
+// Ship complete upstream notices with the derived font pages, without a tools runtime dependency.
+tasks.named('processResources') {
+    from(rootProject.file('tools/src/main/resources/ui-source/fonts/pixelify/OFL.txt')) {
+        into 'assets/gaia/ui/licenses'
+        rename { 'pixelify-OFL.txt' }
+    }
+    from(rootProject.file('tools/src/main/resources/ui-source/fonts/inter/LICENSE.txt')) {
+        into 'assets/gaia/ui/licenses'
+        rename { 'inter-LICENSE.txt' }
+    }
+}
+
 tasks.named('run') {
     if (project.hasProperty('gaiaInventoryDebugCommand')) {
         systemProperty 'gaia.inventory.debugCommand',
@@ -70,8 +82,19 @@ tasks.register('verifyPackagedResources') {
             'assets/gaia/audio/music/gaia.ogg',
             'assets/gaia/audio/music/legacy.ogg',
             'assets/gaia/ui/ui-assets.json',
+            'assets/gaia/ui/licenses/pixelify-OFL.txt',
+            'assets/gaia/ui/licenses/inter-LICENSE.txt',
             'assets/gaia/ui/ui_font.png',
             'assets/gaia/ui/ui_font.json',
+            'assets/gaia/ui/ui_font_body.png',
+            'assets/gaia/ui/ui_font_display.png',
+            'assets/gaia/ui/ui_typography.json',
+            'assets/gaia/ui/brand/gaia-emblem.png',
+            'assets/gaia/ui/brand/brand-manifest.json',
+            'assets/gaia/ui/hero/gaia-hero-dawn.png',
+            'assets/gaia/ui/hero/gaia-hero-highlands.png',
+            'assets/gaia/ui/hero/gaia-hero-twilight.png',
+            'assets/gaia/ui/hero/hero-manifest.json',
             'assets/gaia/ui/ui_icons.png',
             'assets/gaia/ui/ui_icons.json'
         ]
@@ -227,8 +250,19 @@ tasks.register('verifyInstalledShaderResources') {
             'assets/gaia/audio/music/gaia.ogg',
             'assets/gaia/audio/music/legacy.ogg',
             'assets/gaia/ui/ui-assets.json',
+            'assets/gaia/ui/licenses/pixelify-OFL.txt',
+            'assets/gaia/ui/licenses/inter-LICENSE.txt',
             'assets/gaia/ui/ui_font.png',
             'assets/gaia/ui/ui_font.json',
+            'assets/gaia/ui/ui_font_body.png',
+            'assets/gaia/ui/ui_font_display.png',
+            'assets/gaia/ui/ui_typography.json',
+            'assets/gaia/ui/brand/gaia-emblem.png',
+            'assets/gaia/ui/brand/brand-manifest.json',
+            'assets/gaia/ui/hero/gaia-hero-dawn.png',
+            'assets/gaia/ui/hero/gaia-hero-highlands.png',
+            'assets/gaia/ui/hero/gaia-hero-twilight.png',
+            'assets/gaia/ui/hero/hero-manifest.json',
             'assets/gaia/ui/ui_icons.png',
             'assets/gaia/ui/ui_icons.json'
         ]

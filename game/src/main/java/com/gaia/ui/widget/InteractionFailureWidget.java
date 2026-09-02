@@ -4,6 +4,7 @@ import com.gaia.ui.GaiaUiTheme;
 import com.gaia.ui.HudPresentationSnapshot;
 import com.overlord.interaction.api.InteractionFailureReason;
 import com.overlord.renderer.ui.TextRenderer;
+import com.overlord.renderer.ui.TypographyRole;
 import com.overlord.renderer.ui.UiDrawList;
 import com.overlord.renderer.ui.UiLayoutContext;
 import java.util.Objects;
@@ -36,10 +37,12 @@ public final class InteractionFailureWidget {
             return;
         }
         String label = "FAILED: " + reason.orElseThrow().code();
-        double x = layout.framebufferWidth() / 2.0 - text.measure(label, SCALE) / 2.0;
+        double x = layout.framebufferWidth() / 2.0
+                - text.measure(label, TypographyRole.HUD, SCALE) / 2.0;
         double baseline = layout.framebufferHeight() / 2.0 + BASELINE_OFFSET;
         text.append(
                 label,
+                TypographyRole.HUD,
                 x,
                 baseline,
                 SCALE,

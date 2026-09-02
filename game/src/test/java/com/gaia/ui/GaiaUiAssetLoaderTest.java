@@ -13,6 +13,9 @@ import com.google.gson.JsonParser;
 import com.overlord.assets.AssetLoadException;
 import com.overlord.assets.AssetManager;
 import com.overlord.assets.ResourceLocation;
+import com.overlord.renderer.ui.TypographyRole;
+import com.overlord.renderer.ui.UiTextureId;
+import com.overlord.renderer.ui.UiTextureSampling;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -38,10 +41,43 @@ import org.junit.jupiter.params.provider.ValueSource;
 class GaiaUiAssetLoaderTest {
     private static final List<String> PATHS = List.of(
             "assets/gaia/ui/ui-assets.json",
-            "assets/gaia/ui/ui_font.png",
-            "assets/gaia/ui/ui_font.json",
+            "assets/gaia/ui/brand/gaia-emblem.png",
+            "assets/gaia/ui/brand/brand-manifest.json",
+            "assets/gaia/ui/ui_font_display.png",
+            "assets/gaia/ui/ui_font_body.png",
+            "assets/gaia/ui/ui_typography.json",
+            "assets/gaia/ui/hero/gaia-hero-dawn.png",
+            "assets/gaia/ui/hero/gaia-hero-highlands.png",
+            "assets/gaia/ui/hero/gaia-hero-twilight.png",
+            "assets/gaia/ui/hero/hero-manifest.json",
             "assets/gaia/ui/ui_icons.png",
             "assets/gaia/ui/ui_icons.json");
+
+    @Test
+    void rejectsIncorrectBrandSamplingAlphaAndHash(@TempDir Path temporary) throws Exception {
+        for (String field : List.of("sampling", "alphaMode", "pngSha256")) {
+            GaiaUiAssetLoadException failure = loadFailure(temporary, "brand-" + field,
+                    resources -> mutateJson(resources,
+                            "assets/gaia/ui/brand/brand-manifest.json",
+                            root -> root.addProperty(field, "invalid")));
+            assertTrue(failure.getMessage().contains("brand/"));
+        }
+    }
+
+    @Test
+    void loadsSmoothBrandOnIndependentLinearPageWithTransparentPadding() {
+        GaiaUiAssets loaded = new GaiaUiAssetLoader(
+                new AssetManager(getClass().getClassLoader())).load();
+        var brand = loaded.renderAssets().texture(UiTextureId.BRAND_EMBLEM);
+        assertEquals(256, brand.width());
+        assertEquals(256, brand.height());
+        assertEquals(UiTextureSampling.LINEAR, brand.sampling());
+        ByteBuffer pixels = brand.rgba();
+        assertEquals(0, Byte.toUnsignedInt(pixels.get(3)));
+        assertEquals(0x91, Byte.toUnsignedInt(pixels.get(0)));
+        assertEquals(0xdc, Byte.toUnsignedInt(pixels.get(1)));
+        assertEquals(0xe8, Byte.toUnsignedInt(pixels.get(2)));
+    }
 
     @Test
     void loadsProductionImagesAndMetadataIntoImmutableRuntimeAssets() {
@@ -50,8 +86,8 @@ class GaiaUiAssetLoaderTest {
 
         assertEquals(128, loaded.renderAssets().icons().width());
         assertEquals(64, loaded.renderAssets().icons().height());
-        assertEquals(128, loaded.renderAssets().font().width());
-        assertEquals(64, loaded.renderAssets().font().height());
+        assertEquals(256, loaded.renderAssets().font().width());
+        assertEquals(256, loaded.renderAssets().font().height());
         assertTrue(loaded.renderAssets().icons().rgba().isReadOnly());
         assertTrue(loaded.renderAssets().font().rgba().isReadOnly());
         assertEquals(97, loaded.renderAssets().glyphs().glyphs().size());
@@ -76,6 +112,48 @@ class GaiaUiAssetLoaderTest {
     }
 
     @Test
+    void loadsTheApprovedTwoPageTypographyCatalogAndSamplingModes() {
+        GaiaUiAssets loaded = new GaiaUiAssetLoader(
+                new AssetManager(getClass().getClassLoader())).load();
+
+        assertEquals(256, loaded.renderAssets().texture(UiTextureId.FONT_DISPLAY).width());
+        assertEquals(512, loaded.renderAssets().texture(UiTextureId.FONT_DISPLAY).height());
+        assertEquals(UiTextureSampling.NEAREST,
+                loaded.renderAssets().texture(UiTextureId.FONT_DISPLAY).sampling());
+        assertEquals(256, loaded.renderAssets().texture(UiTextureId.FONT_BODY).width());
+        assertEquals(256, loaded.renderAssets().texture(UiTextureId.FONT_BODY).height());
+        assertEquals(UiTextureSampling.LINEAR,
+                loaded.renderAssets().texture(UiTextureId.FONT_BODY).sampling());
+        assertEquals(UiTextureId.FONT_DISPLAY, loaded.renderAssets().typography()
+                .resolve(TypographyRole.DISPLAY_TITLE).texture());
+        assertEquals(UiTextureId.FONT_DISPLAY, loaded.renderAssets().typography()
+                .resolve(TypographyRole.HEADING_LARGE).texture());
+        assertEquals(UiTextureId.FONT_BODY, loaded.renderAssets().typography()
+                .resolve(TypographyRole.BODY).texture());
+        assertEquals(UiTextureId.FONT_BODY, loaded.renderAssets().typography()
+                .resolve(TypographyRole.FUNCTIONAL).texture());
+        assertEquals(UiTextureId.FONT_BODY, loaded.renderAssets().typography()
+                .resolve(TypographyRole.HUD).texture());
+    }
+
+    @Test
+    void loadsTheDeterministicHeroRosterButOnlyTheInitialPageIntoTheRenderer() {
+        GaiaUiAssets loaded = new GaiaUiAssetLoader(
+                new AssetManager(getClass().getClassLoader())).load();
+
+        assertEquals("dawn", loaded.heroes().initialHero());
+        assertEquals(List.of("dawn", "highlands", "twilight"),
+                loaded.heroes().heroes().stream().map(GaiaHeroCatalog.Hero::id).toList());
+        assertEquals(1, loaded.heroes().maximumResidentHeroPages());
+        assertEquals(1280,
+                loaded.renderAssets().texture(UiTextureId.HERO_BACKGROUND).width());
+        assertEquals(720,
+                loaded.renderAssets().texture(UiTextureId.HERO_BACKGROUND).height());
+        assertEquals(UiTextureSampling.LINEAR,
+                loaded.renderAssets().texture(UiTextureId.HERO_BACKGROUND).sampling());
+    }
+
+    @Test
     void loadsFromAClasspathJarWithoutFilesystemPaths(@TempDir Path temporary) throws Exception {
         Map<String, byte[]> resources = productionResources();
         Path jar = temporary.resolve("ui-assets.jar");
@@ -93,8 +171,9 @@ class GaiaUiAssetLoaderTest {
     @ParameterizedTest
     @ValueSource(strings = {
         "assets/gaia/ui/ui-assets.json",
-        "assets/gaia/ui/ui_font.png",
-        "assets/gaia/ui/ui_font.json",
+        "assets/gaia/ui/ui_font_display.png",
+        "assets/gaia/ui/ui_font_body.png",
+        "assets/gaia/ui/ui_typography.json",
         "assets/gaia/ui/ui_icons.png",
         "assets/gaia/ui/ui_icons.json"
     })
@@ -200,14 +279,14 @@ class GaiaUiAssetLoaderTest {
                         "assets/gaia/ui/ui_icons.png", png(64, 64)));
         GaiaUiAssetLoadException glyph = loadFailure(
                 temporary, "glyph", resources -> mutateJson(resources,
-                        "assets/gaia/ui/ui_font.json", root -> root
-                                .getAsJsonObject("fallback").getAsJsonObject("region")
-                                .addProperty("x", 8)));
+                        "assets/gaia/ui/ui_typography.json", root -> root
+                                .getAsJsonArray("faces").get(0).getAsJsonObject()
+                                .addProperty("fallbackCodePoint", 1114111)));
 
         assertTrue(dimensions.getMessage().contains("assets/gaia/ui/ui_icons.png"));
         assertTrue(dimensions.getCause().getMessage().contains("128x64"));
-        assertTrue(glyph.getMessage().contains("assets/gaia/ui/ui_font.json"));
-        assertTrue(glyph.getCause().getMessage().contains("fallback region"));
+        assertTrue(glyph.getMessage().contains("assets/gaia/ui/ui_typography.json"));
+        assertTrue(glyph.getCause().getMessage().contains("fallback glyph"));
     }
 
     @Test

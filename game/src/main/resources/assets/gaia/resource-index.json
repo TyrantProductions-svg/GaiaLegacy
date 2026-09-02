@@ -22,8 +22,17 @@
   ],
   "ui": [
     "ui/ui-assets.json",
+    "ui/brand/gaia-emblem.png",
+    "ui/brand/brand-manifest.json",
     "ui/ui_font.png",
     "ui/ui_font.json",
+    "ui/ui_font_body.png",
+    "ui/ui_font_display.png",
+    "ui/ui_typography.json",
+    "ui/hero/gaia-hero-dawn.png",
+    "ui/hero/gaia-hero-highlands.png",
+    "ui/hero/gaia-hero-twilight.png",
+    "ui/hero/hero-manifest.json",
     "ui/ui_icons.png",
     "ui/ui_icons.json"
   ]

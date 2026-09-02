@@ -3,6 +3,7 @@ package com.gaia.ui;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.overlord.renderer.ui.UiColor;
 import java.util.List;
@@ -39,6 +40,26 @@ class GaiaUiThemeTest {
     }
 
     @Test
+    void worldFirstShellTokensRetainContrastAfterFinalAlphaComposition() {
+        assertEquals(rgb(0x7C, 0xE7, 0xFF), GaiaUiTheme.GAIA_CYAN);
+        assertEquals(rgb(0x8D, 0x6F, 0xE8), GaiaUiTheme.LEGACY_VIOLET);
+        assertEquals(rgb(0xE6, 0xC9, 0x78), GaiaUiTheme.SPECIAL_GOLD);
+        assertEquals(rgb(0xE1, 0x64, 0x6C), GaiaUiTheme.DESTRUCTIVE_RED);
+        assertEquals(rgba(0x06, 0x11, 0x1E, 0xD1), GaiaUiTheme.HERO_LEFT_OVERLAY);
+        assertEquals(rgba(0x06, 0x11, 0x1E, 0xE6), GaiaUiTheme.SECONDARY_PANEL);
+
+        UiColor brightWorld = rgb(0xB8, 0xD9, 0xF2);
+        UiColor darkWorld = rgb(0x12, 0x1D, 0x29);
+        for (UiColor world : List.of(brightWorld, darkWorld)) {
+            UiColor heroTextSurface = composite(GaiaUiTheme.HERO_LEFT_OVERLAY, world);
+            UiColor panelTextSurface = composite(GaiaUiTheme.SECONDARY_PANEL, world);
+            assertTrue(contrast(GaiaUiTheme.PRIMARY_TEXT, heroTextSurface) >= 4.5);
+            assertTrue(contrast(GaiaUiTheme.PRIMARY_TEXT, panelTextSurface) >= 4.5);
+            assertTrue(contrast(GaiaUiTheme.GAIA_CYAN, panelTextSurface) >= 4.5);
+        }
+    }
+
+    @Test
     void activeEmptyAndLockedStatesHaveShapeAndTextDistinctionWithoutContinuousAnimation() {
         assertEquals(GaiaUiTheme.SlotShape.DOUBLE_RING, GaiaUiTheme.ACTIVE_SHAPE);
         assertEquals(GaiaUiTheme.SlotShape.EMPTY_OUTLINE, GaiaUiTheme.EMPTY_SHAPE);
@@ -56,5 +77,31 @@ class GaiaUiThemeTest {
 
     private static UiColor rgba(int red, int green, int blue, int alpha) {
         return new UiColor(red / 255.0f, green / 255.0f, blue / 255.0f, alpha / 255.0f);
+    }
+
+    private static UiColor composite(UiColor foreground, UiColor background) {
+        float alpha = foreground.alpha();
+        return new UiColor(
+                foreground.red() * alpha + background.red() * (1.0f - alpha),
+                foreground.green() * alpha + background.green() * (1.0f - alpha),
+                foreground.blue() * alpha + background.blue() * (1.0f - alpha),
+                1.0f);
+    }
+
+    private static double contrast(UiColor first, UiColor second) {
+        double light = Math.max(luminance(first), luminance(second));
+        double dark = Math.min(luminance(first), luminance(second));
+        return (light + 0.05) / (dark + 0.05);
+    }
+
+    private static double luminance(UiColor color) {
+        return 0.2126 * channel(color.red())
+                + 0.7152 * channel(color.green())
+                + 0.0722 * channel(color.blue());
+    }
+
+    private static double channel(float value) {
+        return value <= 0.04045 ? value / 12.92
+                : Math.pow((value + 0.055) / 1.055, 2.4);
     }
 }

@@ -8,16 +8,24 @@ import com.overlord.assets.AssetManager;
 import com.overlord.assets.ResourceLocation;
 import com.overlord.renderer.ui.BitmapFont;
 import com.overlord.renderer.ui.BitmapGlyph;
+import com.overlord.renderer.ui.TypographyCatalog;
+import com.overlord.renderer.ui.TypographyRole;
 import com.overlord.renderer.ui.UiAssetBundle;
 import com.overlord.renderer.ui.UiTextureData;
+import com.overlord.renderer.ui.UiTextureId;
+import com.overlord.renderer.ui.UiTextureSampling;
 import com.overlord.renderer.ui.UiUvRect;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -30,17 +38,25 @@ import javax.imageio.ImageIO;
 public final class GaiaUiAssetLoader {
     public static final ResourceLocation MANIFEST =
             ResourceLocation.parse("gaia:ui/ui-assets.json");
-    public static final ResourceLocation FONT_IMAGE =
-            ResourceLocation.parse("gaia:ui/ui_font.png");
-    public static final ResourceLocation FONT_METADATA =
-            ResourceLocation.parse("gaia:ui/ui_font.json");
+    public static final ResourceLocation TYPOGRAPHY_METADATA =
+            ResourceLocation.parse("gaia:ui/ui_typography.json");
+    public static final ResourceLocation DISPLAY_FONT_IMAGE =
+            ResourceLocation.parse("gaia:ui/ui_font_display.png");
+    public static final ResourceLocation BODY_FONT_IMAGE =
+            ResourceLocation.parse("gaia:ui/ui_font_body.png");
+    public static final ResourceLocation HERO_METADATA =
+            ResourceLocation.parse("gaia:ui/hero/hero-manifest.json");
+    public static final ResourceLocation BRAND_METADATA =
+            ResourceLocation.parse("gaia:ui/brand/brand-manifest.json");
+    public static final ResourceLocation BRAND_IMAGE =
+            ResourceLocation.parse("gaia:ui/brand/gaia-emblem.png");
     public static final ResourceLocation ICON_IMAGE =
             ResourceLocation.parse("gaia:ui/ui_icons.png");
     public static final ResourceLocation ICON_METADATA =
             ResourceLocation.parse("gaia:ui/ui_icons.json");
 
-    private static final int ATLAS_WIDTH = 128;
-    private static final int ATLAS_HEIGHT = 64;
+    private static final int ICON_ATLAS_WIDTH = 128;
+    private static final int ICON_ATLAS_HEIGHT = 64;
     private static final List<ResourceLocation> REQUIRED_ICON_IDS = List.of(
             ResourceLocation.parse("gaia:grass"),
             ResourceLocation.parse("gaia:dirt"),
@@ -58,38 +74,237 @@ public final class GaiaUiAssetLoader {
 
     public GaiaUiAssets load() {
         Manifest manifest = readJson(MANIFEST, this::parseManifest);
-        UiTextureData fontTexture = readImage(
-                manifest.fontImage(), manifest.fontWidth(), manifest.fontHeight());
-        BitmapFont font = readJson(manifest.fontMetadata(),
-                root -> parseFont(root, manifest.fontWidth(), manifest.fontHeight()));
+        TypographyAssets typography = readJson(
+                manifest.typographyMetadata(), this::parseTypography);
+        GaiaHeroCatalog heroes = readJson(manifest.heroMetadata(), this::parseHeroes);
+        UiTextureData brandTexture = readJson(manifest.brandMetadata(), this::parseBrand);
+        GaiaHeroCatalog.Hero initialHero = heroes.initial();
+        UiTextureData heroTexture = readImage(
+                initialHero.image(), initialHero.width(), initialHero.height(),
+                initialHero.sampling(), initialHero.pngSha256());
         UiTextureData iconTexture = readImage(
                 manifest.iconImage(), manifest.iconWidth(), manifest.iconHeight());
         UiIconAtlas icons = readJson(manifest.iconMetadata(),
                 root -> parseIcons(root, manifest.iconImage(),
                         manifest.iconWidth(), manifest.iconHeight()));
         return new GaiaUiAssets(
-                new UiAssetBundle(iconTexture, fontTexture, font), icons);
+                new UiAssetBundle(
+                        withShellTextures(typography.textures(), iconTexture, heroTexture,
+                                brandTexture),
+                        typography.catalog()),
+                icons,
+                heroes);
     }
 
     private Manifest parseManifest(JsonObject root) {
         requireInt(root, "provenanceVersion", 1);
-        JsonObject font = requireObject(root, "font");
+        JsonObject typography = requireObject(root, "typography");
+        JsonObject heroes = requireObject(root, "heroes");
+        JsonObject brand = requireObject(root, "brand");
         JsonObject icons = requireObject(root, "icons");
-        ResourceLocation fontImage = requiredPath(font, "image", FONT_IMAGE);
-        ResourceLocation fontMetadata = requiredPath(font, "metadata", FONT_METADATA);
+        ResourceLocation typographyMetadata = requiredPath(
+                typography, "metadata", TYPOGRAPHY_METADATA);
+        ResourceLocation heroMetadata = requiredPath(heroes, "metadata", HERO_METADATA);
         ResourceLocation iconImage = requiredPath(icons, "image", ICON_IMAGE);
         ResourceLocation iconMetadata = requiredPath(icons, "metadata", ICON_METADATA);
-        requireInt(font, "atlasVersion", 1);
+        requireInt(typography, "version", 1);
+        requireInt(heroes, "version", 1);
+        requireInt(brand, "version", 1);
         requireInt(icons, "atlasVersion", 1);
-        int fontWidth = requireInt(font, "width");
-        int fontHeight = requireInt(font, "height");
         int iconWidth = requireInt(icons, "width");
         int iconHeight = requireInt(icons, "height");
-        requireDimensions("font", fontWidth, fontHeight);
         requireDimensions("icons", iconWidth, iconHeight);
         return new Manifest(
-                fontImage, fontMetadata, fontWidth, fontHeight,
+                typographyMetadata,
+                heroMetadata,
+                requiredPath(brand, "metadata", BRAND_METADATA),
                 iconImage, iconMetadata, iconWidth, iconHeight);
+    }
+
+    private UiTextureData parseBrand(JsonObject root) {
+        requireInt(root, "version", 1);
+        requireInt(root, "width", 256);
+        requireInt(root, "height", 256);
+        requireInt(root, "paddingPixels", 16);
+        requireInt(root, "supersampling", 4);
+        if (!"LINEAR".equals(requireString(root, "sampling"))
+                || !"STRAIGHT_INK_RGB_PADDING".equals(requireString(root, "alphaMode"))
+                || !"PROJECT_OWNED_GAIALEGACY_VECTOR_PATH"
+                        .equals(requireString(root, "ownership"))) {
+            throw new IllegalArgumentException("Unsupported Gaia brand texture contract");
+        }
+        return readImage(requiredPath(root, "image", BRAND_IMAGE), 256, 256,
+                UiTextureSampling.LINEAR, requireString(root, "pngSha256"));
+    }
+
+    private GaiaHeroCatalog parseHeroes(JsonObject root) {
+        requireInt(root, "version", 1);
+        JsonObject source = requireObject(root, "source");
+        if (!"docs/images/gaialegacy-hero.png".equals(requireString(source, "repositoryPath"))
+                || !"66021ac3a9d197c8d9e52cab165019263eccfc688d402fe21391e930f87db262"
+                        .equals(requireString(source, "sha256"))
+                || !"PROJECT_OWNED_GAIALEGACY_RUNTIME_CAPTURE"
+                        .equals(requireString(source, "ownership"))) {
+            throw new IllegalArgumentException("hero source provenance is inconsistent");
+        }
+        requireString(source, "gitCommit");
+        requireString(source, "gitBlobSha");
+        List<GaiaHeroCatalog.Hero> heroes = new ArrayList<>();
+        for (JsonElement element : requireArray(root, "heroes")) {
+            JsonObject value = requireObject(element, "hero");
+            String id = requireString(value, "id");
+            ResourceLocation image = parseLocation(requireString(value, "image"), "hero image");
+            ResourceLocation expected = ResourceLocation.parse(
+                    "gaia:ui/hero/gaia-hero-" + id + ".png");
+            if (!image.equals(expected)) {
+                throw new IllegalArgumentException("hero image path is inconsistent");
+            }
+            int width = requireInt(value, "width");
+            int height = requireInt(value, "height");
+            UiTextureSampling sampling = parseEnum(
+                    UiTextureSampling.class, requireString(value, "sampling"), "sampling");
+            requireInt(value, "rgba8Bytes", width * height * 4);
+            heroes.add(new GaiaHeroCatalog.Hero(
+                    id, image, width, height, sampling, requireString(value, "pngSha256")));
+        }
+        if (!heroes.stream().map(GaiaHeroCatalog.Hero::id).toList()
+                .equals(List.of("dawn", "highlands", "twilight"))) {
+            throw new IllegalArgumentException("hero roster is inconsistent");
+        }
+        if (!"STATIC_VERTICAL_SLICE".equals(requireString(root, "runtimeMode"))) {
+            throw new IllegalArgumentException("hero runtime mode is unsupported");
+        }
+        int maximumResident = requireInt(root, "maximumResidentHeroPages");
+        JsonObject treatment = requireObject(root, "treatment");
+        if (!"A_PLUS_70_PERCENT_GAIA_30_PERCENT_LEGACY"
+                        .equals(requireString(treatment, "direction"))
+                || !requireBoolean(treatment, "directionalLeftShade")
+                || !requireBoolean(treatment, "celestialBody")
+                || !requireBoolean(treatment, "brokenOrbitAccents")
+                || !requireBoolean(treatment, "topographicDetailMotif")) {
+            throw new IllegalArgumentException("hero A+ treatment is incomplete");
+        }
+        return new GaiaHeroCatalog(
+                heroes, requireString(root, "initialHero"), maximumResident);
+    }
+
+    private TypographyAssets parseTypography(JsonObject root) {
+        requireInt(root, "version", 1);
+        TypographyRole defaultRole = TypographyRole.valueOf(requireString(root, "defaultRole"));
+        Map<String, Page> pages = new LinkedHashMap<>();
+        EnumMap<UiTextureId, UiTextureData> textures = new EnumMap<>(UiTextureId.class);
+        for (JsonElement element : requireArray(root, "pages")) {
+            JsonObject value = requireObject(element, "typography page");
+            String id = requireString(value, "id");
+            if (pages.containsKey(id)) {
+                throw new IllegalArgumentException("duplicate typography page " + id);
+            }
+            ResourceLocation expectedImage = switch (id) {
+                case "body-linear" -> BODY_FONT_IMAGE;
+                case "display-nearest" -> DISPLAY_FONT_IMAGE;
+                default -> throw new IllegalArgumentException("unknown typography page " + id);
+            };
+            UiTextureId textureId = parseEnum(
+                    UiTextureId.class, requireString(value, "textureId"), "textureId");
+            UiTextureSampling sampling = parseEnum(
+                    UiTextureSampling.class, requireString(value, "sampling"), "sampling");
+            if (id.equals("body-linear")
+                    && (textureId != UiTextureId.FONT_BODY
+                            || sampling != UiTextureSampling.LINEAR)
+                    || id.equals("display-nearest")
+                    && (textureId != UiTextureId.FONT_DISPLAY
+                            || sampling != UiTextureSampling.NEAREST)) {
+                throw new IllegalArgumentException("typography page policy is inconsistent");
+            }
+            ResourceLocation image = requiredPath(value, "image", expectedImage);
+            int width = requireInt(value, "width");
+            int height = requireInt(value, "height");
+            UiTextureData texture = readImage(image, width, height, sampling);
+            if (!sha256(texture.rgba()).equals(requireString(value, "rgbaSha256"))) {
+                throw new IllegalArgumentException("typography page RGBA hash is inconsistent");
+            }
+            Page page = new Page(id, textureId, width, height);
+            pages.put(id, page);
+            if (textures.put(textureId, texture) != null) {
+                throw new IllegalArgumentException("duplicate typography texture id " + textureId);
+            }
+        }
+        if (!pages.keySet().equals(Set.of("body-linear", "display-nearest"))) {
+            throw new IllegalArgumentException("typography requires exact body/display pages");
+        }
+
+        Map<String, TypographyCatalog.Face> faces = new LinkedHashMap<>();
+        for (JsonElement element : requireArray(root, "faces")) {
+            JsonObject value = requireObject(element, "typography face");
+            String id = requireString(value, "id");
+            Page page = pages.get(requireString(value, "page"));
+            if (page == null) {
+                throw new IllegalArgumentException("typography face page is unknown");
+            }
+            requireInt(value, "pixelHeight");
+            requireInt(value, "ascent");
+            requireInt(value, "descent");
+            requireInt(value, "lineGap");
+            requireInt(value, "baseline");
+            requireInt(value, "lineHeight");
+            int fallbackCodePoint = requireInt(value, "fallbackCodePoint");
+            Map<Integer, BitmapGlyph> glyphs = new LinkedHashMap<>();
+            for (JsonElement glyphElement : requireArray(value, "glyphs")) {
+                JsonObject glyphValue = requireObject(glyphElement, "typography glyph");
+                int codePoint = requireInt(glyphValue, "codePoint");
+                BitmapGlyph glyph = new BitmapGlyph(
+                        codePoint,
+                        glyphUv(
+                                requireInt(glyphValue, "x"),
+                                requireInt(glyphValue, "y"),
+                                requireInt(glyphValue, "width"),
+                                requireInt(glyphValue, "height"),
+                                page.width(),
+                                page.height()),
+                        requireInt(glyphValue, "advance"),
+                        requireInt(glyphValue, "bearingX"),
+                        requireInt(glyphValue, "bearingY"));
+                if (glyphs.put(codePoint, glyph) != null) {
+                    throw new IllegalArgumentException("duplicate typography glyph");
+                }
+            }
+            Set<Integer> required = requiredGlyphCodePoints();
+            if (!glyphs.keySet().equals(required)) {
+                throw new IllegalArgumentException("typography face glyph coverage is incomplete");
+            }
+            BitmapGlyph fallback = glyphs.get(fallbackCodePoint);
+            if (fallback == null) {
+                throw new IllegalArgumentException("typography fallback glyph is missing");
+            }
+            BitmapFont font = new BitmapFont(page.width(), page.height(), glyphs, fallback);
+            if (faces.put(id, new TypographyCatalog.Face(font, page.textureId())) != null) {
+                throw new IllegalArgumentException("duplicate typography face " + id);
+            }
+        }
+        Set<String> expectedFaces = Set.of(
+                "pixelify-bold-700",
+                "pixelify-semibold-600",
+                "inter-regular-400",
+                "inter-medium-500",
+                "inter-semibold-600");
+        if (!faces.keySet().equals(expectedFaces)) {
+            throw new IllegalArgumentException("typography requires exact approved faces");
+        }
+
+        JsonObject roleObject = requireObject(root, "roles");
+        EnumMap<TypographyRole, TypographyCatalog.Face> roles =
+                new EnumMap<>(TypographyRole.class);
+        for (TypographyRole role : TypographyRole.values()) {
+            TypographyCatalog.Face face = faces.get(requireString(roleObject, role.name()));
+            if (face == null) {
+                throw new IllegalArgumentException("typography role face is unknown");
+            }
+            roles.put(role, face);
+        }
+        if (roleObject.size() != TypographyRole.values().length) {
+            throw new IllegalArgumentException("typography role map contains unknown roles");
+        }
+        return new TypographyAssets(textures, new TypographyCatalog(roles, defaultRole));
     }
 
     private BitmapFont parseFont(JsonObject root, int expectedWidth, int expectedHeight) {
@@ -268,8 +483,29 @@ public final class GaiaUiAssetLoader {
     }
 
     private UiTextureData readImage(ResourceLocation path, int width, int height) {
+        return readImage(path, width, height, UiTextureSampling.NEAREST);
+    }
+
+    private UiTextureData readImage(
+            ResourceLocation path,
+            int width,
+            int height,
+            UiTextureSampling sampling) {
+        return readImage(path, width, height, sampling, null);
+    }
+
+    private UiTextureData readImage(
+            ResourceLocation path,
+            int width,
+            int height,
+            UiTextureSampling sampling,
+            String expectedEncodedSha256) {
         try (InputStream input = assetManager.open(path)) {
             byte[] encoded = input.readAllBytes();
+            if (expectedEncodedSha256 != null
+                    && !expectedEncodedSha256.equals(sha256(encoded))) {
+                throw new IllegalArgumentException("PNG source hash is inconsistent");
+            }
             validateRgba8Png(encoded);
             BufferedImage image = ImageIO.read(new ByteArrayInputStream(encoded));
             if (image == null) {
@@ -290,7 +526,7 @@ public final class GaiaUiAssetLoader {
                 }
             }
             rgba.flip();
-            return new UiTextureData(width, height, rgba);
+            return new UiTextureData(width, height, rgba, sampling);
         } catch (IOException | RuntimeException failure) {
             throw new GaiaUiAssetLoadException(path.toClasspathPath(), failure);
         }
@@ -380,7 +616,7 @@ public final class GaiaUiAssetLoader {
     }
 
     private static void requireDimensions(String asset, int width, int height) {
-        if (width != ATLAS_WIDTH || height != ATLAS_HEIGHT) {
+        if (width != ICON_ATLAS_WIDTH || height != ICON_ATLAS_HEIGHT) {
             throw new IllegalArgumentException(asset + " atlas must be exactly 128x64");
         }
     }
@@ -447,14 +683,92 @@ public final class GaiaUiAssetLoader {
     }
 
     private record Manifest(
-            ResourceLocation fontImage,
-            ResourceLocation fontMetadata,
-            int fontWidth,
-            int fontHeight,
+            ResourceLocation typographyMetadata,
+            ResourceLocation heroMetadata,
+            ResourceLocation brandMetadata,
             ResourceLocation iconImage,
             ResourceLocation iconMetadata,
             int iconWidth,
             int iconHeight) {}
+
+    private record TypographyAssets(
+            Map<UiTextureId, UiTextureData> textures,
+            TypographyCatalog catalog) {
+        private TypographyAssets {
+            textures = Map.copyOf(textures);
+            Objects.requireNonNull(catalog, "catalog");
+        }
+    }
+
+    private static UiUvRect glyphUv(
+            int x, int y, int width, int height, int atlasWidth, int atlasHeight) {
+        if (x < 0 || y < 0 || width < 0 || height < 0
+                || (long) x + width > atlasWidth
+                || (long) y + height > atlasHeight) {
+            throw new IllegalArgumentException("glyph region is outside atlas bounds");
+        }
+        return new UiUvRect(
+                (float) x / atlasWidth,
+                (float) y / atlasHeight,
+                (float) (x + width) / atlasWidth,
+                (float) (y + height) / atlasHeight);
+    }
+
+    private static Map<UiTextureId, UiTextureData> withShellTextures(
+            Map<UiTextureId, UiTextureData> typography,
+            UiTextureData iconTexture,
+            UiTextureData heroTexture,
+            UiTextureData brandTexture) {
+        EnumMap<UiTextureId, UiTextureData> textures = new EnumMap<>(UiTextureId.class);
+        textures.putAll(typography);
+        textures.put(UiTextureId.ICON_ATLAS, Objects.requireNonNull(iconTexture, "iconTexture"));
+        textures.put(UiTextureId.HERO_BACKGROUND,
+                Objects.requireNonNull(heroTexture, "heroTexture"));
+        textures.put(UiTextureId.BRAND_EMBLEM,
+                Objects.requireNonNull(brandTexture, "brandTexture"));
+        return Map.copyOf(textures);
+    }
+
+    private static Set<Integer> requiredGlyphCodePoints() {
+        Set<Integer> required = new HashSet<>();
+        for (int codePoint = 32; codePoint <= 126; codePoint++) {
+            required.add(codePoint);
+        }
+        required.add(0x221e);
+        required.add(0xfffd);
+        return required;
+    }
+
+    private static String sha256(ByteBuffer bytes) {
+        try {
+            ByteBuffer view = bytes.duplicate();
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digest.update(view);
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 unavailable", impossible);
+        }
+    }
+
+    private static String sha256(byte[] bytes) {
+        try {
+            return HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 unavailable", impossible);
+        }
+    }
+
+    private static <T extends Enum<T>> T parseEnum(
+            Class<T> type, String value, String field) {
+        try {
+            return Enum.valueOf(type, value);
+        } catch (IllegalArgumentException failure) {
+            throw new IllegalArgumentException(field + " is unsupported", failure);
+        }
+    }
+
+    private record Page(String id, UiTextureId textureId, int width, int height) {}
 
     private record PixelRegion(int x, int y, int width, int height) {
         void requireBounds(int atlasWidth, int atlasHeight) {

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "image": "gaia:ui/brand/gaia-emblem.png",
+  "width": 256,
+  "height": 256,
+  "sampling": "LINEAR",
+  "alphaMode": "STRAIGHT_INK_RGB_PADDING",
+  "paddingPixels": 16,
+  "supersampling": 4,
+  "rgba8Bytes": 262144,
+  "ownership": "PROJECT_OWNED_GAIALEGACY_VECTOR_PATH",
+  "sourcePath": "tools/src/main/java/com/gaia/tools/ui/RuntimeBrandAssetGenerator.java",
+  "pngSha256": "701ca3f2aced239a49d405aa6e68e5f26bcf4641c1ab1135ba66590ff5cf781c",
+  "sourceSha256": "4f2679b429c24068b1db4a624580c5227cc07ff8fa1d5276480d07908a38b465"
+}

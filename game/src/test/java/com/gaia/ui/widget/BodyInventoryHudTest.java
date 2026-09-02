@@ -200,6 +200,45 @@ public class BodyInventoryHudTest {
         assertTrue(active.bottom() <= empty.top(), active + " overlaps " + empty);
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(floats = {1f, 1.25f, 1.5f, 2f, 3f})
+    void productionInterStateLabelsRemainSeparatedAndInsideFramebuffer(float dpi) {
+        var assets = new com.gaia.ui.GaiaUiAssetLoader(new com.overlord.assets.AssetManager(
+                getClass().getClassLoader())).load();
+        var catalog = assets.renderAssets().typography();
+        var font = catalog.resolve(com.overlord.renderer.ui.TypographyRole.HUD).font();
+        var hud = new BodyInventoryHud(new UiIconResolver(assets.icons(), ignored -> {}),
+                new TextRenderer(catalog));
+        UiDrawList out = new UiDrawList();
+        hud.append(new Fixtures().normal(BodySlot.LEFT_HAND, Map.of()),
+                new UiLayoutContext(new RenderSurfaceMetrics(800, 600,
+                        Math.round(800 * dpi), Math.round(600 * dpi), dpi, dpi)), out);
+        List<UiDrawCommand> glyphs = out.seal().commands().stream()
+                .filter(command -> command.texture() == UiTextureId.FONT_BODY).toList();
+        List<UiDrawCommand> active = productionLabel(glyphs, font, "ACTIVE");
+        List<UiDrawCommand> empty = productionLabel(glyphs, font, "EMPTY");
+        double activeBottom = active.stream().mapToDouble(c -> c.framebufferBounds().bottom())
+                .max().orElseThrow();
+        double emptyTop = empty.stream().mapToDouble(c -> c.framebufferBounds().top())
+                .min().orElseThrow();
+        assertTrue(activeBottom < emptyTop,
+                "DPI " + dpi + ": ACTIVE bottom " + activeBottom + " overlaps EMPTY top " + emptyTop);
+        assertTrue(glyphs.stream().allMatch(c -> c.framebufferBounds().bottom() <= 600 * dpi),
+                "all state labels must remain on screen at DPI " + dpi);
+    }
+
+    private static List<UiDrawCommand> productionLabel(
+            List<UiDrawCommand> glyphs, BitmapFont font, String label) {
+        var expected = label.codePoints().mapToObj(cp -> font.glyph(cp).uv()).toList();
+        for (int start = 0; start <= glyphs.size() - expected.size(); start++) {
+            var candidate = glyphs.subList(start, start + expected.size());
+            if (candidate.stream().map(UiDrawCommand::uv).toList().equals(expected)) {
+                return candidate;
+            }
+        }
+        throw new AssertionError("missing production label " + label);
+    }
+
     @Test
     void fullyOrdersPopulatedNormalTemporaryNameCommandSignature() {
         Fixtures fixtures = new Fixtures();

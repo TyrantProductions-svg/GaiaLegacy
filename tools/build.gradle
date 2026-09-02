@@ -13,6 +13,7 @@ java {
 dependencies {
     implementation project(':engine')
     implementation project(':game')
+    implementation 'com.google.code.gson:gson:2.10.1'
     testImplementation 'com.google.code.gson:gson:2.10.1'
     testImplementation 'org.junit.jupiter:junit-jupiter:6.1.1'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
@@ -126,4 +127,258 @@ tasks.register('verifyGeneratedUiAssets') {
 
 tasks.named('check') {
     dependsOn tasks.named('verifyGeneratedUiAssets')
+}
+
+def runtimeTypographyDirectory = rootProject.layout.projectDirectory.dir(
+    'game/src/main/resources/assets/gaia/ui')
+
+tasks.register('generateRuntimeTypographyAssets', JavaExec) {
+    group = 'asset generation'
+    description = 'Generates the approved Pixelify/Inter runtime typography pages.'
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.gaia.tools.ui.RuntimeTypographyAssetGenerator'
+    args runtimeTypographyDirectory.asFile.absolutePath
+}
+
+tasks.register('verifyGeneratedRuntimeTypography') {
+    group = 'verification'
+    description = 'Regenerates runtime typography twice and compares checked-in bytes.'
+    dependsOn tasks.named('classes')
+    doLast {
+        def verificationRoot = layout.buildDirectory
+            .dir('runtime-typography-verification').get().asFile
+        def first = new File(verificationRoot, 'first')
+        def second = new File(verificationRoot, 'second')
+        delete verificationRoot
+        [first, second].each { destination ->
+            project.javaexec {
+                classpath = sourceSets.main.runtimeClasspath
+                mainClass = 'com.gaia.tools.ui.RuntimeTypographyAssetGenerator'
+                args destination.absolutePath
+            }
+        }
+        def names = ['ui_font_body.png', 'ui_font_display.png', 'ui_typography.json']
+        names.each { name ->
+            def firstPath = first.toPath().resolve(name)
+            def secondPath = second.toPath().resolve(name)
+            if (java.nio.file.Files.mismatch(firstPath, secondPath) != -1L) {
+                throw new GradleException("Runtime typography ${name} is not deterministic")
+            }
+            def checkedIn = runtimeTypographyDirectory.asFile.toPath().resolve(name)
+            if (!java.nio.file.Files.isRegularFile(checkedIn)
+                    || java.nio.file.Files.mismatch(firstPath, checkedIn) != -1L) {
+                throw new GradleException(
+                    "Runtime typography ${name} differs from checked-in bytes")
+            }
+        }
+    }
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('verifyGeneratedRuntimeTypography')
+}
+
+def phase175SpecimenDir = layout.buildDirectory.dir('phase-17.5-specimen')
+
+tasks.register('generatePhase175TypographySpecimen', JavaExec) {
+    group = 'asset generation'
+    description = 'Generates the deterministic Phase 17.5 Quiet Rune/A/B typography specimen.'
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.gaia.tools.ui.TypographySpecimenGenerator'
+    outputs.dir phase175SpecimenDir
+    doFirst {
+        delete phase175SpecimenDir
+    }
+    args phase175SpecimenDir.get().asFile.absolutePath
+}
+
+tasks.register('verifyPhase175TypographySpecimen') {
+    group = 'verification'
+    description = 'Generates the Phase 17.5 specimen twice and byte-compares every output.'
+    dependsOn tasks.named('classes')
+    doLast {
+        def verificationRoot = layout.buildDirectory
+            .dir('phase-17.5-specimen-verification').get().asFile
+        def first = new File(verificationRoot, 'first')
+        def second = new File(verificationRoot, 'second')
+        delete verificationRoot
+        [first, second].each { destination ->
+            project.javaexec {
+                classpath = sourceSets.main.runtimeClasspath
+                mainClass = 'com.gaia.tools.ui.TypographySpecimenGenerator'
+                args destination.absolutePath
+            }
+        }
+        def firstFiles = fileTree(first).files.collect {
+            first.toPath().relativize(it.toPath()).toString().replace('\\', '/')
+        }.sort()
+        def secondFiles = fileTree(second).files.collect {
+            second.toPath().relativize(it.toPath()).toString().replace('\\', '/')
+        }.sort()
+        if (firstFiles != secondFiles) {
+            throw new GradleException('Independent typography specimen file rosters differ')
+        }
+        firstFiles.each { relative ->
+            def mismatch = java.nio.file.Files.mismatch(
+                first.toPath().resolve(relative), second.toPath().resolve(relative))
+            if (mismatch != -1L) {
+                throw new GradleException(
+                    "Typography specimen ${relative} differs at byte ${mismatch}")
+            }
+        }
+    }
+}
+
+def phase175MainMenuConceptDir = layout.buildDirectory.dir(
+    'phase-17.5-main-menu-concepts')
+
+tasks.register('generatePhase175MainMenuConcepts', JavaExec) {
+    group = 'asset generation'
+    description = 'Generates the three deterministic Gate 17.5B.5 main-menu concepts.'
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.gaia.tools.ui.MainMenuVisualConceptGenerator'
+    outputs.dir phase175MainMenuConceptDir
+    doFirst {
+        delete phase175MainMenuConceptDir
+    }
+    args phase175MainMenuConceptDir.get().asFile.absolutePath,
+        rootProject.file('docs/images/gaialegacy-hero.png').absolutePath
+}
+
+tasks.register('verifyPhase175MainMenuConcepts') {
+    group = 'verification'
+    description = 'Generates the Gate 17.5B.5 concepts twice and byte-compares every output.'
+    dependsOn tasks.named('classes')
+    doLast {
+        def verificationRoot = layout.buildDirectory
+            .dir('phase-17.5-main-menu-concepts-verification').get().asFile
+        def first = new File(verificationRoot, 'first')
+        def second = new File(verificationRoot, 'second')
+        delete verificationRoot
+        [first, second].each { destination ->
+            project.javaexec {
+                classpath = sourceSets.main.runtimeClasspath
+                mainClass = 'com.gaia.tools.ui.MainMenuVisualConceptGenerator'
+                args destination.absolutePath,
+                    rootProject.file('docs/images/gaialegacy-hero.png').absolutePath
+            }
+        }
+        def firstFiles = fileTree(first).files.collect {
+            first.toPath().relativize(it.toPath()).toString().replace('\\', '/')
+        }.sort()
+        def secondFiles = fileTree(second).files.collect {
+            second.toPath().relativize(it.toPath()).toString().replace('\\', '/')
+        }.sort()
+        if (firstFiles != secondFiles) {
+            throw new GradleException('Independent main-menu concept file rosters differ')
+        }
+        firstFiles.each { relative ->
+            def mismatch = java.nio.file.Files.mismatch(
+                first.toPath().resolve(relative), second.toPath().resolve(relative))
+            if (mismatch != -1L) {
+                throw new GradleException(
+                    "Main-menu concept ${relative} differs at byte ${mismatch}")
+            }
+        }
+    }
+}
+
+def runtimeHeroDirectory = rootProject.layout.projectDirectory.dir(
+    'game/src/main/resources/assets/gaia/ui/hero')
+
+def runtimeBrandDirectory = rootProject.layout.projectDirectory.dir(
+    'game/src/main/resources/assets/gaia/ui/brand')
+
+tasks.register('generateRuntimeBrandAssets', JavaExec) {
+    group = 'asset generation'
+    description = 'Rasterizes the project-owned Gaia vector/path emblem at 4x coverage.'
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.gaia.tools.ui.RuntimeBrandAssetGenerator'
+    args runtimeBrandDirectory.asFile.absolutePath
+}
+
+tasks.register('verifyGeneratedRuntimeBrand') {
+    group = 'verification'
+    description = 'Checks independent JVM brand generation and repository asset equality.'
+    dependsOn tasks.named('classes')
+    doLast {
+        def root = layout.buildDirectory.dir('runtime-brand-verification').get().asFile
+        def destinations = ['first', 'second'].collect { new File(root, it) }
+        destinations.each { destination ->
+            project.javaexec {
+                classpath = sourceSets.main.runtimeClasspath
+                mainClass = 'com.gaia.tools.ui.RuntimeBrandAssetGenerator'
+                args destination.absolutePath
+            }
+        }
+        ['gaia-emblem.png', 'brand-manifest.json'].each { name ->
+            def first = destinations[0].toPath().resolve(name)
+            [destinations[1].toPath().resolve(name),
+                    runtimeBrandDirectory.asFile.toPath().resolve(name)].each { other ->
+                if (java.nio.file.Files.mismatch(first, other) != -1L) {
+                    throw new GradleException("Runtime brand ${name} differs")
+                }
+            }
+        }
+    }
+}
+
+tasks.named('check') { dependsOn tasks.named('verifyGeneratedRuntimeBrand') }
+
+tasks.register('generateRuntimeHeroAssets', JavaExec) {
+    group = 'asset generation'
+    description = 'Generates the deterministic project-owned A+ runtime hero pages.'
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.gaia.tools.ui.RuntimeHeroAssetGenerator'
+    args runtimeHeroDirectory.asFile.absolutePath,
+        rootProject.file('docs/images/gaialegacy-hero.png').absolutePath
+}
+
+tasks.register('verifyGeneratedRuntimeHeroes') {
+    group = 'verification'
+    description = 'Regenerates runtime heroes twice and compares checked-in bytes.'
+    dependsOn tasks.named('classes')
+    doLast {
+        def verificationRoot = layout.buildDirectory
+            .dir('runtime-hero-verification').get().asFile
+        def first = new File(verificationRoot, 'first')
+        def second = new File(verificationRoot, 'second')
+        delete verificationRoot
+        [first, second].each { destination ->
+            project.javaexec {
+                classpath = sourceSets.main.runtimeClasspath
+                mainClass = 'com.gaia.tools.ui.RuntimeHeroAssetGenerator'
+                args destination.absolutePath,
+                    rootProject.file('docs/images/gaialegacy-hero.png').absolutePath
+            }
+        }
+        def names = [
+            'gaia-hero-dawn.png',
+            'gaia-hero-highlands.png',
+            'gaia-hero-twilight.png',
+            'hero-manifest.json'
+        ]
+        names.each { name ->
+            def firstPath = first.toPath().resolve(name)
+            def secondPath = second.toPath().resolve(name)
+            if (java.nio.file.Files.mismatch(firstPath, secondPath) != -1L) {
+                throw new GradleException("Runtime hero ${name} is not deterministic")
+            }
+            def checkedIn = runtimeHeroDirectory.asFile.toPath().resolve(name)
+            if (!java.nio.file.Files.isRegularFile(checkedIn)
+                    || java.nio.file.Files.mismatch(firstPath, checkedIn) != -1L) {
+                throw new GradleException(
+                    "Runtime hero ${name} differs from checked-in bytes")
+            }
+        }
+    }
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('verifyGeneratedRuntimeHeroes')
 }

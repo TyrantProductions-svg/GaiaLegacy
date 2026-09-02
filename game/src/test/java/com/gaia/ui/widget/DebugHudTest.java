@@ -321,10 +321,6 @@ class DebugHudTest {
                         Map.entry("MARGIN", Task10WidgetTestSupport.field(double.class, constant)),
                         Map.entry("PADDING", Task10WidgetTestSupport.field(double.class, constant)),
                         Map.entry("SCALE", Task10WidgetTestSupport.field(double.class, constant)),
-                        Map.entry("GLYPH_HEIGHT",
-                                Task10WidgetTestSupport.field(double.class, constant)),
-                        Map.entry("LINE_STEP",
-                                Task10WidgetTestSupport.field(double.class, constant)),
                         Map.entry("LINE_COUNT", Task10WidgetTestSupport.field(int.class, constant)),
                         Map.entry("SOLID_UV", Task10WidgetTestSupport.field(UiUvRect.class, constant)),
                         Map.entry("text", Task10WidgetTestSupport.field(
@@ -335,6 +331,7 @@ class DebugHudTest {
                         "com.gaia.ui.HudPresentationSnapshot",
                         "com.overlord.renderer.metrics.RenderMetricsSnapshot",
                         "com.overlord.renderer.ui.TextRenderer",
+                        "com.overlord.renderer.ui.TypographyRole",
                         "com.overlord.renderer.ui.UiDrawCommand",
                         "com.overlord.renderer.ui.UiDrawList",
                         "com.overlord.renderer.ui.UiLayoutContext",

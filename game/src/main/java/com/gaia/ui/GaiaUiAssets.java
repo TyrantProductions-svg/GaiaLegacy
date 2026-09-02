@@ -3,9 +3,13 @@ package com.gaia.ui;
 import com.overlord.renderer.ui.UiAssetBundle;
 import java.util.Objects;
 
-public record GaiaUiAssets(UiAssetBundle renderAssets, UiIconAtlas icons) {
+public record GaiaUiAssets(
+        UiAssetBundle renderAssets,
+        UiIconAtlas icons,
+        GaiaHeroCatalog heroes) {
     public GaiaUiAssets {
         Objects.requireNonNull(renderAssets, "renderAssets");
         Objects.requireNonNull(icons, "icons");
+        Objects.requireNonNull(heroes, "heroes");
     }
 }

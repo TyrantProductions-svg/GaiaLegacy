@@ -3,12 +3,21 @@ package com.overlord.renderer.ui;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 
-public record UiTextureData(int width, int height, ByteBuffer rgba) {
+public record UiTextureData(
+        int width,
+        int height,
+        ByteBuffer rgba,
+        UiTextureSampling sampling) {
+    public UiTextureData(int width, int height, ByteBuffer rgba) {
+        this(width, height, rgba, UiTextureSampling.NEAREST);
+    }
+
     public UiTextureData {
         if (width <= 0 || height <= 0) {
             throw new IllegalArgumentException("UI texture dimensions must be positive");
         }
         Objects.requireNonNull(rgba, "rgba");
+        Objects.requireNonNull(sampling, "sampling");
 
         long expectedBytes;
         try {

@@ -22,12 +22,26 @@ class UiAssetBundleTest {
         assertEquals(1, texture.height());
         assertEquals(1, texture.rgba().get(0));
         assertEquals(8, texture.rgba().remaining());
+        assertEquals(UiTextureSampling.NEAREST, texture.sampling());
         assertFalse(texture.rgba().hasArray());
         assertThrows(ReadOnlyBufferException.class, () -> texture.rgba().put(0, (byte) 0));
 
         ByteBuffer firstView = texture.rgba();
         firstView.get();
         assertEquals(8, texture.rgba().remaining());
+    }
+
+    @Test
+    void textureCarriesExplicitImmutableSamplingPolicy() {
+        UiTextureData linear = new UiTextureData(
+                1,
+                1,
+                ByteBuffer.wrap(new byte[] {1, 2, 3, 4}),
+                UiTextureSampling.LINEAR);
+
+        assertEquals(UiTextureSampling.LINEAR, linear.sampling());
+        assertThrows(NullPointerException.class, () -> new UiTextureData(
+                1, 1, ByteBuffer.wrap(new byte[] {1, 2, 3, 4}), null));
     }
 
     @Test
@@ -75,6 +89,43 @@ class UiAssetBundleTest {
         assertThrows(NullPointerException.class, () -> new UiAssetBundle(null, texture, font));
         assertThrows(NullPointerException.class, () -> new UiAssetBundle(texture, null, font));
         assertThrows(NullPointerException.class, () -> new UiAssetBundle(texture, texture, null));
+    }
+
+    @Test
+    void assetBundleOwnsOneImmutableTypedTextureMapAndTypographyCatalog() {
+        UiTextureData nearest = new UiTextureData(
+                1, 1, ByteBuffer.wrap(new byte[] {1, 2, 3, 4}));
+        UiTextureData linear = new UiTextureData(
+                1, 1, ByteBuffer.wrap(new byte[] {5, 6, 7, 8}),
+                UiTextureSampling.LINEAR);
+        BitmapFont font = new BitmapFont(
+                1, 1, Map.of(), glyph(0xfffd, new UiUvRect(0, 0, 1, 1)));
+        TypographyCatalog.Face display = new TypographyCatalog.Face(
+                font, UiTextureId.FONT_DISPLAY);
+        TypographyCatalog.Face body = new TypographyCatalog.Face(
+                font, UiTextureId.FONT_BODY);
+        TypographyCatalog catalog = new TypographyCatalog(
+                Map.of(
+                        TypographyRole.DISPLAY_TITLE, display,
+                        TypographyRole.HEADING_LARGE, display,
+                        TypographyRole.BODY, body,
+                        TypographyRole.FUNCTIONAL, body,
+                        TypographyRole.HUD, body),
+                TypographyRole.BODY);
+
+        UiAssetBundle bundle = new UiAssetBundle(
+                Map.of(
+                        UiTextureId.ICON_ATLAS, nearest,
+                        UiTextureId.FONT_DISPLAY, nearest,
+                        UiTextureId.FONT_BODY, linear),
+                catalog);
+
+        assertEquals(linear, bundle.texture(UiTextureId.FONT_BODY));
+        assertEquals(catalog, bundle.typography());
+        assertThrows(UnsupportedOperationException.class,
+                () -> bundle.textures().put(UiTextureId.FONT_ATLAS, nearest));
+        assertThrows(IllegalArgumentException.class,
+                () -> bundle.texture(UiTextureId.SOLID));
     }
 
     private static BitmapGlyph glyph(int codePoint, UiUvRect uv) {
