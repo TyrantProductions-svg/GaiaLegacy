@@ -1,5 +1,6 @@
 package com.gaia.shell.ui;
 
+import com.gaia.ui.GaiaUiTheme;
 import com.gaia.settings.SettingsDefaults;
 import com.gaia.settings.SettingsDraftSnapshot;
 import com.gaia.settings.SettingsSnapshot;
@@ -15,6 +16,7 @@ import com.gaia.shell.world.NewWorldDraftSnapshot;
 import com.gaia.shell.world.WorldSlotsController;
 import com.gaia.shell.world.WorldSlotsSnapshot;
 import com.overlord.renderer.ui.TextRenderer;
+import com.overlord.renderer.ui.TypographyRole;
 import com.overlord.renderer.ui.UiColor;
 import com.overlord.renderer.ui.UiDrawCommand;
 import com.overlord.renderer.ui.UiDrawList;
@@ -33,12 +35,12 @@ import java.util.function.Supplier;
 /** Pure product-screen presentation built from immutable route and save summaries. */
 public final class ProductScreenPresenter {
     private static final UiUvRect SOLID_UV = new UiUvRect(0.0f, 0.0f, 1.0f, 1.0f);
-    private static final UiColor BACKDROP = new UiColor(0.025f, 0.035f, 0.055f, 0.96f);
-    private static final UiColor PANEL = new UiColor(0.08f, 0.10f, 0.15f, 0.98f);
-    private static final UiColor BUTTON = new UiColor(0.16f, 0.20f, 0.29f, 1.0f);
-    private static final UiColor SELECTED_BUTTON = new UiColor(0.24f, 0.34f, 0.50f, 1.0f);
-    private static final UiColor DISABLED_BUTTON = new UiColor(0.09f, 0.11f, 0.15f, 1.0f);
-    private static final UiColor TEXT = new UiColor(0.91f, 0.94f, 1.0f, 1.0f);
+    private static final UiColor BACKDROP = new UiColor(0.024f, 0.067f, 0.118f, 0.82f);
+    private static final UiColor PANEL = GaiaUiTheme.SECONDARY_PANEL;
+    private static final UiColor BUTTON = new UiColor(0.035f, 0.10f, 0.16f, 0.72f);
+    private static final UiColor SELECTED_BUTTON = new UiColor(0.18f, 0.52f, 0.62f, 0.42f);
+    private static final UiColor DISABLED_BUTTON = new UiColor(0.03f, 0.07f, 0.10f, 0.58f);
+    private static final UiColor TEXT = GaiaUiTheme.PRIMARY_TEXT;
     private static final UiColor DISABLED_TEXT = new UiColor(0.42f, 0.45f, 0.52f, 1.0f);
     private static final double BUTTON_WIDTH = 300.0d;
     private static final double BUTTON_HEIGHT = 42.0d;
@@ -119,7 +121,18 @@ public final class ProductScreenPresenter {
 
         UiDrawList draw = new UiDrawList();
         List<UiHitRegion> hitRegions = new ArrayList<>();
-        appendSolid(context.safeArea(), BACKDROP, context, draw);
+        appendHero(context, draw);
+        if (snapshot.modal().isPresent() || snapshot.screen() != ScreenId.MAIN_MENU) {
+            appendSolid(context.safeArea(), BACKDROP, context, draw);
+        } else {
+            appendSolid(
+                    new UiRect(0.0d, 0.0d,
+                            Math.min(510.0d, context.logicalWidth() * 0.44d),
+                            context.logicalHeight()),
+                    GaiaUiTheme.HERO_LEFT_OVERLAY,
+                    context,
+                    draw);
+        }
 
         if (snapshot.modal().isPresent()) {
             presentModal(
@@ -242,11 +255,15 @@ public final class ProductScreenPresenter {
             UiLayoutContext context,
             UiDrawList draw,
             List<UiHitRegion> hitRegions) {
-        appendTitle("WORLD SLOTS", context, draw);
+        double normalRowsBottom = 190 + Math.max(0, slots.rows().size() - 1) * 92 + 50;
+        double footerSpace = slots.pageCount() > 1 ? 196 : 92;
+        boolean compact = context.logicalHeight() < normalRowsBottom + footerSpace + 8;
+        appendCenteredText("WORLD SLOTS", TypographyRole.HEADING_LARGE,
+                compact ? 60 : 140, TEXT, context, draw);
         if (slots.rows().isEmpty()) {
             appendCenteredText("NO SAVED WORLDS", 300.0d, DISABLED_TEXT, context, draw);
         }
-        double rowTop = 190.0d;
+        double rowTop = compact ? 88.0d : 190.0d;
         for (SaveSummary row : slots.rows()) {
             appendCenteredText(
                     row.name()
@@ -271,7 +288,7 @@ public final class ProductScreenPresenter {
                                 context.logicalWidth() / 2.0d - 150.0d,
                                 rowTop + 12.0d,
                                 context.logicalWidth() / 2.0d - 6.0d,
-                                rowTop + 50.0d),
+                                rowTop + (compact ? 42.0d : 50.0d)),
                         true,
                         focusedControl.filter(id -> id.equals(new WorldSlotControlId(
                                 row.id(), action))).isPresent(),
@@ -288,16 +305,26 @@ public final class ProductScreenPresenter {
                             context.logicalWidth() / 2.0d + 6.0d,
                             rowTop + 12.0d,
                             context.logicalWidth() / 2.0d + 150.0d,
-                            rowTop + 50.0d),
+                            rowTop + (compact ? 42.0d : 50.0d)),
                     true,
                     focusedControl.filter(id -> id.equals(new WorldSlotControlId(
                             row.id(), WorldSlotControlId.WorldSlotAction.DELETE))).isPresent(),
                     context,
                     draw,
                     hitRegions);
-            rowTop += 92.0d;
+            rowTop += compact ? 54.0d : 92.0d;
         }
-        if (slots.pageCount() > 1) {
+        if (slots.pageCount() > 1 && compact) {
+            List<Button> paging = List.of(
+                    new Button(UiActionId.WORLD_SLOTS_PREVIOUS, "PREVIOUS", slots.hasPreviousPage()),
+                    new Button(UiActionId.WORLD_SLOTS_NEXT, "NEXT", slots.hasNextPage()));
+            for (int index = 0; index < paging.size(); index++) {
+                double left = context.logicalWidth() / 2 - 150 + index * 156;
+                double top = context.logicalHeight() - 146;
+                appendActionButton(paging.get(index), new UiRect(left, top, left + 144, top + 38),
+                        selectedAction(paging, Optional.empty()), context, draw, hitRegions);
+            }
+        } else if (slots.pageCount() > 1) {
             appendButtons(
                     List.of(
                             new Button(
@@ -374,22 +401,26 @@ public final class ProductScreenPresenter {
             UiLayoutContext context,
             UiDrawList draw,
             List<UiHitRegion> hitRegions) {
-        appendTitle("GAIA LEGACY", context, draw);
-        appendButtons(
-                List.of(
-                        new Button(UiActionId.NEW_WORLD, "NEW WORLD", true),
-                        new Button(
-                                UiActionId.LOAD_WORLD,
-                                worldSlots.hasRows() ? "WORLD SLOTS" : "LOAD WORLD",
-                                worldSlots.hasRows()),
-                        new Button(UiActionId.SETTINGS, "SETTINGS", true),
-                        new Button(UiActionId.CONTROLS, "CONTROLS", true),
-                        new Button(UiActionId.QUIT, "QUIT", true)),
-                226.0d,
-                focusedAction,
-                context,
-                draw,
-                hitRegions);
+        appendWordmark(context, draw);
+        List<Button> buttons = List.of(
+                new Button(UiActionId.NEW_WORLD, "NEW WORLD", true),
+                new Button(UiActionId.LOAD_WORLD, "WORLD ARCHIVE", worldSlots.hasRows()),
+                new Button(UiActionId.SETTINGS, "SETTINGS", true),
+                new Button(UiActionId.CONTROLS, "CONTROLS", true),
+                new Button(UiActionId.QUIT, "QUIT", true));
+        appendMainMenuButtons(buttons, focusedAction, context, draw, hitRegions);
+        appendText("GAIA // FRONTIER CHANNEL 01", TypographyRole.BODY,
+                84.0d, context.logicalHeight() - 30.0d, 0.78d,
+                DISABLED_TEXT, context, draw);
+        String version = "v0.2 // MILESTONE 2";
+        double versionScale = 0.78d;
+        double width = text.measure(
+                version, TypographyRole.BODY,
+                context.contentScaleX() * versionScale);
+        appendText(version, TypographyRole.BODY,
+                context.logicalWidth() - 34.0d - width / context.contentScaleX(),
+                context.logicalHeight() - 30.0d,
+                versionScale, DISABLED_TEXT, context, draw);
     }
 
     private void presentPause(
@@ -441,7 +472,8 @@ public final class ProductScreenPresenter {
         SettingsSnapshot applied = settingsSnapshot.applied();
         SettingsSnapshot draft = settingsSnapshot.draft();
         boolean controlsEnabled = settingsSnapshot.blockingDiagnostic().isEmpty();
-        appendCenteredText("SETTINGS", 32.0d, TEXT, context, draw);
+        appendCenteredText(
+                "SETTINGS", TypographyRole.HEADING_LARGE, 38.0d, TEXT, context, draw);
 
         double rowTop = 48.0d;
         rowTop = appendSettingsRow(
@@ -620,7 +652,7 @@ public final class ProductScreenPresenter {
         if (!controlsEnabled) {
             appendCenteredText(
                     "SETTINGS APPLY BLOCKED - RESTART REQUIRED",
-                    context.logicalHeight() - 82.0d,
+                    context.logicalHeight() - 68.0d,
                     TEXT,
                     context,
                     draw);
@@ -643,10 +675,12 @@ public final class ProductScreenPresenter {
             List<UiHitRegion> hitRegions) {
         double left = 28.0d;
         double right = context.logicalWidth() - 28.0d;
+        double rowHeight = Math.min(SETTINGS_ROW_HEIGHT, Math.max(28,
+                (context.logicalHeight() - 48 - 92) / 11 - SETTINGS_ROW_GAP));
         UiRect rowBounds = new UiRect(
-                left, top, right, top + SETTINGS_ROW_HEIGHT);
+                left, top, right, top + rowHeight);
         appendSolid(rowBounds, PANEL, context, draw);
-        appendText(value, left + 12.0d, top + 25.0d, TEXT, context, draw);
+        appendText(value, left + 12.0d, top + Math.min(25, rowHeight - 8), TEXT, context, draw);
 
         double controlWidth = controls.size() == 1
                 ? SETTINGS_CONTROL_WIDTH * 2.0d
@@ -665,13 +699,13 @@ public final class ProductScreenPresenter {
                             x,
                             top + 4.0d,
                             x + controlWidth,
-                            top + SETTINGS_ROW_HEIGHT - 4.0d),
+                            top + rowHeight - 4.0d),
                     selected,
                     context,
                     draw,
                     hitRegions);
         }
-        return top + SETTINGS_ROW_HEIGHT + SETTINGS_ROW_GAP;
+        return top + rowHeight + SETTINGS_ROW_GAP;
     }
 
     private void appendSettingsFooter(
@@ -719,6 +753,7 @@ public final class ProductScreenPresenter {
                 transactionEnabled
                         ? "APPLY SETTINGS CHANGES?"
                         : "SETTINGS APPLY BLOCKED - RESTART REQUIRED",
+                TypographyRole.HEADING_LARGE,
                 centerY - 54.0d,
                 TEXT,
                 context,
@@ -855,7 +890,9 @@ public final class ProductScreenPresenter {
             case RECOVER_BACKUP_CONFIRMATION -> "RECOVER THIS BACKUP?";
             case ERROR_ACKNOWLEDGEMENT -> "AN ERROR OCCURRED";
         };
-        appendCenteredText(message, centerY - 42.0d, TEXT, context, draw);
+        appendCenteredText(
+                message, TypographyRole.HEADING_LARGE,
+                centerY - 42.0d, TEXT, context, draw);
 
         List<Button> buttons = modal == ModalId.ERROR_ACKNOWLEDGEMENT
                 ? List.of(new Button(UiActionId.DISMISS, "OK", true))
@@ -867,7 +904,63 @@ public final class ProductScreenPresenter {
     }
 
     private void appendTitle(String title, UiLayoutContext context, UiDrawList draw) {
-        appendCenteredText(title, 140.0d, TEXT, context, draw);
+        appendCenteredText(
+                title, TypographyRole.HEADING_LARGE, 140.0d, TEXT, context, draw);
+    }
+
+    private void appendWordmark(UiLayoutContext context, UiDrawList draw) {
+        double x = 84.0d;
+        double y = 62.0d;
+        UiColor cyan = GaiaUiTheme.GAIA_CYAN;
+        draw.append(new UiDrawCommand(UiTextureId.BRAND_EMBLEM,
+                context.toFramebuffer(new UiRect(x - 14, y - 16, x + 82, y + 80)),
+                SOLID_UV, new UiColor(1, 1, 1, 1), Optional.empty()));
+        appendText("GAIA", TypographyRole.DISPLAY_TITLE,
+                x + 88.0d, y + 36.0d, 1.08d, cyan, context, draw);
+        appendText("L E G A C Y", TypographyRole.FUNCTIONAL,
+                x + 92.0d, y + 68.0d, 0.88d, TEXT, context, draw);
+        appendSolid(new UiRect(x + 90.0d, y + 78.0d, x + 258.0d, y + 79.0d),
+                new UiColor(0.49f, 0.91f, 1.0f, 0.34f), context, draw);
+    }
+
+    private void appendMainMenuButtons(
+            List<Button> buttons,
+            Optional<UiActionId> focusedAction,
+            UiLayoutContext context,
+            UiDrawList draw,
+            List<UiHitRegion> hitRegions) {
+        UiActionId selected = selectedAction(buttons, focusedAction);
+        double left = 84.0d;
+        double width = 292.0d;
+        double step = 48.0d;
+        double totalHeight = 38.0d + Math.max(0, buttons.size() - 1) * step;
+        double top = Math.max(160.0d, Math.min(
+                260.0d,
+                context.logicalHeight() - 48.0d - totalHeight));
+        for (int index = 0; index < buttons.size(); index++) {
+            Button button = buttons.get(index);
+            UiRect bounds = new UiRect(
+                    left, top + index * step,
+                    left + width, top + index * step + 38.0d);
+            boolean active = button.action() == selected;
+            appendSolid(bounds,
+                    button.enabled()
+                            ? (active ? SELECTED_BUTTON : new UiColor(0.02f, 0.05f, 0.08f, 0.12f))
+                            : DISABLED_BUTTON,
+                    context, draw);
+            if (active) {
+                appendSolid(new UiRect(
+                        bounds.left(), bounds.top(), bounds.left() + 3.0d, bounds.bottom()),
+                        GaiaUiTheme.GAIA_CYAN, context, draw);
+            }
+            appendText(button.label(), TypographyRole.FUNCTIONAL,
+                    bounds.left() + 18.0d, bounds.top() + 25.0d, 1.0d,
+                    button.enabled() ? (active ? GaiaUiTheme.GAIA_CYAN : TEXT) : DISABLED_TEXT,
+                    context, draw);
+            hitRegions.add(new UiHitRegion(
+                    button.action(), bounds, context.safeArea(), button.enabled(),
+                    context.contentScaleX(), context.contentScaleY()));
+        }
     }
 
     private void appendActionButton(
@@ -953,11 +1046,13 @@ public final class ProductScreenPresenter {
             UiDrawList draw) {
         double scaleX = context.contentScaleX();
         double scaleY = context.contentScaleY();
-        double width = text.measure(label, scaleX);
+        double width = text.measure(label, TypographyRole.FUNCTIONAL, scaleX);
         double x = context.snapX((logicalBounds.left() + logicalBounds.right()) / 2.0d)
                 - width / 2.0d;
-        double baseline = context.snapY(logicalBounds.top() + 27.0d);
-        text.append(label, x, baseline, scaleX, scaleY, color, Optional.empty(), draw);
+        double baseline = context.snapY(logicalBounds.top() + Math.min(
+                27.0d, logicalBounds.bottom() - logicalBounds.top() - 6.0d));
+        text.append(label, TypographyRole.FUNCTIONAL,
+                x, baseline, scaleX, scaleY, color, Optional.empty(), draw);
     }
 
     private void appendCenteredText(
@@ -966,11 +1061,22 @@ public final class ProductScreenPresenter {
             UiColor color,
             UiLayoutContext context,
             UiDrawList draw) {
+        appendCenteredText(
+                value, TypographyRole.BODY, logicalBaseline, color, context, draw);
+    }
+
+    private void appendCenteredText(
+            String value,
+            TypographyRole role,
+            double logicalBaseline,
+            UiColor color,
+            UiLayoutContext context,
+            UiDrawList draw) {
         double scaleX = context.contentScaleX();
         double scaleY = context.contentScaleY();
-        double width = text.measure(value, scaleX);
+        double width = text.measure(value, role, scaleX);
         double x = context.snapX(context.logicalWidth() / 2.0d) - width / 2.0d;
-        text.append(value, x, context.snapY(logicalBaseline), scaleX, scaleY,
+        text.append(value, role, x, context.snapY(logicalBaseline), scaleX, scaleY,
                 color, Optional.empty(), draw);
     }
 
@@ -981,15 +1087,38 @@ public final class ProductScreenPresenter {
             UiColor color,
             UiLayoutContext context,
             UiDrawList draw) {
+        appendText(value, TypographyRole.BODY, logicalX, logicalBaseline, 1.0d,
+                color, context, draw);
+    }
+
+    private void appendText(
+            String value,
+            TypographyRole role,
+            double logicalX,
+            double logicalBaseline,
+            double roleScale,
+            UiColor color,
+            UiLayoutContext context,
+            UiDrawList draw) {
         text.append(
                 value,
+                role,
                 context.snapX(logicalX),
                 context.snapY(logicalBaseline),
-                context.contentScaleX(),
-                context.contentScaleY(),
+                context.contentScaleX() * roleScale,
+                context.contentScaleY() * roleScale,
                 color,
                 Optional.empty(),
                 draw);
+    }
+
+    private static void appendHero(UiLayoutContext context, UiDrawList draw) {
+        draw.append(new UiDrawCommand(
+                UiTextureId.HERO_BACKGROUND,
+                context.toFramebuffer(context.safeArea()),
+                SOLID_UV,
+                new UiColor(1.0f, 1.0f, 1.0f, 1.0f),
+                Optional.empty()));
     }
 
     private static SettingsDraftSnapshot defaultSettings() {

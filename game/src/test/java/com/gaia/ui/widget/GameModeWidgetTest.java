@@ -212,8 +212,6 @@ class GameModeWidgetTest {
                                 Task10WidgetTestSupport.field(double.class, constant)),
                         Map.entry("NOTICE_GAP",
                                 Task10WidgetTestSupport.field(double.class, constant)),
-                        Map.entry("GLYPH_HEIGHT",
-                                Task10WidgetTestSupport.field(double.class, constant)),
                         Map.entry("SOLID_UV", Task10WidgetTestSupport.field(UiUvRect.class, constant)),
                         Map.entry("text", Task10WidgetTestSupport.field(
                                 TextRenderer.class, dependency))),
@@ -222,6 +220,7 @@ class GameModeWidgetTest {
                         "com.gaia.ui.GaiaUiTheme",
                         "com.gaia.ui.HudPresentationSnapshot",
                         "com.overlord.renderer.ui.TextRenderer",
+                        "com.overlord.renderer.ui.TypographyRole",
                         "com.overlord.renderer.ui.UiColor",
                         "com.overlord.renderer.ui.UiDrawCommand",
                         "com.overlord.renderer.ui.UiDrawList",

@@ -1011,8 +1011,8 @@ public final class GameSessionFactory {
 
         BlockRegistry blocks = catalog.blockRegistry();
         TextRenderer hudText =
-                new TextRenderer(
-                        uiAssets.renderAssets().glyphs(),
+                 new TextRenderer(
+                        uiAssets.renderAssets().typography(),
                         codePoint ->
                                 System.err.println(
                                         "[UI] Missing glyph for U+"

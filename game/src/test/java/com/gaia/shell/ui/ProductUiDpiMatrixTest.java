@@ -35,6 +35,21 @@ class ProductUiDpiMatrixTest {
     }
 
     @ParameterizedTest
+    @ValueSource(floats = {1.0f, 1.25f, 1.5f, 2.0f, 3.0f})
+    void emblemIsOneTransparentTexturedQuadAlignedWithWordmark(float scale) {
+        RenderSurfaceMetrics surface = new RenderSurfaceMetrics(
+                1280, 720, Math.round(1280 * scale), Math.round(720 * scale), scale, scale);
+        UiLayoutContext context = new UiLayoutContext(surface);
+        ProductUiLayout layout = presenter.present(mainMenu, context);
+        var emblems = layout.frame().commands().stream().filter(command ->
+                command.texture() == com.overlord.renderer.ui.UiTextureId.BRAND_EMBLEM).toList();
+        assertEquals(1, emblems.size());
+        assertEquals(context.toFramebuffer(new UiRect(70, 46, 166, 142)),
+                emblems.get(0).framebufferBounds());
+        assertEquals(5, layout.hitRegions().size(), "brand must not add a hit region");
+    }
+
+    @ParameterizedTest
     @ValueSource(floats = {1.0f, 1.25f, 1.5f, 2.0f})
     void newWorldPaintAndHitRegionRemainAligned(float scale) {
         RenderSurfaceMetrics surface = new RenderSurfaceMetrics(

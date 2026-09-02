@@ -1,11 +1,16 @@
 {
   "provenanceVersion": 1,
-  "font": {
-    "image": "gaia:ui/ui_font.png",
-    "metadata": "gaia:ui/ui_font.json",
-    "atlasVersion": 1,
-    "width": 128,
-    "height": 64
+  "brand": {
+    "metadata": "gaia:ui/brand/brand-manifest.json",
+    "version": 1
+  },
+  "typography": {
+    "metadata": "gaia:ui/ui_typography.json",
+    "version": 1
+  },
+  "heroes": {
+    "metadata": "gaia:ui/hero/hero-manifest.json",
+    "version": 1
   },
   "icons": {
     "image": "gaia:ui/ui_icons.png",

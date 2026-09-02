@@ -5,6 +5,8 @@ import com.overlord.renderer.RenderSurfaceMetrics;
 import com.overlord.renderer.metrics.RenderMetricsRecorder;
 import com.overlord.renderer.state.RenderStateSnapshot;
 import com.overlord.renderer.state.ScissorBox;
+import java.util.EnumMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -15,8 +17,7 @@ public final class UiRenderer implements AutoCloseable {
     private final MainThreadGuard guard;
     private final UiBatchPlanner planner;
     private final UiShader shader;
-    private final UiTexture icons;
-    private final UiTexture font;
+    private final Map<UiTextureId, UiTexture> textures;
     private final UiBatch batch;
     private boolean closed;
 
@@ -24,15 +25,13 @@ public final class UiRenderer implements AutoCloseable {
             UiGpuBackend backend,
             MainThreadGuard guard,
             UiShader shader,
-            UiTexture icons,
-            UiTexture font,
+            Map<UiTextureId, UiTexture> textures,
             UiBatch batch) {
         this.backend = backend;
         this.guard = guard;
         this.planner = new UiBatchPlanner();
         this.shader = shader;
-        this.icons = icons;
-        this.font = font;
+        this.textures = textures;
         this.batch = batch;
     }
 
@@ -46,20 +45,27 @@ public final class UiRenderer implements AutoCloseable {
         guard.assertMainThread("UI renderer creation");
 
         UiShader shader = null;
-        UiTexture icons = null;
-        UiTexture font = null;
+        EnumMap<UiTextureId, UiTexture> textures = new EnumMap<>(UiTextureId.class);
         UiBatch batch = null;
         try {
             shader = UiShader.create(backend, guard);
-            icons = UiTexture.create(assets.icons(), backend, guard);
-            font = UiTexture.create(assets.font(), backend, guard);
+            for (UiTextureId id : UiTextureId.values()) {
+                UiTextureData data = assets.textures().get(id);
+                if (data != null) {
+                    textures.put(id, UiTexture.create(data, backend, guard));
+                }
+            }
             batch = UiBatch.create(backend, guard);
-            return new UiRenderer(backend, guard, shader, icons, font, batch);
+            return new UiRenderer(
+                    backend,
+                    guard,
+                    shader,
+                    java.util.Collections.unmodifiableMap(new EnumMap<>(textures)),
+                    batch);
         } catch (RuntimeException | Error failure) {
             Throwable primary = failure;
             primary = close(batch, primary);
-            primary = close(font, primary);
-            primary = close(icons, primary);
+            primary = closeTextures(textures, primary);
             primary = close(shader, primary);
             throw new UiInitializationException("Failed to initialize UI renderer", primary);
         }
@@ -119,8 +125,7 @@ public final class UiRenderer implements AutoCloseable {
         closed = true;
         Throwable failure = null;
         failure = close(batch, failure);
-        failure = close(font, failure);
-        failure = close(icons, failure);
+        failure = closeTextures(textures, failure);
         failure = close(shader, failure);
         if (failure != null) {
             UiBatch.rethrow(failure);
@@ -128,20 +133,17 @@ public final class UiRenderer implements AutoCloseable {
     }
 
     private void bind(UiTextureId textureId) {
-        switch (textureId) {
-            case ICON_ATLAS -> {
-                shader.setTextureSamplingEnabled(true);
-                icons.bindUnitZero();
-            }
-            case FONT_ATLAS -> {
-                shader.setTextureSamplingEnabled(true);
-                font.bindUnitZero();
-            }
-            case SOLID -> {
-                shader.setTextureSamplingEnabled(false);
-                backend.bindTextureUnitZero(0);
-            }
+        if (textureId == UiTextureId.SOLID) {
+            shader.setTextureSamplingEnabled(false);
+            backend.bindTextureUnitZero(0);
+            return;
         }
+        UiTexture texture = textures.get(textureId);
+        if (texture == null) {
+            throw new IllegalArgumentException("UI texture is not installed: " + textureId);
+        }
+        shader.setTextureSamplingEnabled(true);
+        texture.bindUnitZero();
     }
 
     private void ensureOpen() {
@@ -185,5 +187,16 @@ public final class UiRenderer implements AutoCloseable {
             return UiBatch.appendFailure(failure, new AssertionError(impossible));
         }
         return failure;
+    }
+
+    private static Throwable closeTextures(
+            Map<UiTextureId, UiTexture> textures,
+            Throwable failure) {
+        UiTextureId[] ids = UiTextureId.values();
+        Throwable current = failure;
+        for (int index = ids.length - 1; index >= 0; index--) {
+            current = close(textures.get(ids[index]), current);
+        }
+        return current;
     }
 }

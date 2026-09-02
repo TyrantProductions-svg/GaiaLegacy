@@ -11,6 +11,7 @@ import static org.lwjgl.opengl.GL30C.GL_CULL_FACE;
 import static org.lwjgl.opengl.GL30C.GL_DEPTH_TEST;
 import static org.lwjgl.opengl.GL30C.GL_FRAMEBUFFER_SRGB;
 import static org.lwjgl.opengl.GL30C.GL_FUNC_ADD;
+import static org.lwjgl.opengl.GL30C.GL_LINEAR;
 import static org.lwjgl.opengl.GL30C.GL_NEAREST;
 import static org.lwjgl.opengl.GL30C.GL_ONE;
 import static org.lwjgl.opengl.GL30C.GL_ONE_MINUS_SRC_ALPHA;
@@ -92,6 +93,23 @@ class OpenGlUiResourceLifecycleTest {
                         "bindTexture:40",
                         "draw:30:12:" + GL_TRIANGLES + ":" + GL_UNSIGNED_INT),
                 gl.calls);
+    }
+
+    @Test
+    void concreteBackendUsesTheTexturePageSamplingPolicy() {
+        RecordingOpenGlApi gl = new RecordingOpenGlApi();
+        OpenGlUiGpuBackend backend = new OpenGlUiGpuBackend(
+                MainThreadGuard.captureCurrentThread(), new NoOpStateBackend(), gl);
+        UiTextureData texture = new UiTextureData(
+                1,
+                1,
+                ByteBuffer.wrap(new byte[] {1, 2, 3, 4}),
+                UiTextureSampling.LINEAR);
+
+        backend.createTexture(texture);
+
+        assertEquals(GL_LINEAR, gl.textures.get(0).minFilter());
+        assertEquals(GL_LINEAR, gl.textures.get(0).magFilter());
     }
 
     @Test

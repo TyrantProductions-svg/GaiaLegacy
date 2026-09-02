@@ -31,6 +31,28 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 class WorldSlotsPresenterTest {
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {480, 649, 650, 700, 711, 712, 720})
+    void compactFullArchivePageKeepsRowsPagingAndBackDisjoint(int height) {
+        var context = new UiLayoutContext(new RenderSurfaceMetrics(
+                854, height, 1281, Math.round(height * 1.5f), 1.5f, 1.5f));
+        var rows = java.util.stream.IntStream.rangeClosed(1, 5)
+                .mapToObj(i -> summary(i, SaveSummary.Health.VALID)).toList();
+        var layout = presenter(rows).present(
+                ProductScreenPresenterTest.snapshot(ScreenId.WORLD_SLOTS), context);
+        assertEquals(11, layout.hitRegions().size());
+        for (int i = 0; i < layout.hitRegions().size(); i++) {
+            var a = layout.hitRegions().get(i).logicalBounds();
+            assertTrue(a.top() >= 0 && a.bottom() <= height, a.toString());
+            for (int j = i + 1; j < layout.hitRegions().size(); j++) {
+                var b = layout.hitRegions().get(j).logicalBounds();
+                assertFalse(a.left() < b.right() && b.left() < a.right()
+                        && a.top() < b.bottom() && b.top() < a.bottom(),
+                        "overlapping archive controls " + a + " / " + b);
+            }
+        }
+    }
+
     @Test
     void mainMenuLoadWorldIsEnabledOnlyForARealDisplayableCatalogRow() {
         ProductUiLayout empty = presenter(List.of()).present(

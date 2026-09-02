@@ -195,9 +195,9 @@ public final class GameBootstrap {
                     catalog.blockRegistry());
             ProductScreenPresenter productPresenter =
                     new ProductScreenPresenter(
-                            saveComposition.catalog(),
-                            new TextRenderer(
-                                    uiAssets.renderAssets().glyphs()),
+                             saveComposition.catalog(),
+                             new TextRenderer(
+                                    uiAssets.renderAssets().typography()),
                             settingsController::snapshot,
                             saveComposition.newWorldDraft(),
                             saveComposition.worldSlots());

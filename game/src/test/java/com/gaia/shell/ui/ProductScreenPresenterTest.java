@@ -16,6 +16,8 @@ import com.overlord.renderer.RenderSurfaceMetrics;
 import com.overlord.renderer.ui.BitmapFont;
 import com.overlord.renderer.ui.BitmapGlyph;
 import com.overlord.renderer.ui.TextRenderer;
+import com.overlord.renderer.ui.TypographyCatalog;
+import com.overlord.renderer.ui.TypographyRole;
 import com.overlord.renderer.ui.UiLayoutContext;
 import com.overlord.renderer.ui.UiTextureId;
 import com.overlord.renderer.ui.UiUvRect;
@@ -26,6 +28,8 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 class ProductScreenPresenterTest {
     private static final ProductShellSnapshot MAIN_MENU = snapshot(ScreenId.MAIN_MENU);
@@ -62,6 +66,87 @@ class ProductScreenPresenterTest {
     }
 
     @Test
+    void mainMenuUsesWorldFirstHeroRoleAwareWordmarkAndMinimalLeftNavigation() {
+        ProductScreenPresenter styled = new ProductScreenPresenter(
+                new EmptySaveCatalog(), roleAwareTextRenderer());
+
+        ProductUiLayout layout = styled.present(
+                MAIN_MENU, CONTEXT, Optional.of(UiActionId.NEW_WORLD));
+
+        assertEquals(UiTextureId.HERO_BACKGROUND,
+                layout.frame().commands().get(0).texture());
+        assertTrue(layout.frame().commands().stream()
+                .anyMatch(command -> command.texture() == UiTextureId.FONT_DISPLAY));
+        assertTrue(layout.frame().commands().stream()
+                .anyMatch(command -> command.texture() == UiTextureId.FONT_BODY));
+        assertTrue(layout.hitRegions().stream()
+                .allMatch(region -> region.logicalBounds().right()
+                        < CONTEXT.logicalWidth() / 2.0d));
+        assertFalse(layout.frame().commands().stream()
+                .anyMatch(command -> command.texture() == UiTextureId.SOLID
+                        && command.framebufferBounds().equals(
+                                CONTEXT.toFramebuffer(CONTEXT.safeArea()))
+                        && command.tint().alpha() >= 0.9f));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = UiActionId.class, names = {"LOAD_WORLD", "RESUME"})
+    void mainMenuRejectsDisabledOrAbsentActionsWithoutManufacturingFocus(UiActionId action) {
+        ProductUiLayout layout = presenter.present(MAIN_MENU, CONTEXT, Optional.of(action));
+
+        long enabledTintCount = layout.hitRegions().stream()
+                .filter(UiHitRegion::enabled)
+                .map(region -> layout.frame().commands().stream()
+                        .filter(command -> command.texture() == UiTextureId.SOLID)
+                        .filter(command -> command.framebufferBounds().equals(
+                                CONTEXT.toFramebuffer(region.logicalBounds())))
+                        .findFirst().orElseThrow().tint())
+                .distinct().count();
+        assertEquals(1L, enabledTintCount,
+                "an invalid focused action must leave all enabled menu items unselected");
+    }
+
+    @Test
+    void settingsAndModalRetainHeroUnderDarkerStructuredProductShell() {
+        ProductScreenPresenter styled = new ProductScreenPresenter(
+                new EmptySaveCatalog(), roleAwareTextRenderer());
+
+        ProductUiLayout settings = styled.present(snapshot(ScreenId.SETTINGS), CONTEXT);
+        ProductUiLayout modal = styled.present(new ProductShellSnapshot(
+                ScreenId.MAIN_MENU,
+                Optional.of(ModalId.QUIT_CONFIRMATION),
+                Optional.empty()), CONTEXT);
+
+        for (ProductUiLayout layout : List.of(settings, modal)) {
+            assertEquals(UiTextureId.HERO_BACKGROUND,
+                    layout.frame().commands().get(0).texture());
+            assertTrue(layout.frame().commands().stream()
+                    .anyMatch(command -> command.texture() == UiTextureId.SOLID
+                            && command.framebufferBounds().equals(
+                                    CONTEXT.toFramebuffer(CONTEXT.safeArea()))
+                            && command.tint().alpha() >= 0.75f));
+            assertTrue(layout.frame().commands().stream()
+                    .anyMatch(command -> command.texture() == UiTextureId.FONT_DISPLAY));
+        }
+    }
+
+    @Test
+    void mainMenuNavigationFitsTheDefaultSmallRuntimeSurfaceAboveItsFooter() {
+        UiLayoutContext small = new UiLayoutContext(
+                new RenderSurfaceMetrics(854, 480, 854, 480, 1.0f, 1.0f));
+
+        ProductUiLayout layout = presenter.present(
+                MAIN_MENU, small, Optional.of(UiActionId.NEW_WORLD));
+
+        assertEquals(5, layout.hitRegions().size());
+        assertTrue(layout.hitRegions().stream()
+                .allMatch(region -> region.logicalBounds().bottom()
+                        <= small.logicalHeight() - 48.0d));
+        assertTrue(layout.hitRegions().stream()
+                .allMatch(region -> region.logicalBounds().top() >= 0.0d));
+    }
+
+    @Test
     void repeatedPresentationDoesNotRediscoverSavesWhileLoadWorldIsDisabled() {
         AtomicInteger discoveries = new AtomicInteger();
         SaveCatalog catalog = () -> {
@@ -88,7 +173,7 @@ class ProductScreenPresenterTest {
         ProductUiLayout layout = capturingPresenter.present(MAIN_MENU, CONTEXT);
 
         assertEquals(
-                "LOAD WORLD",
+                "WORLD ARCHIVE",
                 textInside(layout, UiActionId.LOAD_WORLD));
         assertFalse(layout.region(UiActionId.LOAD_WORLD).enabled());
     }
@@ -224,6 +309,30 @@ class ProductScreenPresenterTest {
         }
         BitmapGlyph missing = glyphs.get((int) '?');
         return new TextRenderer(new BitmapFont(128, 8, glyphs, missing));
+    }
+
+    private static TextRenderer roleAwareTextRenderer() {
+        Map<Integer, BitmapGlyph> glyphs = new LinkedHashMap<>();
+        for (int codePoint = 32; codePoint <= 126; codePoint++) {
+            glyphs.put(codePoint, new BitmapGlyph(
+                    codePoint,
+                    new UiUvRect(codePoint / 128.0f, 0.0f,
+                            (codePoint + 1) / 128.0f, 1.0f),
+                    1, 0, 8));
+        }
+        BitmapFont font = new BitmapFont(128, 8, glyphs, glyphs.get((int) '?'));
+        TypographyCatalog.Face display = new TypographyCatalog.Face(
+                font, UiTextureId.FONT_DISPLAY);
+        TypographyCatalog.Face body = new TypographyCatalog.Face(
+                font, UiTextureId.FONT_BODY);
+        return new TextRenderer(new TypographyCatalog(
+                Map.of(
+                        TypographyRole.DISPLAY_TITLE, display,
+                        TypographyRole.HEADING_LARGE, display,
+                        TypographyRole.BODY, body,
+                        TypographyRole.FUNCTIONAL, body,
+                        TypographyRole.HUD, body),
+                TypographyRole.BODY));
     }
 
     private static String textInside(ProductUiLayout layout, UiActionId action) {

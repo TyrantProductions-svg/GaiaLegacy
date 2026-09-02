@@ -25,6 +25,13 @@ public final class GaiaUiTheme {
     public static final UiColor FAILURE_TEXT = rgb(0xE1, 0x5C, 0x64);
     public static final UiColor DEBUG_BACKGROUND = rgba(0x05, 0x09, 0x0D, 0xD9);
     public static final UiColor DEBUG_TEXT = rgb(0xD6, 0xE0, 0xE3);
+    public static final UiColor GAIA_CYAN = rgb(0x7C, 0xE7, 0xFF);
+    public static final UiColor LEGACY_VIOLET = rgb(0x8D, 0x6F, 0xE8);
+    public static final UiColor SPECIAL_GOLD = rgb(0xE6, 0xC9, 0x78);
+    public static final UiColor DESTRUCTIVE_RED = rgb(0xE1, 0x64, 0x6C);
+    public static final UiColor HERO_LEFT_OVERLAY = rgba(0x06, 0x11, 0x1E, 0xD1);
+    public static final UiColor SECONDARY_PANEL = rgba(0x06, 0x11, 0x1E, 0xE6);
+    public static final UiColor SECONDARY_PANEL_RIM = rgba(0x7C, 0xE7, 0xFF, 0x38);
 
     public static final SlotShape ACTIVE_SHAPE = SlotShape.DOUBLE_RING;
     public static final SlotShape EMPTY_SHAPE = SlotShape.EMPTY_OUTLINE;

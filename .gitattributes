@@ -1,3 +1,15 @@
 # Deterministic generated UI metadata must retain LF bytes on every platform.
 /game/src/main/resources/assets/gaia/ui/ui_font.json text eol=lf
 /game/src/main/resources/assets/gaia/ui/ui_icons.json text eol=lf
+/game/src/main/resources/assets/gaia/ui/ui_typography.json text eol=lf
+# Preserve upstream license bytes exactly (some sources deliberately use CRLF).
+# These two verbatim upstream notices contain original trailing whitespace.
+# Exempt only their line endings; keep other whitespace checks enabled.
+/tools/src/main/resources/ui-source/fonts/pixelify/OFL.txt -text whitespace=-blank-at-eol,cr-at-eol
+/tools/src/main/resources/ui-source/fonts/inter/LICENSE.txt -text
+/tools/src/main/resources/ui-source/fonts/ibm-plex-sans/LICENSE.txt -text whitespace=-blank-at-eol,cr-at-eol
+# Source-byte provenance and generated receipts for the focused visual correction.
+/tools/src/main/java/com/gaia/tools/ui/RuntimeBrandAssetGenerator.java text eol=lf
+/tools/src/main/java/com/gaia/tools/ui/RingedPlanetLayer.java text eol=lf
+/game/src/main/resources/assets/gaia/ui/brand/brand-manifest.json text eol=lf
+/game/src/main/resources/assets/gaia/ui/hero/hero-manifest.json text eol=lf

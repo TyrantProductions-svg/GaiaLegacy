@@ -45,6 +45,65 @@ class TextRendererTest {
     }
 
     @Test
+    void oneTypographyCatalogSelectsDisplayAndBodyPagesWithoutASecondRenderer() {
+        BitmapFont display = fontWithAdvance(12);
+        BitmapFont body = fontWithAdvance(7);
+        TypographyCatalog catalog = new TypographyCatalog(
+                Map.of(
+                        TypographyRole.DISPLAY_TITLE,
+                        new TypographyCatalog.Face(display, UiTextureId.FONT_DISPLAY),
+                        TypographyRole.HEADING_LARGE,
+                        new TypographyCatalog.Face(display, UiTextureId.FONT_DISPLAY),
+                        TypographyRole.BODY,
+                        new TypographyCatalog.Face(body, UiTextureId.FONT_BODY),
+                        TypographyRole.FUNCTIONAL,
+                        new TypographyCatalog.Face(body, UiTextureId.FONT_BODY),
+                        TypographyRole.HUD,
+                        new TypographyCatalog.Face(body, UiTextureId.FONT_BODY)),
+                TypographyRole.BODY);
+        TextRenderer renderer = new TextRenderer(catalog);
+        UiDrawList out = new UiDrawList();
+
+        assertEquals(12.0d, renderer.measure(
+                "A", TypographyRole.DISPLAY_TITLE, 1.0d));
+        assertEquals(7.0d, renderer.measure("A", TypographyRole.BODY, 1.0d));
+        renderer.append(
+                "A", TypographyRole.DISPLAY_TITLE,
+                0.0d, 6.0d, 1.0d, WHITE, Optional.empty(), out);
+        renderer.append(
+                "A", TypographyRole.BODY,
+                20.0d, 6.0d, 1.0d, WHITE, Optional.empty(), out);
+
+        assertEquals(
+                List.of(UiTextureId.FONT_DISPLAY, UiTextureId.FONT_BODY),
+                out.seal().commands().stream().map(UiDrawCommand::texture).toList());
+        assertEquals(TypographyRole.BODY, catalog.defaultRole());
+        assertEquals(5, catalog.roles().size());
+    }
+
+    @Test
+    void reportsRoleSpecificRasterLineHeightForLayoutWithoutASecondTextAuthority() {
+        BitmapGlyph tall = new BitmapGlyph(
+                'T', new UiUvRect(0.0f, 0.0f, 0.25f, 0.75f), 4, 0, 6);
+        BitmapGlyph missing = new BitmapGlyph(
+                0xfffd, new UiUvRect(0.25f, 0.0f, 0.5f, 0.5f), 4, 0, 4);
+        BitmapFont font = new BitmapFont(16, 16, Map.of((int) 'T', tall), missing);
+        TypographyCatalog.Face face = new TypographyCatalog.Face(
+                font, UiTextureId.FONT_BODY);
+        TextRenderer renderer = new TextRenderer(new TypographyCatalog(
+                Map.of(
+                        TypographyRole.DISPLAY_TITLE, face,
+                        TypographyRole.HEADING_LARGE, face,
+                        TypographyRole.BODY, face,
+                        TypographyRole.FUNCTIONAL, face,
+                        TypographyRole.HUD, face),
+                TypographyRole.BODY));
+
+        assertEquals(12.0, renderer.lineHeight(TypographyRole.HUD, 1.0));
+        assertEquals(6.0, renderer.lineHeight(TypographyRole.HUD, 0.5));
+    }
+
+    @Test
     void diagnosesEachUnsupportedCodePointExactlyOnceAcrossAllLayoutOperations() {
         List<Integer> diagnostics = new ArrayList<>();
         TextRenderer renderer = new TextRenderer(font(), diagnostics::add);
@@ -147,5 +206,14 @@ class TextRendererTest {
             glyphs.put(codePoint, new BitmapGlyph(codePoint, A_UV, 8, 0, 8));
         }
         return new BitmapFont(16, 8, glyphs, missing);
+    }
+
+    private static BitmapFont fontWithAdvance(int advance) {
+        BitmapGlyph missing = new BitmapGlyph(0xfffd, MISSING_UV, advance, 0, 6);
+        return new BitmapFont(
+                16,
+                8,
+                Map.of((int) 'A', new BitmapGlyph('A', A_UV, advance, 1, 6)),
+                missing);
     }
 }

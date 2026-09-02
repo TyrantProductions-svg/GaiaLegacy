@@ -138,6 +138,7 @@ class InteractionFailureWidgetTest {
                         "com.gaia.ui.HudPresentationSnapshot",
                         "com.overlord.interaction.api.InteractionFailureReason",
                         "com.overlord.renderer.ui.TextRenderer",
+                        "com.overlord.renderer.ui.TypographyRole",
                         "com.overlord.renderer.ui.UiDrawList",
                         "com.overlord.renderer.ui.UiLayoutContext",
                         "java.util.Objects",

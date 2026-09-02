@@ -34,6 +34,51 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class SettingsScreenPresenterTest {
+    @Test
+    void compactBlockedSettingsDiagnosticClearsLastRowWithProductionInter() {
+        var assets = new com.gaia.ui.GaiaUiAssetLoader(new com.overlord.assets.AssetManager(
+                getClass().getClassLoader())).load();
+        var catalog = assets.renderAssets().typography();
+        var font = catalog.resolve(com.overlord.renderer.ui.TypographyRole.BODY).font();
+        var defaults = SettingsDefaults.schemaV1();
+        var presenter = new ProductScreenPresenter(new EmptySaveCatalog(), new TextRenderer(catalog),
+                () -> new SettingsDraftSnapshot(defaults, defaults, false, Optional.of(
+                        new com.gaia.settings.SettingsDiagnostic("blocked", "apply"))));
+        var layout = presenter.present(SETTINGS, new UiLayoutContext(
+                new com.overlord.renderer.RenderSurfaceMetrics(854, 480, 854, 480, 1, 1)));
+        var glyphs = layout.frame().commands().stream()
+                .filter(c -> c.texture() == UiTextureId.FONT_BODY).toList();
+        var expected = "SETTINGS APPLY BLOCKED - RESTART REQUIRED".codePoints()
+                .mapToObj(cp -> font.glyph(cp).uv()).toList();
+        for (int i = 0; i <= glyphs.size() - expected.size(); i++) {
+            var candidate = glyphs.subList(i, i + expected.size());
+            if (candidate.stream().map(UiDrawCommand::uv).toList().equals(expected)) {
+                double top = candidate.stream().mapToDouble(c -> c.framebufferBounds().top()).min().orElseThrow();
+                double bottom = candidate.stream().mapToDouble(c -> c.framebufferBounds().bottom()).max().orElseThrow();
+                assertTrue(top > layout.region(UiActionId.DEBUG_HUD_DEFAULT_TOGGLE).logicalBounds().bottom() + 4,
+                        "diagnostic overlaps final row: " + top);
+                assertTrue(bottom < layout.region(UiActionId.BACK).logicalBounds().top());
+                return;
+            }
+        }
+        throw new AssertionError("missing blocked-settings diagnostic");
+    }
+
+    @Test
+    void compactWindowKeepsEverySettingControlAboveFooter() {
+        var context = new UiLayoutContext(new com.overlord.renderer.RenderSurfaceMetrics(
+                854, 480, 1281, 720, 1.5f, 1.5f));
+        var layout = presenter(SettingsScreenPresenterTest::dirtySettings).present(SETTINGS, context);
+        double footer = layout.region(UiActionId.BACK).logicalBounds().top();
+        for (var region : layout.hitRegions()) {
+            if (region.action() != UiActionId.BACK && region.action() != UiActionId.APPLY_SETTINGS) {
+                assertTrue(region.logicalBounds().bottom() < footer - 8,
+                        region.id() + " overlaps footer: " + region.logicalBounds());
+                assertTrue(region.logicalBounds().bottom() - region.logicalBounds().top() >= 20);
+            }
+        }
+    }
+
     private static final UiLayoutContext CONTEXT = ProductScreenPresenterTest.context();
     private static final ProductShellSnapshot SETTINGS = new ProductShellSnapshot(
             ScreenId.SETTINGS,

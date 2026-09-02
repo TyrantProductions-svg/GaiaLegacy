@@ -4,6 +4,7 @@ import com.gaia.interaction.GameMode;
 import com.gaia.ui.GaiaUiTheme;
 import com.gaia.ui.HudPresentationSnapshot;
 import com.overlord.renderer.ui.TextRenderer;
+import com.overlord.renderer.ui.TypographyRole;
 import com.overlord.renderer.ui.UiColor;
 import com.overlord.renderer.ui.UiDrawCommand;
 import com.overlord.renderer.ui.UiDrawList;
@@ -20,7 +21,6 @@ public final class GameModeWidget {
     private static final double PERSISTENT_SCALE = 0.75;
     private static final double NOTICE_SCALE = 1;
     private static final double NOTICE_GAP = 4;
-    private static final double GLYPH_HEIGHT = 8;
     private static final UiUvRect SOLID_UV = new UiUvRect(0, 0, 1, 1);
 
     private final TextRenderer text;
@@ -70,8 +70,9 @@ public final class GameModeWidget {
             UiLayoutContext layout,
             UiDrawList out) {
         double right = layout.logicalWidth() - MARGIN;
-        double left = right - text.measure(label, scale) - PADDING * 2;
-        double bottom = top + GLYPH_HEIGHT * scale + PADDING * 2;
+        double glyphHeight = text.lineHeight(TypographyRole.HUD, scale);
+        double left = right - text.measure(label, TypographyRole.HUD, scale) - PADDING * 2;
+        double bottom = top + glyphHeight + PADDING * 2;
         out.append(new UiDrawCommand(
                 UiTextureId.SOLID,
                 layout.toFramebuffer(new UiRect(left, top, right, bottom)),
@@ -80,8 +81,9 @@ public final class GameModeWidget {
                 Optional.empty()));
         text.append(
                 label,
+                TypographyRole.HUD,
                 layout.snapX(left + PADDING),
-                layout.snapY(top + PADDING + GLYPH_HEIGHT * scale),
+                layout.snapY(top + PADDING + glyphHeight),
                 scale * layout.contentScaleX(),
                 scale * layout.contentScaleY(),
                 textColor,

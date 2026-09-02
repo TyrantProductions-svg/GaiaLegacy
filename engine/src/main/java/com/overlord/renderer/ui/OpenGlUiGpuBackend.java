@@ -78,10 +78,15 @@ public final class OpenGlUiGpuBackend implements UiGpuBackend {
     @Override
     public int createTexture(UiTextureData texture) {
         guard.assertMainThread("UI texture creation");
+        Objects.requireNonNull(texture, "texture");
+        int filter = switch (texture.sampling()) {
+            case NEAREST -> GL_NEAREST;
+            case LINEAR -> GL_LINEAR;
+        };
         return gl.createTexture(
-                Objects.requireNonNull(texture, "texture"),
-                GL_NEAREST,
-                GL_NEAREST,
+                texture,
+                filter,
+                filter,
                 GL_CLAMP_TO_EDGE,
                 GL_CLAMP_TO_EDGE,
                 0,

@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "source": {
+    "repositoryPath": "docs/images/gaialegacy-hero.png",
+    "sha256": "66021ac3a9d197c8d9e52cab165019263eccfc688d402fe21391e930f87db262",
+    "gitCommit": "d13d8fe4d0ac59e2a1a94b84cc0ed698fa6aca33",
+    "gitBlobSha": "ff1da87408d26db9fd17d3e429f88407ce75c3e6",
+    "ownership": "PROJECT_OWNED_GAIALEGACY_RUNTIME_CAPTURE"
+  },
+  "heroes": [
+    {
+      "id": "dawn",
+      "image": "gaia:ui/hero/gaia-hero-dawn.png",
+      "width": 1280,
+      "height": 720,
+      "sampling": "LINEAR",
+      "pngSha256": "182637e8093698cde5203749f6ab7de9f900fa217165639ab7049453a942c4d0",
+      "rgba8Bytes": 3686400
+    },
+    {
+      "id": "highlands",
+      "image": "gaia:ui/hero/gaia-hero-highlands.png",
+      "width": 1280,
+      "height": 720,
+      "sampling": "LINEAR",
+      "pngSha256": "7b55199fcb878d30b74f305cc2f75abce748f4a4ad9fd4a54753931467d4295b",
+      "rgba8Bytes": 3686400
+    },
+    {
+      "id": "twilight",
+      "image": "gaia:ui/hero/gaia-hero-twilight.png",
+      "width": 1280,
+      "height": 720,
+      "sampling": "LINEAR",
+      "pngSha256": "a313b7e67b3b3a03ac6dab00875a6590eed9da8ea5c79e395dde0ce5ce466607",
+      "rgba8Bytes": 3686400
+    }
+  ],
+  "initialHero": "dawn",
+  "runtimeMode": "STATIC_VERTICAL_SLICE",
+  "maximumResidentHeroPages": 1,
+  "treatment": {
+    "direction": "A_PLUS_70_PERCENT_GAIA_30_PERCENT_LEGACY",
+    "directionalLeftShade": true,
+    "celestialBody": true,
+    "ringedPlanet": {
+      "sourcePath": "tools/src/main/java/com/gaia/tools/ui/RingedPlanetLayer.java",
+      "ownership": "PROJECT_OWNED_PARAMETRIC_GEOMETRY",
+      "sphereDiameter": 200,
+      "centerX": 1040,
+      "centerY": 132,
+      "ringMajorAxis": 430,
+      "ringMinorAxis": 112,
+      "tiltDegrees": -15,
+      "supersampling": 4,
+      "occlusion": "BACK_RING_SPHERE_FRONT_RING_THEN_ATMOSPHERE",
+      "baked": true,
+      "sourceSha256": "186a9c378adddf6aac2377d32ef8a36ac5705534e6a7febd8148e36530d09790"
+    },
+    "brokenOrbitAccents": true,
+    "topographicDetailMotif": true
+  }
+}

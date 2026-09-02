@@ -3,6 +3,7 @@ package com.gaia.ui.widget;
 import com.gaia.ui.GaiaUiTheme;
 import com.gaia.ui.HudPresentationSnapshot;
 import com.overlord.renderer.ui.TextRenderer;
+import com.overlord.renderer.ui.TypographyRole;
 import com.overlord.renderer.ui.UiDrawList;
 import com.overlord.renderer.ui.UiLayoutContext;
 import java.util.Objects;
@@ -50,10 +51,10 @@ public final class DetailToolWidget {
                 .map(validity -> validity != com.gaia.interaction.DetailPreviewValidity.VALID)
                 .orElse(false) || detail.latestFailure().isPresent();
         double x = layout.framebufferWidth() / 2.0
-                - text.measure(label.toString(), SCALE) / 2.0;
+                - text.measure(label.toString(), TypographyRole.HUD, SCALE) / 2.0;
         double baseline = layout.framebufferHeight() / 2.0 + BASELINE_OFFSET;
         text.append(
-                label.toString(), x, baseline, SCALE, SCALE,
+                label.toString(), TypographyRole.HUD, x, baseline, SCALE, SCALE,
                 invalid ? GaiaUiTheme.FAILURE_TEXT : GaiaUiTheme.ACTIVE_PRIMARY_RIM,
                 Optional.empty(), out);
     }
