@@ -13,3 +13,5 @@
 /tools/src/main/java/com/gaia/tools/ui/RingedPlanetLayer.java text eol=lf
 /game/src/main/resources/assets/gaia/ui/brand/brand-manifest.json text eol=lf
 /game/src/main/resources/assets/gaia/ui/hero/hero-manifest.json text eol=lf
+# Inspector admission checks the actual upstream license bytes, not normalized text.
+/tools/src/modelInspector/resources/META-INF/licenses/jgltf-LICENSE.txt -text

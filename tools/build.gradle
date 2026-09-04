@@ -23,6 +23,136 @@ test {
     useJUnitPlatform()
 }
 
+// Offline inspector: deliberately does not inherit tools.main (engine/game).
+sourceSets {
+    modelInspector
+    modelInspectorTest {
+        compileClasspath += sourceSets.modelInspector.output
+        runtimeClasspath += sourceSets.modelInspector.output
+    }
+    // Interactive viewer remains isolated from tools.main and game startup.
+    modelViewer {
+        compileClasspath += sourceSets.modelInspector.output
+        runtimeClasspath += sourceSets.modelInspector.output
+    }
+    modelViewerTest {
+        compileClasspath += sourceSets.modelViewer.output + sourceSets.modelInspector.output
+        runtimeClasspath += sourceSets.modelViewer.output + sourceSets.modelInspector.output
+    }
+}
+
+configurations {
+    modelInspectorTestImplementation.extendsFrom modelInspectorImplementation
+    modelInspectorTestRuntimeOnly.extendsFrom modelInspectorRuntimeOnly
+    modelViewerImplementation.extendsFrom modelInspectorImplementation
+    modelViewerTestImplementation.extendsFrom modelViewerImplementation
+    modelViewerTestRuntimeOnly.extendsFrom modelViewerRuntimeOnly
+}
+
+dependencies {
+    modelInspectorImplementation 'de.javagl:jgltf-model:3.0.1'
+    modelInspectorImplementation 'com.fasterxml.jackson.core:jackson-core:2.22.1'
+    modelInspectorImplementation 'com.fasterxml.jackson.core:jackson-databind:2.22.1'
+    modelInspectorTestImplementation 'org.junit.jupiter:junit-jupiter:6.1.1'
+    modelInspectorTestRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    modelViewerImplementation project(':engine')
+    modelViewerTestImplementation 'org.junit.jupiter:junit-jupiter:6.1.1'
+    modelViewerTestRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+['compileModelInspectorJava', 'compileModelInspectorTestJava',
+        'compileModelViewerJava', 'compileModelViewerTestJava'].each { taskName ->
+    tasks.named(taskName, JavaCompile) { options.release = 17 }
+}
+
+tasks.register('modelInspectorTest', Test) {
+    group = 'verification'
+    description = 'Runs isolated headless GLB admission and HAND_TOOL_V0 validation checks.'
+    testClassesDirs = sourceSets.modelInspectorTest.output.classesDirs
+    classpath = sourceSets.modelInspectorTest.runtimeClasspath
+    useJUnitPlatform()
+    maxHeapSize = '256m'
+    systemProperty 'java.awt.headless', 'true'
+    doFirst { systemProperty 'inspector.runtimeClasspath', sourceSets.modelInspector.runtimeClasspath.asPath }
+}
+
+tasks.named('check') { dependsOn tasks.named('modelInspectorTest') }
+
+tasks.register('modelViewerTest', Test) {
+    group = 'verification'
+    description = 'Runs isolated headless model viewer camera checks.'
+    testClassesDirs = sourceSets.modelViewerTest.output.classesDirs
+    classpath = sourceSets.modelViewerTest.runtimeClasspath
+    useJUnitPlatform()
+    maxHeapSize = '256m'
+    systemProperty 'java.awt.headless', 'true'
+    doFirst {
+        systemProperty 'viewer.runtimeClasspath', sourceSets.modelViewer.runtimeClasspath.asPath
+        systemProperty 'viewer.projectRoot', rootProject.projectDir.absolutePath
+    }
+}
+
+tasks.named('check') { dependsOn tasks.named('modelViewerTest') }
+
+tasks.register('modelViewer', JavaExec) {
+    group = 'verification'
+    description = 'Opens one explicit, Gate-B-validated GLB in the isolated Gaia Model Inspector.'
+    dependsOn tasks.named('modelViewerClasses')
+    classpath = sourceSets.modelViewer.runtimeClasspath
+    mainClass = 'com.gaia.tools.viewer.ModelViewerMain'
+    workingDir = rootProject.projectDir
+}
+
+tasks.register('modelViewerJar', Jar) {
+    group = 'build'
+    description = 'Packages viewer-owned classes and GLSL resources without game/tools-main output.'
+    dependsOn tasks.named('modelViewerClasses')
+    archiveClassifier = 'model-viewer'
+    from sourceSets.modelViewer.output
+    manifest { attributes('Main-Class': 'com.gaia.tools.viewer.ModelViewerMain') }
+}
+
+tasks.register('verifyModelViewerResources') {
+    group = 'verification'
+    description = 'Verifies the OpenGL 4.1 viewer shader and explicit CLI entrypoint are packaged.'
+    dependsOn tasks.named('modelViewerClasses')
+    doLast {
+        def root = sourceSets.modelViewer.output.resourcesDir.toPath()
+        def shaders = ['preview.vert', 'preview.frag'].collect {
+            root.resolve("assets/gaia/model-viewer/${it}")
+        }
+        shaders.each { shader ->
+            if (!java.nio.file.Files.isRegularFile(shader)) {
+                throw new GradleException("Missing model viewer shader ${shader}")
+            }
+            def text = java.nio.file.Files.readString(shader)
+            if (!text.contains('#version 410 core') || text.contains('#version 430')) {
+                throw new GradleException("Model viewer shader is not GLSL 410: ${shader}")
+            }
+        }
+        def mainClass = sourceSets.modelViewer.output.classesDirs.files.collect {
+            it.toPath().resolve('com/gaia/tools/viewer/ModelViewerMain.class')
+        }.find { java.nio.file.Files.isRegularFile(it) }
+        if (mainClass == null) throw new GradleException('ModelViewerMain.class is not packaged')
+    }
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('verifyModelViewerResources')
+    dependsOn tasks.named('modelViewerJar')
+}
+
+tasks.register('modelInspector', JavaExec) {
+    group = 'verification'
+    description = 'Validates one explicit local GLB headlessly; no game/runtime model import.'
+    dependsOn tasks.named('modelInspectorClasses')
+    classpath = sourceSets.modelInspector.runtimeClasspath
+    mainClass = 'com.gaia.tools.model.ModelInspectorMain'
+    systemProperty 'java.awt.headless', 'true'
+    maxHeapSize = '256m'
+    workingDir = rootProject.projectDir
+}
+
 tasks.register('generateUiAssets', JavaExec) {
     group = 'asset generation'
     description = 'Regenerates the Quiet Rune bitmap font and project-owned block icons.'
